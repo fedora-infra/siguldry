@@ -47,7 +47,7 @@ fn run_command(mut client_command: Command) -> Result<(Output, Output)> {
     };
 
     let mut signing_cert = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    signing_cert.push("../keys/signing-cert.pem");
+    signing_cert.push("../keys/secure-boot-code-signing-cert.pem");
     let mut config_file = tempfile::NamedTempFile::new()?;
     let config = format!(
         "
@@ -55,8 +55,8 @@ fn run_command(mut client_command: Command) -> Result<(Output, Output)> {
     request_timeout_secs = 30
 
     [[keys]]
-    key_name = \"signing-key\"
-    certificate_name = \"codesigning\"
+    key_name = \"Sigul HSM Key\"
+    certificate_name = \"Secure Boot Code Signing Certificate\"
     passphrase_path = \"sigul-signing-key-passphrase\"
     certificate_file = \"{}\"
     ",
@@ -125,8 +125,8 @@ fn sign_attached() -> Result<()> {
     let mut client_command = Command::new("pesign-client");
     client_command
         .arg("--sign")
-        .arg("--token=signing-key")
-        .arg("--certificate=codesigning")
+        .arg("--token=Sigul HSM Key")
+        .arg("--certificate=Secure Boot Code Signing Certificate")
         .arg(format!("--infile={}", in_file.as_path().display()))
         .arg(format!("--outfile={}", &out_file.as_path().display()));
     let (client_output, service_output) = run_command(client_command)?;
@@ -154,7 +154,7 @@ fn sign_attached() -> Result<()> {
     );
 
     let mut signing_cert = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    signing_cert.push("../keys/signing-cert.pem");
+    signing_cert.push("../keys/secure-boot-code-signing-cert.pem");
     let output_signed = Command::new("sbverify")
         .arg("--cert")
         .arg(&signing_cert)
