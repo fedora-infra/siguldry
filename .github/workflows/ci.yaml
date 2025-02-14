@@ -115,7 +115,7 @@ jobs:
           RUN_SIGUL_BRIDGE: true
         volumes:
           - ./devel/github:/etc/sigul
-          
+
       sigul-server:
         image: quay.io/jeremycline/sigul-pesign-bridge-ci:latest
         env:
@@ -138,12 +138,13 @@ jobs:
           # GitHub actions occasionally hangs here; I've not seen it locally and my theory
           # is sigul takes a bit of time to come up and doesn't do retries well at all.
           sleep 5
-          bash ./devel/sigul_key_setup.sh
 
           # More hackiness; copy the test PE and signing certificates to the location
           # it would be at if we had built it rather than baking it into the image.
           # GitHub Actions does not use the container's WORKDIR.
           cp -r /srv/siguldry/* .
+          mkdir keys/
+          cp *.pem keys/
 
           mkdir -p /run/pesign/
 

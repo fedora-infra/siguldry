@@ -13,26 +13,25 @@ FROM quay.io/almalinuxorg/almalinux:9
 
 RUN dnf install -y epel-release
 RUN dnf install -y \
+    cargo \
+    gcc \
+    iproute \
+    nss-tools \
+    opensc \
+    openssl-pkcs11 \
+    patch \
+    pesign \
+    python3-devel \
+    python3-pip \
+    rpm-devel \
+    sbsigntools \
     sigul \
     sigul-bridge \
     sigul-server \
-    pesign \
-    patch \
-    python3-pip \
-    python3-devel \
-    rpm-devel \
-    gcc \
-    cargo \
-    sbsigntools \
-    iproute
+    softhsm
 
 # Not packaged for fedora, needed for the server. Requires pip and gcc
 RUN pip install rpm-head-signing
-
-# Fix pesign in Sigul
-RUN curl -sL \
-	https://pagure.io/fork/jcline/sigul/c/5b160415b77d40ea80aeb9d9eb1a8c9ec6cf1926.patch \
-	| patch /usr/share/sigul/server.py
 
 RUN mkdir -p /srv/siguldry && chown sigul:sigul /srv/siguldry
 WORKDIR /srv/siguldry
@@ -57,6 +56,7 @@ COPY devel/local/client.conf /etc/sigul/client.conf
 COPY devel/github /etc/sigul-pesign-bridge-ci
 COPY devel/sigul_key_setup.sh /usr/local/bin/sigul_key_setup
 COPY devel/startup_wrapper.sh /usr/local/bin/sigul_wrapper
+COPY devel/setup_hsm.sh /usr/local/bin/setup_hsm
 
 # It's a gross little hack, but we copy in the example PE executable rather than dealing
 # with not having rustup in EL9 repos and getting additional targets installed.
@@ -65,10 +65,24 @@ COPY devel/startup_wrapper.sh /usr/local/bin/sigul_wrapper
 RUN mkdir -p target/x86_64-unknown-uefi/debug/
 COPY target/x86_64-unknown-uefi/debug/sample-uefi.efi target/x86_64-unknown-uefi/debug/sample-uefi.efi
 
+# Fix pesign in Sigul
+RUN curl -sL \
+	https://pagure.io/fork/jcline/sigul/c/5b160415b77d40ea80aeb9d9eb1a8c9ec6cf1926.patch \
+	| patch /usr/share/sigul/server.py
+
+# Support PKCS11 signing
+RUN curl -sL \
+	https://pagure.io/fork/jcline/sigul/c/d70285810c63f6e136f70fb13a4b6323f9db3db1.patch \
+	| patch -d /usr/share/sigul/ && \
+	chmod +x /usr/share/sigul/server_add_pkcs11_token.py
+
 RUN sigul_server_create_db
 # The nss password needs to be in the sigul-server.conf since it's sourced from there
 RUN printf "my-admin-password\0" | sigul_server_add_admin --batch --name=sigul-client
 RUN mkdir ~/.sigul/ && cp -r /var/lib/sigul ~/.sigul/sigul
+
+# Set up a software HSM with Secure Boot keys to use in the Sigul server
+RUN setup_hsm
 
 # A hacky work-around for GitHub actions not letting you specify the entrypoint for a container
 ENTRYPOINT /usr/local/bin/sigul_wrapper
