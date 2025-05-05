@@ -30,7 +30,7 @@ features = ["std", "derive", "env", "help", "usage", "error-context"]
 # The feature is currently in Rust nightly so this could be dropped once
 # MSRV goes above whatever version that feature gets stabilized.
 [dependencies.nix]
-version = "0.29"
+version = "0.30"
 features = ["socket", "uio", "fs"]
 
 [dependencies.siguldry]
@@ -79,5 +79,5 @@ features = ["std", "derive"]
 tracing-test = "0.2"
 assert_cmd = "2"
 tempfile = "3"
-nix = { version = "0.29", features = ["process", "signal"] }
+nix = { version = "0.30", features = ["process", "signal"] }
 proptest = "1.6"
