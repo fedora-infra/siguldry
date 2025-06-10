@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 'modify-key', 'list-key-users', 'grant-key-access', 'revoke-key-access', change-key-expiration',
 'get-public-key', 'change-passphrase', and 'list-binding-methods' (#47)
 
+- Added support for the `sign-certificate` command to create certificates for Sigul-managed keys (#48)
+
 ### Changed
 
 - The minimum supported Rust version (MSRV) is now 1.84 to align with RHEL 9.6 and 10.0 (#45)

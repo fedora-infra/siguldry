@@ -1241,3 +1241,94 @@ pub async fn server_binding_methods() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+pub async fn code_signing_certificate() -> anyhow::Result<()> {
+    let client = get_client();
+    let _guard = SIGUL_CLIENT.read().await;
+    let ca_key_name = "test-ca-key".to_string();
+    let code_signing_key_name = "test-codesigning-key".to_string();
+    let cleanup = client
+        .delete_key("my-admin-password".into(), ca_key_name.clone())
+        .await;
+    if cleanup.is_err() && !matches!(cleanup, Err(ClientError::Sigul(Sigul::KeyNotFound))) {
+        panic!(
+            "unexpected Sigul error while cleaning up, got {:?}",
+            cleanup
+        )
+    }
+    let cleanup = client
+        .delete_key("my-admin-password".into(), code_signing_key_name.clone())
+        .await;
+    if cleanup.is_err() && !matches!(cleanup, Err(ClientError::Sigul(Sigul::KeyNotFound))) {
+        panic!(
+            "unexpected Sigul error while cleaning up, got {:?}",
+            cleanup
+        )
+    }
+
+    // Create the CA and code signing keys
+    client
+        .new_key(
+            "my-admin-password".into(),
+            "my-ca-key-passphrase".into(),
+            ca_key_name.clone(),
+            siguldry::client::KeyType::Ecc,
+            None,
+        )
+        .await?;
+    let code_signing_key = rsa::Rsa::generate(2048)?;
+    let pem = code_signing_key.private_key_to_pem_passphrase(
+        openssl::symm::Cipher::aes_128_cbc(),
+        "my-key-passphrase".as_bytes(),
+    )?;
+    client
+        .import_key(
+            "my-admin-password".into(),
+            "my-key-passphrase".into(),
+            "my-key-passphrase".into(),
+            code_signing_key_name.clone(),
+            pem.as_slice(),
+            siguldry::client::KeyType::Rsa,
+            None,
+        )
+        .await?;
+
+    // Self-sign the CA, then sign the code signing cert with that CA
+    let ca_cert = client
+        .sign_certificate(
+            ca_key_name.clone(),
+            "my-ca-key-passphrase".into(),
+            None,
+            ca_key_name.clone(),
+            "testcacert".to_string(),
+            siguldry::client::CertificateType::Ca,
+            "My Test Root CA".to_string(),
+            1,
+        )
+        .await?;
+    assert_eq!(
+        ca_cert.subject_name().try_cmp(ca_cert.issuer_name())?,
+        std::cmp::Ordering::Equal
+    );
+    let code_signing_cert = client
+        .sign_certificate(
+            ca_key_name.clone(),
+            "my-ca-key-passphrase".into(),
+            Some("testcacert".to_string()),
+            code_signing_key_name.clone(),
+            "testcodesigningcert".to_string(),
+            siguldry::client::CertificateType::CodeSigning,
+            "My Test Code Signing Cert".to_string(),
+            1,
+        )
+        .await?;
+    assert_eq!(
+        code_signing_cert
+            .issuer_name()
+            .try_cmp(ca_cert.subject_name())?,
+        std::cmp::Ordering::Equal
+    );
+
+    Ok(())
+}

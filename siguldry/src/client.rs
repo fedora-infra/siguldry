@@ -10,6 +10,7 @@ use std::{collections::HashMap, io::Read};
 use anyhow::Context;
 use bytes::{Buf, Bytes};
 use openssl::ssl::{SslConnector, SslFiletype, SslMethod, SslVerifyMode, SslVersion};
+use openssl::x509::X509;
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite};
 use tracing::{instrument, Instrument};
@@ -114,6 +115,34 @@ impl std::fmt::Display for KeyType {
             KeyType::GnuPG { .. } => write!(f, "gnupg"),
             KeyType::Ecc => write!(f, "ECC"),
             KeyType::Rsa => write!(f, "RSA"),
+        }
+    }
+}
+
+/// The certificate types supported by Sigul
+#[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
+pub enum CertificateType {
+    /// A Certificate Authority.
+    ///
+    /// Certificates used to sign other certificates.
+    Ca,
+    /// A certificate for code signing.
+    ///
+    /// For example, a certificate used when signing PE applications should be this type.
+    CodeSigning,
+    /// A certificate for a TLS server.
+    ///
+    /// In practice, this is not used by anything in Fedora (that I am aware of).
+    SslServer,
+}
+
+impl std::fmt::Display for CertificateType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CertificateType::Ca => write!(f, "ca"),
+            CertificateType::CodeSigning => write!(f, "codesigning"),
+            CertificateType::SslServer => write!(f, "sslserver"),
         }
     }
 }
@@ -290,7 +319,22 @@ pub(crate) enum Command {
     // SignOstree {},
     // SignRpm {},
     // SignRpms {},
-    // SignCertificate {},
+    SignCertificate {
+        /// The user to authenticate as.
+        user: String,
+        issuer_key: String,
+        subject_key: String,
+        /// A RFC 4514 compliant string
+        subject: String,
+        /// Validity for the signature in the format <int:n>y for n years
+        validity: String,
+        subject_certificate_name: String,
+        /// The type of certificate to create
+        certificate_type: String,
+        /// The issuer's certificate name; `None` if self-signed (issuer_key == subject_key)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        issuer_certificate_name: Option<String>,
+    },
     SignPe {
         /// The user to authenticate as.
         user: String,
@@ -1392,6 +1436,54 @@ impl Client {
 
         tracing::info!(?response.fields, response.status_code, "Got response fields");
         Ok(())
+    }
+
+    /// Create and sign a certificate for a key Sigul manages.
+    #[instrument(skip_all)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn sign_certificate(
+        &self,
+        issuer_key_name: String,
+        issuer_key_passphrase: Password,
+        issuer_certificate_name: Option<String>,
+        subject_key_name: String,
+        subject_certificate_name: String,
+        subject_certificate_type: CertificateType,
+        subject_common_name: String,
+        validity: u32,
+    ) -> Result<X509, Error> {
+        let connection = self.connect().await?;
+        let (payload_reader, payload_writer) = get_payload_pipe();
+
+        let mut inner_request = HashMap::new();
+        inner_request.insert("passphrase", issuer_key_passphrase.as_bytes());
+        let response = connection
+            .outer_request::<tokio::io::Empty>(
+                Command::SignCertificate {
+                    user: self.user_name.to_string(),
+                    issuer_key: issuer_key_name,
+                    subject_key: subject_key_name,
+                    subject: format!("CN={}", subject_common_name),
+                    validity: format!("{}y", validity),
+                    subject_certificate_name,
+                    certificate_type: subject_certificate_type.to_string(),
+                    issuer_certificate_name,
+                },
+                None,
+            )
+            .await?
+            .inner_request(self.tls_config.ssl(&self.server_hostname)?, inner_request)
+            .await?
+            .response(payload_writer)
+            .await?;
+        tracing::info!(response.status_code, "Sigul response received");
+        let payload = payload_reader
+            .await
+            .context("response payload could not be read")??;
+
+        let certificate = X509::from_pem(&payload)?;
+
+        Ok(certificate)
     }
 
     /// List the server binding methods available on the Sigul server.
