@@ -78,7 +78,7 @@ features = ["crypto-openssl"]
 
 [dev-dependencies.base64ct]
 # Pinned as 1.8 needs Rust 1.85 and its a dep of sequoia
-version = "< 1.8"
+version = "< 1.9"
 
 
 [[bin]]
