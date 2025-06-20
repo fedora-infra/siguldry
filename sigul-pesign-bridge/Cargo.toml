@@ -1,6 +1,6 @@
 [package]
 name = "sigul-pesign-bridge"
-version = "0.5.0"
+version = "0.5.1"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = "MIT"
@@ -37,7 +37,9 @@ features = ["net"]
 
 [dependencies.siguldry]
 path = "../siguldry"
-version = "0.3"
+version = "0.4"
+default-features = false
+features = ["sigul-client"]
 
 # Used to temporarily stash input files for sigul within the runtime directory.
 [dependencies.tempfile]

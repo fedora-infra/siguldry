@@ -19,7 +19,7 @@ use std::{
 
 use anyhow::{anyhow, Context as AnyhowContext};
 use bytes::Bytes;
-use siguldry::error::ClientError;
+use siguldry::v1::error::ClientError;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},

@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added support for the `sign-certificate` command to create certificates for Sigul-managed keys (#48)
 
+- A new protocol, based on Sigul 1.2, has been added  (#64)
+
+### Removed
+
+- The legacy Sigul client is has been removed as a default feature and been
+  moved into the `v1` submodule. To continue using the legacy Sigul client,
+  enable the `sigul-client` feature and adjust your imports accordingly (#64)
+
 
 ## [0.3.1] - 2025-06-12
 

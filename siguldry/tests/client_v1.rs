@@ -5,6 +5,8 @@
 //
 // These tests are expected to work against sigul v1.3+.
 
+#![cfg(feature = "sigul-client")]
+
 use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
@@ -12,19 +14,20 @@ use std::{
 
 use openssl::{ec, rsa};
 use sequoia_openpgp::{armor, parse::Parse};
-use siguldry::error::{ClientError, Sigul};
+use siguldry::v1::client::{CertificateType, Client, KeyType, TlsConfig};
+use siguldry::v1::error::{ClientError, Sigul};
 use tokio::sync::RwLock;
 
 /// Some tests fiddle with the `sigul-client` account
 static SIGUL_CLIENT: std::sync::LazyLock<RwLock<()>> = std::sync::LazyLock::new(|| RwLock::new(()));
 
-fn get_client() -> siguldry::client::Client {
+fn get_client() -> Client {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../")
         .canonicalize()
         .unwrap();
     let creds_directory = repo_root.join("devel/creds/");
-    let tls_config = siguldry::client::TlsConfig::new(
+    let tls_config = TlsConfig::new(
         creds_directory.join("sigul.client.certificate.pem"),
         creds_directory.join("sigul.client.private_key.pem"),
         None,
@@ -32,7 +35,7 @@ fn get_client() -> siguldry::client::Client {
     )
     .unwrap();
     let ci = std::env::var("GITHUB_ACTIONS").is_ok_and(|val| val.contains("true"));
-    siguldry::client::Client::new(
+    Client::new(
         tls_config,
         if ci {
             "sigul-bridge".into()
@@ -343,7 +346,7 @@ async fn key_user_info_self_owner() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -399,7 +402,7 @@ async fn key_user_info_other_owner() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -467,7 +470,7 @@ async fn modify_key_user_demote_promote() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -552,7 +555,7 @@ async fn key_create_and_list() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -586,7 +589,7 @@ async fn key_modify() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -627,7 +630,7 @@ async fn key_gpg_create_and_delete() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -673,7 +676,7 @@ pub async fn key_gpg_create_with_expiration() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -699,7 +702,7 @@ async fn key_rsa_create_and_delete() {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::Rsa,
+            KeyType::Rsa,
             None,
         )
         .await
@@ -723,7 +726,7 @@ async fn key_ecc_create_and_delete() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::Ecc,
+            KeyType::Ecc,
             None,
         )
         .await?;
@@ -777,14 +780,14 @@ pub async fn key_rsa_import() -> anyhow::Result<()> {
             "my-new-key-passphrase".into(),
             key_name.clone(),
             pem.as_slice(),
-            siguldry::client::KeyType::Rsa,
+            KeyType::Rsa,
             None,
         )
         .await?;
     let keys = client.keys("my-admin-password".into()).await?;
     assert!(keys
         .iter()
-        .any(|k| *k == format!("{} ({})", &key_name, siguldry::client::KeyType::Rsa)));
+        .any(|k| *k == format!("{} ({})", &key_name, KeyType::Rsa)));
 
     client
         .delete_key("my-admin-password".into(), key_name)
@@ -821,14 +824,14 @@ pub async fn key_ecc_import() -> anyhow::Result<()> {
             "my-new-key-passphrase".into(),
             key_name.clone(),
             pem.as_slice(),
-            siguldry::client::KeyType::Ecc,
+            KeyType::Ecc,
             None,
         )
         .await?;
     let keys = client.keys("my-admin-password".into()).await?;
     assert!(keys
         .iter()
-        .any(|k| *k == format!("{} ({})", &key_name, siguldry::client::KeyType::Ecc)));
+        .any(|k| *k == format!("{} ({})", &key_name, KeyType::Ecc)));
 
     client
         .delete_key("my-admin-password".into(), key_name)
@@ -866,7 +869,7 @@ pub async fn key_ecc_import_as_rsa() -> anyhow::Result<()> {
             "my-new-key-passphrase".into(),
             key_name.clone(),
             pem.as_slice(),
-            siguldry::client::KeyType::Rsa,
+            KeyType::Rsa,
             None,
         )
         .await;
@@ -896,7 +899,7 @@ pub async fn key_users() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -940,7 +943,7 @@ pub async fn key_additional_users() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -1005,7 +1008,7 @@ pub async fn key_revoke_user() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -1084,7 +1087,7 @@ pub async fn key_gpg_expiration() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -1152,7 +1155,7 @@ pub async fn change_key_passphrase() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-key-passphrase".into(),
             key_name.clone(),
-            siguldry::client::KeyType::GnuPG {
+            KeyType::GnuPG {
                 real_name: Some("my real name".to_string()),
                 comment: Some("a comment".to_string()),
                 email: Some("gpg@example.com".to_string()),
@@ -1248,7 +1251,7 @@ pub async fn code_signing_certificate() -> anyhow::Result<()> {
             "my-admin-password".into(),
             "my-ca-key-passphrase".into(),
             ca_key_name.clone(),
-            siguldry::client::KeyType::Ecc,
+            KeyType::Ecc,
             None,
         )
         .await?;
@@ -1264,7 +1267,7 @@ pub async fn code_signing_certificate() -> anyhow::Result<()> {
             "my-key-passphrase".into(),
             code_signing_key_name.clone(),
             pem.as_slice(),
-            siguldry::client::KeyType::Rsa,
+            KeyType::Rsa,
             None,
         )
         .await?;
@@ -1277,7 +1280,7 @@ pub async fn code_signing_certificate() -> anyhow::Result<()> {
             None,
             ca_key_name.clone(),
             "testcacert".to_string(),
-            siguldry::client::CertificateType::Ca,
+            CertificateType::Ca,
             "My Test Root CA".to_string(),
             1,
         )
@@ -1293,7 +1296,7 @@ pub async fn code_signing_certificate() -> anyhow::Result<()> {
             Some("testcacert".to_string()),
             code_signing_key_name.clone(),
             "testcodesigningcert".to_string(),
-            siguldry::client::CertificateType::CodeSigning,
+            CertificateType::CodeSigning,
             "My Test Code Signing Cert".to_string(),
             1,
         )

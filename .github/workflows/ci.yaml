@@ -16,7 +16,7 @@ jobs:
     name: Cargo dependency checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
@@ -46,7 +46,7 @@ jobs:
       actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -67,7 +67,7 @@ jobs:
         # https://issues.redhat.com/browse/RHEL-61964
         rust-toolchain: [stable, "1.84"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
@@ -81,7 +81,7 @@ jobs:
       - name: Install test packages
         run: |
           sudo apt update
-          sudo apt install pesign libssl-dev
+          sudo apt install pesign libssl-dev libsqlite3-dev clang
 
           # pesign-client doesn't let you configure the socket location, so make it available to the world
           sudo mkdir -p /run/pesign/
@@ -97,13 +97,13 @@ jobs:
         run: cargo clippy --all-targets --all-features -- --deny warnings
 
       - name: Run unit tests
-        run: cargo test --all-features --workspace --no-fail-fast --bins --examples --benches
+        run: cargo test --all-features --workspace --no-fail-fast --bins --examples --benches --lib --test end_to_end
 
       - name: Check manual is up-to-date
         run: cargo xtask manual && test -z "$(git status --porcelain)"
 
-  integration-tests:
-    name: Integration tests
+  legacy-integration-tests:
+    name: Sigul integration tests
     runs-on: ubuntu-latest
     container: quay.io/jeremycline/sigul-pesign-bridge-ci:2025-06-02
     services:
@@ -132,7 +132,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -146,4 +146,4 @@ jobs:
           export RUNTIME_DIRECTORY=/run/pesign
           export CREDENTIALS_DIRECTORY=/srv/siguldry/creds/
           export SIGUL_PESIGN_BRIDGE_CONFIG=$(pwd)/devel/github/config.toml
-          cargo test --all-features --workspace -- --nocapture
+          cargo test --package sigul-pesign-bridge -- --nocapture

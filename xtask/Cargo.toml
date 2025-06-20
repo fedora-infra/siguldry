@@ -19,3 +19,6 @@ version = "4"
 
 [dependencies.sigul-pesign-bridge]
 path = "../sigul-pesign-bridge"
+
+[dependencies.siguldry]
+path = "../siguldry"

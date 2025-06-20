@@ -21,7 +21,7 @@ pub use service::listen;
 pub struct Context {
     pub(crate) runtime_directory: PathBuf,
     pub(crate) config: config::Config,
-    pub(crate) sigul_client: siguldry::client::Client,
+    pub(crate) sigul_client: siguldry::v1::client::Client,
 }
 
 impl Context {
@@ -39,14 +39,14 @@ impl Context {
             ));
         }
 
-        let tls_config = siguldry::client::TlsConfig::new(
+        let tls_config = siguldry::v1::client::TlsConfig::new(
             &config.sigul.client_certificate,
             &config.sigul.private_key,
             None, // The expectation is the key is encrypted via systemd
             &config.sigul.ca_certificate,
         )
         .context("Failed to create OpenSSL TLS configuration")?;
-        let sigul_client = siguldry::client::Client::new(
+        let sigul_client = siguldry::v1::client::Client::new(
             tls_config,
             config.sigul.bridge_hostname.clone(),
             config.sigul.bridge_port,

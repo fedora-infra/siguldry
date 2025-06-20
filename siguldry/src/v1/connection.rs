@@ -69,8 +69,8 @@ use tokio::{
 use tokio_openssl::SslStream;
 use tracing::instrument;
 
-use crate::client::Command;
-use crate::error::ConnectionError as Error;
+use crate::v1::client::Command;
+use crate::v1::error::{ClientError, ConnectionError as Error};
 
 /// The Sigul wire protocol version this implementation supports. This is the
 /// latest version as of Sigul version 1.2.
@@ -154,11 +154,7 @@ impl HmacKeys {
     }
 
     /// Validate header data against the provided HMAC signature.
-    fn validate_header(
-        &self,
-        data: &[u8],
-        signature: &[u8],
-    ) -> Result<(), crate::error::ClientError> {
+    fn validate_header(&self, data: &[u8], signature: &[u8]) -> Result<(), ClientError> {
         let key = openssl::pkey::PKey::hmac(&self.header_key)?;
         let mut signer = openssl::sign::Signer::new(MessageDigest::sha512(), &key)?;
         signer.update(data)?;
@@ -168,7 +164,7 @@ impl HmacKeys {
             Ok(())
         } else {
             tracing::error!("HMAC signature on response headers failed!");
-            Err(crate::error::ClientError::InvalidSignature)
+            Err(ClientError::InvalidSignature)
         }
     }
 
@@ -183,14 +179,14 @@ impl HmacKeys {
     fn validate_payload_signer(
         signer: openssl::sign::Signer<'_>,
         signature: &[u8],
-    ) -> Result<(), crate::error::ClientError> {
+    ) -> Result<(), ClientError> {
         let hmac = signer.sign_to_vec()?;
         if openssl::memcmp::eq(&hmac, signature) {
             tracing::debug!("HMAC signature validated on response payload");
             Ok(())
         } else {
             tracing::error!("HMAC signature on response payload failed!");
-            Err(crate::error::ClientError::InvalidSignature)
+            Err(ClientError::InvalidSignature)
         }
     }
 }
@@ -256,7 +252,7 @@ impl Connection<state::New> {
         mut self,
         command: Command,
         mut payload: Option<P>,
-    ) -> Result<InnerConnection, crate::error::ClientError> {
+    ) -> Result<InnerConnection, ClientError> {
         let operation_bytes = crate::serdes::to_bytes(&command)?;
         let mut outer_header_hash = openssl::hash::Hasher::new(MessageDigest::sha512())?;
         // The header digest must include the protocol version bytes.
@@ -360,7 +356,7 @@ impl InnerConnection {
         self,
         ssl: Ssl,
         mut request: HashMap<&str, &[u8]>,
-    ) -> Result<Connection<state::InnerFinished>, crate::error::ClientError> {
+    ) -> Result<Connection<state::InnerFinished>, ClientError> {
         // Include the outer request header and payload digests, along with a set of private keys used
         // for HMAC on server responses. Since the server responses in the outer TLS stream, these serve
         // to ensure the bridge is not meddling with the responses.
@@ -378,7 +374,7 @@ impl InnerConnection {
         // - Send size of inner bytes by sending a u32 of the size, OR'd with CHUNK_INNER_MASK.
         //   This also means MAX_CHUNK_SIZE = CHUNK_INNER_MASK - 1
 
-        let mut nestls = crate::nestls::Nestls::connect(self.stream, ssl).await?;
+        let mut nestls = crate::v1::nestls::Nestls::connect(self.stream, ssl).await?;
         let stream = nestls.inner_mut();
 
         stream.write_all(&payload).await?;
@@ -428,7 +424,7 @@ impl Connection<state::InnerFinished> {
     pub(crate) async fn response<P: AsyncWrite + AsyncWriteExt + Unpin>(
         mut self,
         mut payload: P,
-    ) -> Result<Response, crate::error::ClientError> {
+    ) -> Result<Response, ClientError> {
         // Assumption: this chunk includes the entire response header.
         //
         // This is how Sigul 1.2 works, but there's nothing in the protocol that necessarily
@@ -569,7 +565,7 @@ impl Connection<state::InnerFinished> {
                 fields,
             })
         } else {
-            Err(crate::error::Sigul::from(status_code).into())
+            Err(crate::v1::error::Sigul::from(status_code).into())
         }
     }
 }

@@ -1,222 +1,221 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-//! Nested TLS session support.
+//! A nested TLS connection.
 //!
-//! This implemetation is compatible with [sigul][1] version 1.2.
+//! The Siguldry server is designed to accept no incoming network connections. Instead, it
+//! communicates with Siguldry clients via a bridge, which proxies the communication back and forth
+//! between the client and the server.
 //!
-//! [1]: https://pagure.io/sigul
+//! In order to ensure the bridge has no visibility into the secrets being shared from the client,
+//! such as passphrases to access signing keys, the client and server use TLS within the TLS
+//! connection to the bridge.
+//!
+//! A [`Nestls`] connection is capable of behaving as a client or a server. It handles the handshake
+//! by sending the [`ProtocolHeader`] and waiting for the [`ProtocolAck`] from the bridge before
+//! starting the inner TLS session. Once that is complete, it's up to the user to implement the
+//! particulars of the protocol.
+//!
+//!
+//! The high-level connection flow is as follows:
+//!
+//! 1. A TLS connection to the Sigul bridge is made and both sides offer x509 certificates to be
+//!    verified.
+//!
+//! 2. A protocol header is sent which is a magic number, a protocol version, and
+//!    the role of this connection (server or client). The protocol version dictates
+//!    what the wire format is for framing and commands and is the responsibility of
+//!    the user of the [`Nestls`] to implement.
+//!
+//! 3a. If the connection is acting as a client, it begins a second TLS connection using
+//!     the bridge TLS connection as the transport.
+//!
+//! 3b. If the connection is acting as a server, it accepts a second TLS connection using
+//!     the bridge TLS connection as a transport.
+//!
+//! 4. The inner TLS connection also uses mutual TLS certificates for authentication, and
+//!    if this succeeds the connection is ready to be used.
 
 use std::pin::Pin;
 
-use bytes::{Buf, Bytes, BytesMut};
-use openssl::ssl::Ssl;
+use openssl::{nid::Nid, ssl::Ssl};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
-    net::TcpStream,
-    task::JoinHandle,
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    net::{TcpStream, ToSocketAddrs},
 };
 use tokio_openssl::SslStream;
-use tracing::{instrument, Instrument};
+use tracing::instrument;
+use uuid::Uuid;
+use zerocopy::IntoBytes;
 
-use crate::connection::{Chunk, CHUNK_INNER_MASK, MAX_CHUNK_SIZE, MAX_READ_BUF};
-use crate::error::ConnectionError as Error;
+use crate::{
+    error::ConnectionError as Error,
+    protocol::{ProtocolAck, ProtocolHeader, Role},
+};
 
-/// Implements a nested ("inner") TLS session on top of an existing TLS session.
+/// Build the configuration for a nested TLS session.
+pub struct NestlsBuilder {
+    bridge_ssl: Ssl,
+    role: Role,
+}
+
+/// A nested TLS session.
 ///
-/// This implementation is particular to the Sigul bridge implementation, which
-/// expects all data to be framed with a u32 that describes the size of the
-/// incoming data as well as whether it belongs to the outer or inner stream.
-#[derive(Debug)]
+/// Use [`AsyncRead`] and [`AsyncWrite`] to read and write to the inner TLS session.
 pub struct Nestls {
-    inner_stream: SslStream<DuplexStream>,
-    framing_task: JoinHandle<Result<SslStream<TcpStream>, Error>>,
+    /// The TLS connection to the Sigul server.
+    inner: SslStream<SslStream<TcpStream>>,
+    /// A shared ID between the client and the server identifying this connection.
+    session_id: Uuid,
 }
 
 impl Nestls {
-    /// Connect to a server over an existing TLS session.
+    /// Get a [`NestlsBuilder`] to configure the connection details.
     ///
-    /// This object takes ownership of the outer TLS session, and it is not possible to use
-    /// the outer session while the inner session is active. Once you have finished with the
-    /// inner session, use [`Nestls::into_outer`] to get the outer session back.
-    #[instrument(err, skip_all, name = "inner_tls")]
-    pub async fn connect(
-        outer_stream: SslStream<TcpStream>,
-        inner_ssl: Ssl,
-    ) -> Result<Self, Error> {
-        let (client_write_half, client_read_half) = tokio::io::duplex(1024 * 1024);
-        let framing_task =
-            tokio::spawn(Self::parser(outer_stream, client_read_half).in_current_span());
-
-        let mut inner_stream = tokio_openssl::SslStream::new(inner_ssl, client_write_half)?;
-        Pin::new(&mut inner_stream).connect().await?;
-        tracing::debug!("Inner TLS connection established.");
-
-        Ok(Self {
-            inner_stream,
-            framing_task,
-        })
+    /// Once the connection has been configured, you can create a [`Nestls`] instance by calling
+    /// [`NestlsBuilder::connect`] or [`NestlsBuilder::accept`].
+    pub fn builder(bridge_ssl: Ssl, role: Role) -> NestlsBuilder {
+        NestlsBuilder::new(bridge_ssl, role)
     }
 
-    /// Get an mutable reference to the inner TLS stream.
+    /// Get the connection's session ID.
     ///
-    /// Use this to read and write to the inner TLS stream.
-    pub fn inner_mut(&mut self) -> &mut SslStream<DuplexStream> {
-        &mut self.inner_stream
+    /// This ID is shared between the client and the server and is primarily useful for logging.
+    pub fn session_id(&self) -> Uuid {
+        self.session_id
     }
 
-    /// Consume this inner TLS session and return the outer TLS session, along with any payloads
-    /// received for the outer session.
-    #[instrument(err, skip_all, level = "debug")]
-    pub async fn into_outer(self) -> Result<SslStream<TcpStream>, Error> {
-        // It's important to drop the inner stream before attempting to join with the framing task,
-        // as this closes DuplexStream. Failing to do so causes the task to hang indefinitely.
-        drop(self.inner_stream);
-        let framing_task = self.framing_task;
-        framing_task.await.map_err(|err| {
-            Error::ProtocolViolation(format!("Sigul connection framing failed: {err:?}"))
-        })?
+    /// Get the remote connection's commonName from its certificate.
+    pub fn peer_common_name(&self) -> Option<String> {
+        self.inner
+            .ssl()
+            .peer_certificate()
+            .and_then(|cert| {
+                cert.subject_name()
+                    .entries_by_nid(Nid::COMMONNAME)
+                    .next()
+                    .and_then(|entry| entry.data().as_utf8().ok())
+            })
+            .map(|common_name| common_name.to_string())
+    }
+}
+
+impl AsyncRead for Nestls {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(&mut self.as_mut().inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Nestls {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.as_mut().inner).poll_write(cx, buf)
     }
 
-    /// This task takes ownership of the outer TLS session, which is what we write to
-    /// to send data over the network, along with the receiving end of the inner TLS session.
-    ///
-    /// It intercepts the inner session in order to properly frame the data, which requires a
-    /// u32 header indicating the payload size and whether or not its destined for the inner
-    /// or outer stream.
-    ///
-    /// When we read data _from_ the outer stream, it can either be destined for the outer session
-    /// or for the nested TLS session. However, the Sigul implementation seems to forbid interlacing
-    /// inner and outer chunks, so this function returns an error if any outer chunks are recieved.
-    ///
-    /// The outer stream is returned when the inner TLS session ends; users can retrieve this via
-    /// the [`Nestls::into_outer`] function.
-    #[instrument(err, skip_all)]
-    async fn parser(
-        outer_stream: SslStream<TcpStream>,
-        mut client_inner_tls: DuplexStream,
-    ) -> Result<SslStream<TcpStream>, Error> {
-        let mut inner_outgoing_buf = BytesMut::new();
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.as_mut().inner).poll_flush(cx)
+    }
 
-        // Tracks how much data we expect and which channel it's for
-        let mut incoming_chunk: Chunk = Chunk::Unknown;
-        // Used to disable the branch that forwards to the bridge once the client sends an EOF.
-        // Without this, calling `client_inner_tls.read_buf` would always immediately complete.
-        let mut sent_inner_eof = false;
-        // Buffer for incoming data; this should grow to no larger than [`MAX_READ_BUF`] as we
-        // limit the stream to ensure we don't read past an incoming chunk boundry.
-        let mut read_buffer = vec![];
-        let mut outer_stream = outer_stream.take(MAX_CHUNK_SIZE.into());
-        loop {
-            // Calculate the limit to apply when reading from the stream to ensure we don't cross a
-            // chunk boundry. This is important since we must return the stream at the start of an
-            // outer TLS session chunk.
-            //
-            // This also ensures we maintain a reasonable buffer size, so we may read a chunk across
-            // multiple iterations of this select loop.
-            //
-            // It would have been convenient to use [`AsyncReadExt::read_exact`], but it's not cancel-
-            // safe and could result in partial reads to the buffer across `select!` invocations.
-            let current_chunk_size = match incoming_chunk {
-                Chunk::Unknown => {
-                    outer_stream.set_limit(4);
-                    0
-                }
-                Chunk::Inner(0) => {
-                    tracing::info!("Sigul server signaled end of inner TLS stream");
-                    break Ok::<_, Error>(());
-                }
-                Chunk::Inner(chunk_size) => {
-                    // Return a buffer that ensures we don't read past the current chunk, and that
-                    // also limits the amount we'll read in one go to something less than the max
-                    // chunk size of ~2GB.
-                    let size = MAX_READ_BUF.min(chunk_size.into());
-                    outer_stream.set_limit(size);
-                    chunk_size
-                }
-                Chunk::Outer(_) => {
-                    // Based on Sigul 1.2, it appears that it is forbidden to send data to the outer
-                    // stream while the inner stream is active. Therefore, if a chunk arrives for
-                    // the outer stream, this will return a [`Error::ProtocolViolation`]. There's no
-                    // technical reason this couldn't handle interlaced chunks, but as it does not
-                    // appear to be required by the Python implementation, there's no reason to
-                    // handle it here. It's also entirely possible the author misunderstood the
-                    // Python implementation, in which case this must be adjusted to split out the
-                    // traffic.
-                    return Err(Error::ProtocolViolation(
-                        "outer TLS data receieved while inner TLS session is active".to_string(),
-                    ));
-                }
-            };
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.as_mut().inner).poll_shutdown(cx)
+    }
+}
 
-            tokio::select! {
-                // Forward any bytes written to the inner TLS session
-                total_bytes = client_inner_tls.read_buf(&mut inner_outgoing_buf), if !sent_inner_eof => {
-                    // We expect to have completely written out the buffer each time.
-                    let total_bytes = total_bytes?;
-                    let to_write = inner_outgoing_buf.split().freeze();
-                    debug_assert_eq!(total_bytes, to_write.len());
-                    tracing::trace!(total_bytes, "Forwarding bytes client wrote to the inner TLS session");
+// TODO Things the connection should have config for:
+//
+// Optional timeout for connection to bridge vs the nested TLS session
+// The protocol version being used
 
-                    // Unfortunately this is required since the limited stream doesn't seem to support
-                    // the AsyncWriteExt trait. We re-wrap it after we've written everything.
-                    let stream_limit = outer_stream.limit();
-                    let mut unlimited_outer_stream = outer_stream.into_inner();
+impl NestlsBuilder {
+    /// Build a configuration for a [`Nestls`] connection.
+    fn new(bridge_ssl: Ssl, role: Role) -> Self {
+        Self { bridge_ssl, role }
+    }
 
-                    if total_bytes == 0 {
-                        // Indicates an end-of-stream; to signal this to the bridge we send CHUNK_INNER_MASK
-                        unlimited_outer_stream.write_u32(CHUNK_INNER_MASK).await?;
-                        tracing::debug!("Sent EOF for inner TLS stream");
-                        sent_inner_eof = true;
-                    }
+    /// Connect to the bridge and perform the protocol handshake.
+    #[instrument(err, skip(bridge_addr, bridge_ssl), level = "debug")]
+    async fn connect_to_bridge<A: ToSocketAddrs + std::fmt::Debug>(
+        bridge_addr: A,
+        bridge_ssl: Ssl,
+        role: Role,
+    ) -> Result<(SslStream<TcpStream>, Uuid), Error> {
+        let outer_stream = TcpStream::connect(&bridge_addr).await?;
+        tracing::debug!(?bridge_addr, "TCP connection to the bridge established");
+        let mut outer_stream = tokio_openssl::SslStream::new(bridge_ssl, outer_stream)?;
+        Pin::new(&mut outer_stream).connect().await?;
+        let username = outer_stream
+            .ssl()
+            .certificate()
+            .and_then(|cert| {
+                cert.subject_name()
+                    .entries_by_nid(Nid::COMMONNAME)
+                    .next()
+                    .and_then(|entry| entry.data().as_utf8().ok())
+            })
+            .map(|common_name| common_name.to_string());
+        tracing::debug!(?username, "TLS session with the bridge established");
 
-                    for chunk in to_write.chunks(MAX_CHUNK_SIZE.try_into().expect("platform with at least 4 byte usize needed")) {
-                        let chunk_size = chunk.len();
-                        tracing::trace!(
-                            chunk_size,
-                            total_bytes,
-                            "Sending chunk to the server via the inner TLS stream"
-                        );
-                        unlimited_outer_stream
-                            .write_u32(chunk_size as u32 | CHUNK_INNER_MASK)
-                            .await?;
-                        unlimited_outer_stream.write_all(chunk).await?;
-                    }
+        let protocol_header: ProtocolHeader = role.into();
+        let protocol_header = protocol_header.as_bytes();
+        outer_stream.write_all(protocol_header).await?;
+        tracing::debug!(
+            bytes_sent = protocol_header.len(),
+            "Protocol header sent to the bridge"
+        );
+        let session_id = ProtocolAck::check(&mut outer_stream).await?;
 
-                    outer_stream = unlimited_outer_stream.take(stream_limit);
-                },
+        tracing::info!(
+            ?bridge_addr,
+            ?session_id,
+            "Connection to the bridge established."
+        );
+        Ok((outer_stream, session_id))
+    }
 
-                // Read bytes from the bridge.
-                //
-                // Note that `outer_stream` has a limit placed on it, so when we
-                // read to the end, it's not _really_ the end of the stream. We
-                // detect an end-of-stream event at the start of the loop.
-                num_bytes = outer_stream.read_to_end(&mut read_buffer) => {
-                    let num_bytes: u32 = num_bytes?.try_into().expect("read more than CHUNK_SIZE_MAX bytes from stream");
-                    tracing::trace!(num_bytes, ?incoming_chunk, "Received bytes from the Sigul bridge");
-                    if incoming_chunk == Chunk::Unknown {
-                        if read_buffer.is_empty() {
-                            let message = "Sigul sent EOF during inner TLS session; the sigul server might not be reachable".to_string();
-                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, message).into());
-                        }
-                        debug_assert_eq!(read_buffer.len(), 4);
-                        incoming_chunk = Bytes::from(read_buffer.clone()).get_u32().into();
-                        tracing::debug!(?incoming_chunk, "Received chunk during inner TLS session");
-                    } else {
-                        client_inner_tls.write_all(&read_buffer).await?;
-                        let remaining_bytes = current_chunk_size - num_bytes;
-                        tracing::trace!(num_bytes, remaining_bytes, "Wrote bytes to inner stream");
-                        if remaining_bytes > 0 {
-                            incoming_chunk = Chunk::Inner(remaining_bytes);
-                        } else {
-                            incoming_chunk = Chunk::Unknown;
-                        }
-                    }
-                    read_buffer.clear();
-                },
-            }
-        }?;
+    /// Connect to a nested TLS server.
+    #[instrument(err, skip(self, server_ssl))]
+    pub async fn connect<S: ToSocketAddrs + std::fmt::Debug>(
+        self,
+        bridge_addr: S,
+        server_ssl: Ssl,
+    ) -> Result<Nestls, Error> {
+        let (outer_stream, session_id) =
+            Self::connect_to_bridge(bridge_addr, self.bridge_ssl, self.role).await?;
 
-        Ok(outer_stream.into_inner())
+        let mut inner = tokio_openssl::SslStream::new(server_ssl, outer_stream)?;
+        Pin::new(&mut inner).connect().await?;
+        tracing::debug!(?session_id, "Inner TLS session with the server established");
+
+        Ok(Nestls { inner, session_id })
+    }
+
+    /// Accept a new incoming nested TLS connection.
+    #[instrument(err, skip(self, ssl))]
+    pub async fn accept<S: ToSocketAddrs + std::fmt::Debug>(
+        self,
+        bridge_addr: S,
+        ssl: Ssl,
+    ) -> Result<Nestls, Error> {
+        let (outer_stream, session_id) =
+            Self::connect_to_bridge(bridge_addr, self.bridge_ssl, self.role).await?;
+
+        let mut inner = tokio_openssl::SslStream::new(ssl, outer_stream)?;
+        Pin::new(&mut inner).accept().await?;
+        tracing::debug!("Accepted new inner TLS connection from a client");
+
+        Ok(Nestls { inner, session_id })
     }
 }

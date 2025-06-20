@@ -3,7 +3,7 @@ name = "siguldry"
 license = "MIT"
 edition = { workspace = true }
 rust-version = { workspace = true }
-version = "0.3.1"
+version = "0.4.0"
 readme = "README.md"
 description = """
 An implementation of the Sigul protocol.
@@ -15,8 +15,14 @@ repository = "https://github.com/fedora-infra/siguldry"
 workspace = true
 
 [features]
-default = []
-client-cli = ["clap", "tracing-subscriber", "tokio/fs"]
+default = ["server", "cli"]
+# Enable the server APIs
+server = ["sqlx"]
+# Build command-line interfaces for enabled components
+cli = ["clap", "tracing-subscriber", "toml", "tokio/rt-multi-thread", "tokio/signal"]
+
+# Build the Sigul 1.2 client
+sigul-client = []
 
 
 [dependencies.anyhow]
@@ -38,6 +44,14 @@ version = "0.10"
 version = "1.0.145"
 features = ["derive"]
 
+[dependencies.serde_json]
+version = "1"
+
+[dependencies.sqlx]
+version = "0.8"
+features = ["runtime-tokio", "sqlite-unbundled", "macros", "migrate"]
+optional = true
+
 [dependencies.thiserror]
 version = "2"
 
@@ -47,10 +61,15 @@ features = ["macros", "net", "rt", "io-util", "time"]
 
 [dependencies.tokio-util]
 version = "0.7"
-features = ["io"]
+features = ["io", "rt"]
 
 [dependencies.tokio-openssl]
 version = "0.6"
+
+# Used for deserializing the configuration file
+[dependencies.toml]
+version = "0.9"
+optional = true
 
 [dependencies.tracing]
 version = "0.1.36"
@@ -61,10 +80,31 @@ default-features = false
 features = ["std", "registry", "fmt", "env-filter"]
 optional = true
 
+# Used to generate unique IDs for each request
+[dependencies.uuid]
+version = "1.6"
+features = ["v7", "serde"]
+
+[dependencies.zerocopy]
+version = "0.8"
+features = ["std", "derive"]
+
 
 [dev-dependencies]
 anyhow = "1"
+assert_cmd = "2"
+criterion = "0.7"
 proptest = "1.6"
+tempfile = "3"
+
+[dev-dependencies.tokio]
+version = "1.27"
+features = ["process"]
+
+[dev-dependencies.tracing-test]
+version = "0.2"
+# env filtering breaks usage in integration tests
+features = ["no-env-filter"]
 
 [dev-dependencies.pyo3]
 version = "0.25"
@@ -78,6 +118,19 @@ default-features = false
 features = ["crypto-openssl"]
 
 
+[[bench]]
+name = "end_to_end"
+harness = false
+
+
 [[bin]]
 name = "siguldry-client"
-required-features = ["client-cli"]
+required-features = ["cli"]
+
+[[bin]]
+name = "siguldry-server"
+required-features = ["server", "cli"]
+
+[[bin]]
+name = "siguldry-bridge"
+required-features = ["cli"]

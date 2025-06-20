@@ -1,6 +1,6 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH sigul-pesign-bridge 1  "sigul-pesign-bridge 0.5.0" 
+.TH sigul-pesign-bridge 1  "sigul-pesign-bridge 0.5.1" 
 .SH NAME
 sigul\-pesign\-bridge \- An alternative to the pesign daemon interface
 .SH SYNOPSIS
@@ -13,7 +13,7 @@ The Unix socket this service offers can be used by pesign\-client. Rather than s
 Log configuration is provided using the "SIGUL_PESIGN_BRIDGE_LOG" environment variable with one or more comma\-separated directives. In short, filters can be plain verbosity levels ("trace", "debug", "info", "warn", "error"), or more complex filtering at the model, span, or event level.
 .SH OPTIONS
 .TP
-\fB\-c\fR, \fB\-\-config\fR=\fICONFIG\fR
+\fB\-c\fR, \fB\-\-config\fR \fI<CONFIG>\fR
 Path to the configuration file.
 
 If no path is provided, the defaults are used. To view the service defaults, run the `config` subcommand.
@@ -21,7 +21,7 @@ If no path is provided, the defaults are used. To view the service defaults, run
 May also be specified with the \fBSIGUL_PESIGN_BRIDGE_CONFIG\fR environment variable. 
 .RE
 .TP
-\fB\-\-log\-filter\fR=\fILOG_FILTER\fR [default: WARN,sigul_pesign_bridge=INFO,siguldry=INFO]
+\fB\-\-log\-filter\fR \fI<LOG_FILTER>\fR [default: WARN,sigul_pesign_bridge=INFO,siguldry=INFO]
 A set of one or more comma\-separated directives to filter logs.
 
 The general format is "target_name[span_name{field=value}]=level" where level is one of TRACE, DEBUG, INFO, WARN, ERROR.
@@ -47,4 +47,4 @@ Print the current service configuration to standard output
 sigul\-pesign\-bridge\-help(1)
 Print this message or the help of the given subcommand(s)
 .SH VERSION
-v0.5.0
+v0.5.1

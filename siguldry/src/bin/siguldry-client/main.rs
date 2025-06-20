@@ -1,85 +1,98 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::Parser;
+use siguldry::{
+    client::{Client, Config},
+    config::load_config,
+};
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter};
 
+// The path, relative to $XDG_CONFIG_HOME, of the default config file location.
+const DEFAULT_CONFIG: &str = "siguldry/client.toml";
+
+/// The siguldry client
 #[derive(Debug, Parser)]
+#[command(version)]
 struct Cli {
-    /// The bridge's hostname used to connect to it as well as validate its TLS certificate.
-    #[arg(long)]
-    bridge_hostname: String,
-    /// The port to use when connecting to the bridge.
-    #[arg(long)]
-    bridge_port: u16,
-    /// The server's hostname, used to validate its TLS certificate.
-    #[arg(long)]
-    server_hostname: String,
-    /// The username to authenticate as.
-    #[arg(long)]
-    user_name: String,
-    /// The client certificate used to authenticate the user.
-    #[arg(long)]
-    certificate: PathBuf,
-    /// The private key for the client certificate.
-    #[arg(long)]
-    private_key: PathBuf,
-    /// The path to a file containing the passphrase protecting the private key, if
-    /// the key is encrypted.
-    #[arg(long)]
-    private_key_passphrase: Option<PathBuf>,
-    /// Path to the certificate authority's PEM-encoded certificate, used to validate
-    /// the Sigul bridge's and Sigul server's TLS certificate.
-    #[arg(long)]
-    ca_file: PathBuf,
+    /// The path to the client's configuration file.
+    ///
+    /// If no path is provided, the configuration file at $XDG_CONFIG_HOME/siguldry/client.toml
+    /// is used, if it exists. If it does not exist, the configuration defaults are used. Note
+    /// that the defaults include server hostnames and are useful only as an example.
+    ///
+    /// To view the client configuration, run the `config` subcommand.
+    #[arg(long, short, env = "SIGULDRY_CLIENT_CONFIG")]
+    config: Option<PathBuf>,
+
+    /// The directory containing the client's authentication secrets.
+    ///
+    /// Any file referenced in the configuration that are not absolute paths are
+    /// expected to be in this directory. If this value is not supplied and any
+    /// configuration values are relative paths, the client will exit with an error.
+    ///
+    /// The recommended approach to securely store your credentials is with systemd-creds.
+    ///
+    /// # Example
+    ///
+    /// ```bash
+    /// # Requires systemd v258
+    ///
+    /// # Encrypt the necessary credentials
+    /// $ systemd-creds encrypt /secure/ramfs/siguldry.client.private_key.pem \
+    ///     "$HOME/.config/credstore.encrypted/siguldry.client.private_key.pem"
+    /// $ systemd-creds encrypt /secure/ramfs/siguldry.client.certificate.pem \
+    ///     "$HOME/.config/credstore.encrypted/siguldry.client.certificate.pem"
+    /// $ systemd-creds encrypt /secure/ramfs/siguldry.ca_certificate.pem \
+    ///     "$HOME/.config/credstore.encrypted/siguldry.ca_certificate.pem"
+    ///
+    /// # Spawn a shell where systemd decrypts the credentials for you.
+    /// $ systemd-run --user -S -p "ImportCredentials=siguldry.*"
+    /// $ siguldry-client whoami
+    /// ```
+    #[arg(long, env = "CREDENTIALS_DIRECTORY", verbatim_doc_comment)]
+    credentials_directory: Option<PathBuf>,
+
+    /// A set of one or more comma-separated directives to filter logs.
+    ///
+    /// The general format is "target_name[span_name{field=value}]=level" where level is
+    /// one of TRACE, DEBUG, INFO, WARN, ERROR.
+    ///
+    /// Details: https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/filter/struct.EnvFilter.html#directives
+    #[arg(
+        long,
+        env = "SIGULDRY_CLIENT_LOG",
+        default_value = "WARN,siguldry=INFO"
+    )]
+    pub log_filter: String,
     #[command(subcommand)]
     pub command: Command,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Command {
-    ListUsers {
-        #[arg(long)]
-        admin_passphrase: PathBuf,
-    },
-    /// Show information about a user.
-    ///
-    /// The only information available is whether or not the user is an administrator.
-    UserInfo {
-        #[arg(long)]
-        admin_passphrase: PathBuf,
-        /// The name of the user to look up.
-        #[arg(long)]
-        name: String,
-    },
-    SignPe {
-        #[arg(long)]
-        input: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-        #[arg(long)]
-        key_passphrase: PathBuf,
-        #[arg(long)]
-        key_name: String,
-        #[arg(long)]
-        cert_name: String,
-    },
+    /// Attempt to authenticate with the server and print the username of the authenticated user.
+    Whoami,
+    /// List the users on the server.
+    ListUsers,
+    /// See the current configuration, or the defaults if no configuration file is supplied.
+    Config,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let opts = Cli::parse();
 
-    let default_directive = "WARN"
-        .parse()
-        .expect("Programming error: default directive should be valid");
-    let log_filter = EnvFilter::builder()
-        .with_default_directive(default_directive)
-        .with_env_var("SIGULDRY_LOG")
-        .from_env()?;
+    // Unfortunately we can't use clap's value_parser since EnvFilter does not
+    // implement Clone.
+    let log_filter = EnvFilter::builder().parse(&opts.log_filter).context(
+        "SIGULDRY_CLIENT_LOG contains an invalid log directive; refer to \
+            https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/\
+            filter/struct.EnvFilter.html#directives for format details.",
+    )?;
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
         .with_writer(std::io::stderr);
@@ -89,74 +102,34 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
 
-    let tls_config = siguldry::client::TlsConfig::new(
-        opts.certificate,
-        opts.private_key,
-        opts.private_key_passphrase,
-        opts.ca_file,
-    )?;
-    let client = siguldry::client::Client::new(
-        tls_config,
-        opts.bridge_hostname,
-        opts.bridge_port,
-        opts.server_hostname,
-        opts.user_name.clone(),
-    );
-    match opts.command {
-        Command::ListUsers { admin_passphrase } => {
-            let users = tokio::time::timeout(
-                Duration::from_secs(30),
-                client.users(admin_passphrase.as_path().try_into()?),
-            )
-            .await
-            .context("request timed out")??;
-            for user in users {
-                println!("{user}");
-            }
-        }
-        Command::UserInfo {
-            admin_passphrase,
-            name,
-        } => {
-            let user = tokio::time::timeout(
-                Duration::from_secs(30),
-                client.get_user(admin_passphrase.as_path().try_into()?, name),
-            )
-            .await
-            .context("request timed out")??;
-            println!("Administrator: {}", if user.admin() { "yes" } else { "no" });
-        }
-        Command::SignPe {
-            input,
-            output,
-            key_passphrase,
-            key_name,
-            cert_name,
-        } => {
-            let input = tokio::fs::File::open(&input)
-                .await
-                .with_context(|| format!("failed to read input file '{}'", &input.display()))?;
-            let signed_output = tokio::fs::File::create_new(&output)
-                .await
-                .with_context(|| format!("failed to create output file '{}'", &output.display()))?;
+    let mut config = load_config::<Config>(opts.config, PathBuf::from(DEFAULT_CONFIG).as_path())?;
 
-            tokio::time::timeout(Duration::from_secs(60), async {
-                client
-                    .sign_pe(
-                        input,
-                        signed_output,
-                        key_passphrase.as_path().try_into()?,
-                        key_name,
-                        cert_name,
-                    )
-                    .await
-                    .inspect_err(|_| {
-                        let _ = std::fs::remove_file(&output);
-                    })
-            })
-            .await
-            .context("request timed out")??;
+    if let Command::Config = opts.command {
+        println!("# This is the current configuration\n\n{config}\n# This concludes the configuration.\n");
+
+        opts.credentials_directory
+        .as_ref()
+        .map(|path| config.credentials.with_credentials_dir(path).inspect_err(|error|{
+            eprintln!("The configuration format is valid, but the referenced credentials aren't valid: {error:?}");
+        }));
+        return Ok(());
+    }
+
+    opts.credentials_directory
+        .as_ref()
+        .map(|path| config.credentials.with_credentials_dir(path));
+    let client = Client::new(config)?;
+    match opts.command {
+        Command::Whoami => {
+            let user = client.who_am_i().await?;
+            println!("Hello, {user}, you can successfully authenticate with the server!");
         }
+        Command::ListUsers => {
+            let users = client.list_users().await?;
+            let users = users.join("\n");
+            println!("{users}");
+        }
+        Command::Config => unreachable!("Command handled prior to this match"),
     }
 
     Ok(())
