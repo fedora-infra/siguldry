@@ -69,16 +69,10 @@ features = ["auto-initialize"]
 
 # As we use OpenSSL for the TLS connection, let's stick with it for this as well.
 # The upstream default engine is nettle.
-#
-# Bump to 2.0 once Rust 1.85 is available (November 2025)
 [dev-dependencies.sequoia-openpgp]
 version = "2"
 default-features = false
 features = ["crypto-openssl"]
-
-[dev-dependencies.base64ct]
-# Pinned as 1.8 needs Rust 1.85 and its a dep of sequoia
-version = "< 1.8"
 
 
 [[bin]]

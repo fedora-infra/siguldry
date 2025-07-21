@@ -1,6 +1,9 @@
 [alias]
 xtask = "run --package xtask --"
 
+[resolver]
+incompatible-rust-versions = "fallback"
+
 [target.'cfg(all())']
 rustflags = [
     # Reject unsafe code - we shouldn't need it for anything here.
