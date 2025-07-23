@@ -11,6 +11,9 @@ An implementation of the Sigul protocol.
 keywords = ["pesign", "sigul", "fedora"]
 repository = "https://github.com/fedora-infra/siguldry"
 
+[lints]
+workspace = true
+
 [features]
 default = []
 client-cli = ["clap", "tracing-subscriber", "tokio/fs"]

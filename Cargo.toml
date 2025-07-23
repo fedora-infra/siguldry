@@ -12,3 +12,109 @@ members = [
 rust-version = "1.84"
 edition = "2021"
 license = "MIT"
+
+[workspace.lints.rust]
+# We shouldn't need to do anything unsafe
+unsafe-code = {level = "forbid", priority = 1}
+# Opt in to a few additional lints from rustc
+#
+# Refer to `rustc -W help` output for lint groups and individual rules.
+future-incompatible = "warn"
+nonstandard-style = "warn"
+rust-2018-idioms = "warn"
+
+
+[workspace.lints.clippy]
+# Warn on all default lint categories (correctness, suspicious, style, complexity, and perf).
+# All remaining enabled lints are from non-default categories which may, in the future, enter
+# one of the default categories.
+all = "warn"
+
+# Opt in to some non-standard clippy lints.
+#
+# This list was based off of the Embark Studios standard lints v6 for Rust 1.55+, but
+# has been adjusted since some lints have either been removed or moved to a default
+# category as of Rust 1.88.
+
+#######################################################################
+#                           Pedantic Lints                            #
+# These lints are rather strict or occasionally have false positives. #
+#######################################################################
+# The following rules are machine-applicable.
+checked_conversions = "warn"
+# This mangles the CLI documentation, it would be nice to have
+# if that quirk could be addressed.
+# doc_markdown = "warn"
+enum_glob_use = "warn"
+explicit_deref_methods = "warn"
+explicit_into_iter_loop = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+map_unwrap_or = "warn"
+needless_for_each = "warn"
+ptr_as_ptr = "warn"
+semicolon_if_nothing_returned = "warn"
+single_match_else = "warn"
+unnested_or_patterns = "warn"
+
+# The following rules are NOT machine-applicable.
+empty_enum = "warn"
+expl_impl_clone_on_copy = "warn"
+fn_params_excessive_bools = "warn"
+from_iter_instead_of_collect = "warn"
+invalid_upcast_comparisons = "warn"
+large_digit_groups = "warn"
+large_stack_arrays = "warn"
+large_types_passed_by_value = "warn"
+linkedlist = "warn"
+macro_use_imports = "warn"
+match_same_arms = "warn"
+match_wild_err_arm = "warn"
+match_wildcard_for_single_variants = "warn"
+mut_mut = "warn"
+needless_continue = "warn"
+option_option = "warn"
+ref_option_ref = "warn"
+same_functions_in_if_condition = "warn"
+string_add_assign = "warn"
+unused_self = "warn"
+zero_sized_map_values = "warn"
+
+#######################################################################
+#                          Restriction Lints                          #
+# These lints prevent use of various language and library features.   #
+#######################################################################
+# The following rules are machine-applicable.
+dbg_macro = "warn"
+lossy_float_literal = "warn"
+string_to_string = "warn"
+
+# The following rules are NOT machine-applicable.
+exit = "warn"
+float_cmp_const = "warn"
+mem_forget = "warn"
+mutex_integer = "warn"
+rc_mutex = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+string_add = "warn"
+todo = "warn"
+unimplemented = "warn"
+verbose_file_reads = "warn"
+exhaustive_enums = "warn"
+indexing_slicing = "warn"
+
+#######################################################################
+#                            Nursery Lints                            #
+# These lints are still under development in Clippy.                  #
+#######################################################################
+# The following rules are machine-applicable.
+imprecise_flops = "warn"
+string_lit_as_bytes = "warn"
+trait_duplication_in_bounds = "warn"
+
+# The following rules are NOT machine-applicable.
+debug_assert_with_mut_call = "warn"
+fallible_impl_from = "warn"
+path_buf_push_overwrite = "warn"

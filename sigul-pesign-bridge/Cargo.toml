@@ -13,6 +13,8 @@ keywords = ["pesign", "sigul", "fedora"]
 categories = ["command-line-utilities"]
 repository = "https://github.com/jeremycline/siguldry"
 
+[lints]
+workspace = true
 
 [dependencies.anyhow]
 version = "1.0.47"
