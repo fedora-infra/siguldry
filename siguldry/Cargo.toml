@@ -17,7 +17,7 @@ workspace = true
 [features]
 default = ["server", "cli"]
 # Enable the server APIs
-server = ["sqlx"]
+server = ["sqlx", "sequoia-keystore", "sequoia-openpgp", "rustix"]
 # Build command-line interfaces for enabled components
 cli = ["clap", "tracing-subscriber", "toml", "tokio/rt-multi-thread", "tokio/signal"]
 
@@ -40,9 +40,28 @@ optional = true
 [dependencies.openssl]
 version = "0.10"
 
+[dependencies.rustix]
+version = "1"
+features = ["termios", "stdio"]
+optional = true
+
 [dependencies.serde]
 version = "1.0.145"
 features = ["derive"]
+
+# As we use OpenSSL for the TLS connection, let's stick with it for this as well.
+# The upstream default engine is nettle.
+[dependencies.sequoia-openpgp]
+version = "2"
+default-features = false
+features = ["crypto-openssl"]
+optional = true
+
+[dependencies.sequoia-keystore]
+version = "0.7"
+default-features = false
+features = ["softkeys"]
+optional = true
 
 [dependencies.serde_json]
 version = "1"
@@ -51,6 +70,9 @@ version = "1"
 version = "0.8"
 features = ["runtime-tokio", "sqlite-unbundled", "macros", "migrate"]
 optional = true
+
+[dependencies.tempfile]
+version = "3"
 
 [dependencies.thiserror]
 version = "2"
@@ -95,7 +117,6 @@ anyhow = "1"
 assert_cmd = "2"
 criterion = "0.7"
 proptest = "1.6"
-tempfile = "3"
 
 [dev-dependencies.tokio]
 version = "1.27"
@@ -110,8 +131,6 @@ features = ["no-env-filter"]
 version = "0.25"
 features = ["auto-initialize"]
 
-# As we use OpenSSL for the TLS connection, let's stick with it for this as well.
-# The upstream default engine is nettle.
 [dev-dependencies.sequoia-openpgp]
 version = "2"
 default-features = false

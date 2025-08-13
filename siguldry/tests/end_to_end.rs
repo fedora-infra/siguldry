@@ -4,8 +4,11 @@
 #![cfg(feature = "server")]
 
 use std::{
+    io::Write,
     net::SocketAddr,
+    num::NonZeroU16,
     path::{Path, PathBuf},
+    process::Stdio,
     str::FromStr,
 };
 
@@ -14,7 +17,8 @@ use assert_cmd::cargo::CommandCargoExt;
 use siguldry::{
     bridge, client,
     config::Credentials,
-    error::{ClientError, ConnectionError, ProtocolError},
+    error::{ClientError, ConnectionError, ProtocolError, ServerError},
+    protocol::GpgSignatureType,
     server,
 };
 use tokio::process::Command;
@@ -104,11 +108,14 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
         .instrument(tracing::info_span!("bridge"))
         .await?;
 
-    let server_config = server::config::Config {
+    let server_config = server::Config {
         state_directory: tempdir.path().into(),
         bridge_hostname: bridge_hostname.to_string(),
         bridge_port: bridge.server_port(),
         credentials: creds.server.clone(),
+        user_password_length: NonZeroU16::new("🪿🪿🪿".len() as u16).expect("it's three geese"),
+        pkcs11_bindings: vec![],
+        connection_pool_size: 1,
         ..Default::default()
     };
     let server_config_file = tempdir.path().join("server.toml");
@@ -124,10 +131,30 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     let mut create_user_command = std::process::Command::cargo_bin("siguldry-server")?;
     let result = create_user_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
-        .args(["manage", "users", "add", "sigul-client"])
+        .args(["manage", "users", "create", "sigul-client"])
         .output()?;
     if !result.status.success() {
         panic!("failed to create test user");
+    }
+    let mut create_gpg_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut child = create_gpg_key_command
+        .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
+        .args([
+            "manage",
+            "gpg",
+            "create",
+            "sigul-client",
+            "test-gpg-key",
+            "admin@example.com",
+        ])
+        .stdin(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all("🪿🪿🪿\n".as_bytes())?;
+    drop(stdin);
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        panic!("failed to create test key");
     }
 
     let server = server::service::Server::new(server_config).await?;
@@ -277,6 +304,255 @@ async fn bridge_rejects_client_cert_empty_common_name() -> anyhow::Result<()> {
             assert_eq!(error, ProtocolError::MissingCommonName);
         }
         Err(other) => panic!("Incorrect error variant returned: {other:?}"),
+    }
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn unlock_gpg_key() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+
+    client
+        .unlock("test-gpg-key".to_string(), "🪿🪿🪿".to_string())
+        .await?;
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn wrong_gpg_password() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+
+    let result = client
+        .unlock("test-gpg-key".to_string(), "🪿🪿🦆".to_string())
+        .await;
+    // TODO: split out server-side errors from client request errors
+    assert!(result.is_err_and(|err| matches!(err, ClientError::Server(ServerError::Internal))));
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn unlock_key_doesnt_exist() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+
+    let result = client
+        .unlock(
+            "not-a-real-key".to_string(),
+            "a boring password".to_string(),
+        )
+        .await;
+    // TODO: split out server-side errors from client request errors
+    assert!(result.is_err_and(|err| matches!(err, ClientError::Server(ServerError::Internal))));
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn gpg_sign_inline() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let key_name = "test-gpg-key";
+
+    client
+        .unlock(key_name.to_string(), "🪿🪿🪿".to_string())
+        .await?;
+    let mut keys = client.certificates(key_name.to_string()).await?;
+    assert_eq!(1, keys.len());
+    let key = keys.pop().unwrap();
+    let signature = client
+        .gpg_sign(
+            key_name.to_string(),
+            GpgSignatureType::Inline,
+            bytes::Bytes::from(data),
+        )
+        .await?;
+
+    match key {
+        siguldry::protocol::Certificate::Gpg {
+            version: _version,
+            certificate,
+            fingerprint,
+        } => {
+            let keyring_path = instance.state_dir.path().join("gpg_sign_keyring.asc");
+            std::fs::write(&keyring_path, certificate)?;
+            let sig_path = instance.state_dir.path().join("gpg_sign_data.sig");
+            std::fs::write(&sig_path, &signature)?;
+            let mut command = tokio::process::Command::new("sq");
+            let output = command
+                .arg("verify")
+                .arg(format!("--trust-root={}", &fingerprint))
+                .arg(format!("--keyring={}", keyring_path.display()))
+                .arg("--message")
+                .arg(sig_path)
+                .output()
+                .await?;
+            assert!(output.status.success());
+            let stdout = String::from_utf8(output.stdout)?;
+            let stderr = String::from_utf8(output.stderr)?;
+            assert_eq!(stdout, "🦡🦡🦡🦡🍄🍄");
+            assert!(stderr.contains(&format!(
+                "Authenticated signature made by {} ({} <admin@example.com>)",
+                fingerprint, key_name
+            )));
+        }
+        _ => panic!("unexpected key type"),
+    }
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn gpg_sign_detached() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let key_name = "test-gpg-key";
+
+    client
+        .unlock(key_name.to_string(), "🪿🪿🪿".to_string())
+        .await?;
+    let mut keys = client.certificates(key_name.to_string()).await?;
+    assert_eq!(1, keys.len());
+    let key = keys.pop().unwrap();
+    let signature = client
+        .gpg_sign(
+            key_name.to_string(),
+            GpgSignatureType::Detached,
+            bytes::Bytes::from(data),
+        )
+        .await?;
+
+    match key {
+        siguldry::protocol::Certificate::Gpg {
+            version: _version,
+            certificate,
+            fingerprint,
+        } => {
+            let keyring_path = instance.state_dir.path().join("gpg_sign_keyring.asc");
+            std::fs::write(&keyring_path, certificate)?;
+
+            let data_path = instance.state_dir.path().join("gpg_sign_data");
+            std::fs::write(&data_path, data)?;
+
+            let sig_path = instance.state_dir.path().join("gpg_sign_data.sig");
+            std::fs::write(&sig_path, &signature)?;
+            let mut command = tokio::process::Command::new("sq");
+            let output = command
+                .arg("verify")
+                .arg(format!("--trust-root={}", &fingerprint))
+                .arg(format!("--keyring={}", keyring_path.display()))
+                .arg(format!("--signature-file={}", sig_path.display()))
+                .arg(data_path)
+                .output()
+                .await?;
+            let stderr = String::from_utf8(output.stderr)?;
+            assert!(output.status.success());
+            assert!(stderr.contains(&format!(
+                "Authenticated signature made by {} ({} <admin@example.com>)",
+                fingerprint, key_name
+            )));
+        }
+        _ => panic!("unexpected key type"),
+    }
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn gpg_sign_cleartext() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let key_name = "test-gpg-key";
+
+    client
+        .unlock(key_name.to_string(), "🪿🪿🪿".to_string())
+        .await?;
+    let mut keys = client.certificates(key_name.to_string()).await?;
+    assert_eq!(1, keys.len());
+    let key = keys.pop().unwrap();
+
+    let signature = client
+        .gpg_sign(
+            key_name.to_string(),
+            GpgSignatureType::Cleartext,
+            bytes::Bytes::from(data),
+        )
+        .await?;
+    let signature_text = String::from_utf8(signature.to_vec())?;
+    assert!(signature_text.contains(
+        "-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+🦡🦡🦡🦡🍄🍄
+-----BEGIN PGP SIGNATURE-----"
+    ));
+
+    match key {
+        siguldry::protocol::Certificate::Gpg {
+            version: _version,
+            certificate,
+            fingerprint,
+        } => {
+            let keyring_path = instance.state_dir.path().join("gpg_sign_keyring.asc");
+            std::fs::write(&keyring_path, certificate)?;
+            let sig_path = instance.state_dir.path().join("gpg_sign_data.sig");
+            std::fs::write(&sig_path, &signature)?;
+            let mut command = tokio::process::Command::new("sq");
+            let output = command
+                .arg("verify")
+                .arg(format!("--trust-root={}", &fingerprint))
+                .arg(format!("--keyring={}", keyring_path.display()))
+                .arg("--message")
+                .arg(sig_path)
+                .output()
+                .await?;
+            assert!(output.status.success());
+            let stdout = String::from_utf8(output.stdout)?;
+            let stderr = String::from_utf8(output.stderr)?;
+            assert_eq!(stdout, "🦡🦡🦡🦡🍄🍄");
+            assert!(stderr.contains(&format!(
+                "Authenticated signature made by {} ({} <admin@example.com>)",
+                fingerprint, key_name
+            )));
+        }
+        _ => panic!("unexpected key type"),
     }
 
     drop(client);

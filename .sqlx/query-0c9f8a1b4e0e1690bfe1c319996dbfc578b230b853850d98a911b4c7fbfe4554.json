@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT * FROM public_key_material WHERE key_id = $1 AND data_type = $2;",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "key_id",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "data_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "data",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0c9f8a1b4e0e1690bfe1c319996dbfc578b230b853850d98a911b4c7fbfe4554"
+}

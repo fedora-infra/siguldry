@@ -6,8 +6,11 @@
 #![cfg(feature = "server")]
 
 use std::{
+    io::Write,
     net::SocketAddr,
+    num::NonZeroU16,
     path::{Path, PathBuf},
+    process::Stdio,
     str::FromStr,
     time::Duration,
 };
@@ -15,7 +18,7 @@ use std::{
 use anyhow::bail;
 use assert_cmd::cargo::CommandCargoExt;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use siguldry::{bridge, client, config::Credentials, server};
+use siguldry::{bridge, client, config::Credentials, protocol::GpgSignatureType, server};
 use tokio::{process::Command, task::JoinSet};
 use tracing::Instrument;
 
@@ -103,12 +106,15 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
         .instrument(tracing::info_span!("bridge"))
         .await?;
 
-    let server_config = server::config::Config {
+    let server_config = server::Config {
         state_directory: tempdir.path().into(),
         bridge_hostname: bridge_hostname.to_string(),
         bridge_port: bridge.server_port(),
         credentials: creds.server.clone(),
-        connection_pool_size: 32,
+        user_password_length: NonZeroU16::new("🪿🪿🪿".len() as u16).expect("it's three geese"),
+        pkcs11_bindings: vec![],
+        connection_pool_size: 1,
+        ..Default::default()
     };
     let server_config_file = tempdir.path().join("server.toml");
     std::fs::write(&server_config_file, toml::to_string_pretty(&server_config)?)?;
@@ -123,10 +129,30 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     let mut create_user_command = std::process::Command::cargo_bin("siguldry-server")?;
     let result = create_user_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
-        .args(["manage", "users", "add", "sigul-client"])
+        .args(["manage", "users", "create", "sigul-client"])
         .output()?;
     if !result.status.success() {
         panic!("failed to create test user");
+    }
+    let mut create_gpg_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut child = create_gpg_key_command
+        .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
+        .args([
+            "manage",
+            "gpg",
+            "create",
+            "sigul-client",
+            "test-gpg-key",
+            "admin@example.com",
+        ])
+        .stdin(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all("🪿🪿🪿\n".as_bytes())?;
+    drop(stdin);
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        panic!("failed to create test key");
     }
 
     let server = server::service::Server::new(server_config).await?;
@@ -270,6 +296,92 @@ fn bench_command_throughput(c: &mut Criterion) {
     }
 }
 
+fn gpg_sign_detached(criterion: &mut Criterion) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let instance = runtime
+        .block_on(async {
+            let instance = create_instance(None).await?;
+            instance
+                .client
+                .unlock("test-gpg-key".to_string(), "🪿🪿🪿".to_string())
+                .await?;
+            Ok::<_, anyhow::Error>(instance)
+        })
+        .unwrap();
+    let mut payload = vec![0_u8; 1024 * 32];
+    openssl::rand::rand_bytes(&mut payload).unwrap();
+
+    criterion.bench_function("gpg_sign_detached_rsa4k_32kb", |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                instance
+                    .client
+                    .gpg_sign(
+                        "test-gpg-key".to_string(),
+                        GpgSignatureType::Detached,
+                        bytes::Bytes::from(payload.clone()),
+                    )
+                    .await
+                    .unwrap()
+            });
+        });
+    });
+}
+
+fn gpg_sign_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gpg_sign_throughput");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let instance = runtime
+        .block_on(async {
+            let instance = create_instance(None).await?;
+            instance
+                .client
+                .unlock("test-gpg-key".to_string(), "🪿🪿🪿".to_string())
+                .await?;
+            Ok::<_, anyhow::Error>(instance)
+        })
+        .unwrap();
+    let mut payload = vec![0_u8; 1024 * 32];
+    openssl::rand::rand_bytes(&mut payload).unwrap();
+
+    for batch_size in [128, 512_usize].iter() {
+        group.throughput(criterion::Throughput::Elements(*batch_size as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("gpg_sign", *batch_size),
+            batch_size,
+            |b, size| {
+                b.iter(|| {
+                    runtime.block_on(async {
+                        let mut joinset = JoinSet::new();
+                        for _ in 0..*size {
+                            let client = instance.client.clone();
+                            let payload = payload.clone();
+                            joinset.spawn(async move {
+                                client
+                                    .gpg_sign(
+                                        "test-gpg-key".to_string(),
+                                        GpgSignatureType::Detached,
+                                        bytes::Bytes::from(payload),
+                                    )
+                                    .await
+                                    .unwrap()
+                            });
+                        }
+                        _ = joinset.join_all().await;
+                    });
+                });
+            },
+        );
+    }
+}
+
 criterion_group!(
     name = base_benches;
     config = Criterion::default().measurement_time(Duration::from_secs(30));
@@ -280,4 +392,9 @@ criterion_group!(
     config = Criterion::default().measurement_time(Duration::from_secs(30));
     targets = bench_command_throughput
 );
-criterion_main!(base_benches, command_benches);
+criterion_group!(
+    name = signing_benches;
+    config = Criterion::default().measurement_time(Duration::from_secs(30));
+    targets = gpg_sign_detached, gpg_sign_throughput
+);
+criterion_main!(base_benches, command_benches, signing_benches);

@@ -70,7 +70,10 @@
 
 use openssl::nid::Nid;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    task::JoinError,
+};
 use tokio_openssl::SslStream;
 use tracing::instrument;
 use uuid::Uuid;
@@ -94,6 +97,7 @@ pub const PROTOCOL_VERSION: U32 = U32::new(2);
 /// such misconfigurations are clearly reported by the bridge.
 #[derive(IntoBytes, Immutable, KnownLayout, TryFromBytes, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum Role {
     /// Clients should use this role in their protocol header.
     Client = 0,
@@ -368,6 +372,23 @@ pub(crate) mod json {
     pub(crate) enum Request {
         WhoAmI {},
         ListUsers {},
+        /// Unlock a key for signing.
+        ///
+        /// This request must be sent on a connection before any signing requests referencing
+        /// the key.
+        Unlock {
+            /// The name of the key to unlock.
+            key: String,
+            /// The password to unlock the key with.
+            password: String,
+        },
+        GpgSign {
+            key: String,
+            signature_type: super::GpgSignatureType,
+        },
+        Certificates {
+            key: String,
+        },
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,8 +396,49 @@ pub(crate) mod json {
     pub(crate) enum Response {
         WhoAmI { user: String },
         ListUsers { users: Vec<String> },
+        Unlock {},
+        Certificates { keys: Vec<super::Certificate> },
+        GpgSign {},
         Error { reason: ServerError },
     }
+}
+
+/// Describes the public portion of keys managed by Siguldry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Certificate {
+    /// A key pair that can be used for GPG signatures.
+    Gpg {
+        /// The key version; likely either 4 or 6, but refer to RFC 9580 and any superceding RFCs.
+        version: u8,
+        /// The ASCII-armored public key
+        certificate: String,
+        /// The key's fingerprint; the exact format depends on the key version.
+        fingerprint: String,
+    },
+    /// A key pair with an associated X509 certificate.
+    X509 {
+        /// The PEM-encoded certificate.
+        certificate: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum GpgSignatureType {
+    Detached,
+    Cleartext,
+    Inline,
+}
+
+/// The key type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum KeyAlgorithm {
+    /// 4096 bit RSA keys.
+    Rsa4K,
+    /// Ed25519 ECC keys.
+    Ed25519,
 }
 
 /// A request sent by the client.
@@ -410,16 +472,38 @@ pub enum ServerError {
     #[error("The user '{0}' does not exist in the database")]
     NoSuchUser(String),
 
-    #[error("A database error occurred")]
-    Database,
-
     #[error("The requested operation requires administrator privileges")]
     RequiresAdmin,
+
+    #[error("An internal server error occurred; notify an administrator to check the logs")]
+    Internal,
 }
 
 #[cfg(feature = "server")]
 impl From<sqlx::Error> for ServerError {
-    fn from(_value: sqlx::Error) -> Self {
-        Self::Database
+    fn from(error: sqlx::Error) -> Self {
+        tracing::error!(?error, "A database error occurred");
+        Self::Internal
+    }
+}
+
+impl From<std::io::Error> for ServerError {
+    fn from(error: std::io::Error) -> Self {
+        tracing::error!(?error, "An IO error occurred");
+        Self::Internal
+    }
+}
+
+impl From<anyhow::Error> for ServerError {
+    fn from(error: anyhow::Error) -> Self {
+        tracing::error!(?error, "An error occurred");
+        Self::Internal
+    }
+}
+
+impl From<JoinError> for ServerError {
+    fn from(error: JoinError) -> Self {
+        tracing::error!(?error, "tokio task failed to join");
+        Self::Internal
     }
 }

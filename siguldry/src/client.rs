@@ -20,6 +20,7 @@ use tracing::instrument;
 use uuid::Uuid;
 use zerocopy::{IntoBytes, TryFromBytes};
 
+use crate::protocol::GpgSignatureType;
 use crate::{
     config::Credentials,
     error::{ClientError, ConnectionError},
@@ -189,8 +190,6 @@ impl Client {
             binary: None,
         };
         let response = self.reconnecting_send(request).await?;
-        // This is intentional and can be dropped when a new command is added.
-        #[allow(clippy::match_wildcard_for_single_variants)]
         match response.json {
             Response::WhoAmI { user } => Ok(user),
             Response::Error { reason } => Err(reason.into()),
@@ -205,10 +204,64 @@ impl Client {
         };
 
         let response = self.reconnecting_send(request).await?;
-        // This is intentional and can be dropped when a new command is added.
-        #[allow(clippy::match_wildcard_for_single_variants)]
         match response.json {
             Response::ListUsers { users } => Ok(users),
+            Response::Error { reason } => Err(reason.into()),
+            _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
+        }
+    }
+
+    // TODO return opaque handle to provide to gpg_sign etc
+    pub async fn unlock(&self, key: String, password: String) -> Result<(), ClientError> {
+        let request = Request {
+            message: protocol::json::Request::Unlock { key, password },
+            binary: None,
+        };
+
+        let response = self.reconnecting_send(request).await?;
+        match response.json {
+            Response::Unlock {} => Ok(()),
+            Response::Error { reason } => Err(reason.into()),
+            _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
+        }
+    }
+
+    pub async fn certificates(
+        &self,
+        key: String,
+    ) -> Result<Vec<crate::protocol::Certificate>, ClientError> {
+        let request = Request {
+            message: protocol::json::Request::Certificates { key },
+            binary: None,
+        };
+
+        let response = self.reconnecting_send(request).await?;
+        match response.json {
+            Response::Certificates { keys } => Ok(keys),
+            Response::Error { reason } => Err(reason.into()),
+            _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
+        }
+    }
+
+    pub async fn gpg_sign(
+        &self,
+        key: String,
+        signature_type: GpgSignatureType,
+        data: Bytes,
+    ) -> Result<Bytes, ClientError> {
+        let request = Request {
+            message: protocol::json::Request::GpgSign {
+                key,
+                signature_type,
+            },
+            binary: Some(data),
+        };
+
+        let response = self.reconnecting_send(request).await?;
+        match response.json {
+            Response::GpgSign {} => response.binary.ok_or_else(|| {
+                anyhow::anyhow!("Server response didn't include a signature").into()
+            }),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }
@@ -315,6 +368,9 @@ impl InnerClient {
                 }
                 bytes_read = connection.read_buf(&mut limited_buffer) => {
                     let bytes_read = bytes_read?;
+                    if bytes_read == 0 {
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
                     tracing::trace!(bytes_read, "Handling incoming response data");
                 }
             }

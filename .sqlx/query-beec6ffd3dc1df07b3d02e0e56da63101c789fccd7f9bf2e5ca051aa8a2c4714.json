@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT * FROM keys;",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "key_algorithm",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "key_location",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "handle",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "key_material",
+        "ordinal": 5,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "beec6ffd3dc1df07b3d02e0e56da63101c789fccd7f9bf2e5ca051aa8a2c4714"
+}

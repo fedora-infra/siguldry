@@ -3,9 +3,16 @@
 
 //! The Siguldry server.
 
+use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+use std::time::Duration;
+use std::{fs::Permissions, sync::Arc};
+
 use anyhow::Context;
 use bytes::{BufMut, BytesMut};
 use openssl::ssl::{Ssl, SslAcceptor, SslConnector};
+use sequoia_openpgp::crypto::Password;
 use sqlx::{Pool, Sqlite};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -28,7 +35,7 @@ const MAX_BINARY_SIZE: usize = 1024 * 1024 * 100;
 
 /// A sigul server.
 pub struct Server {
-    config: Config,
+    config: Arc<Config>,
     db_pool: Pool<Sqlite>,
     client_tls_config: SslConnector,
     server_tls_config: SslAcceptor,
@@ -77,7 +84,7 @@ impl Server {
         )
         .await?;
         Ok(Self {
-            config,
+            config: Arc::new(config),
             db_pool,
             client_tls_config,
             server_tls_config,
@@ -107,17 +114,18 @@ impl Server {
                         match conn {
                             Some(Ok(Ok(conn))) => {
                                 tracing::info!("New request accepted");
-                                self.accept(&mut connection_pool)?;
-                                request_tracker.spawn(handle(self.db_pool.clone(), conn).instrument(tracing::Span::current()));
+                                while connection_pool.len() < self.config.connection_pool_size {
+                                    self.accept(&mut connection_pool)?;
+                                }
+                                request_tracker.spawn(handle(self.config.clone(), self.db_pool.clone(), conn).instrument(tracing::Span::current()));
                             },
                             Some(Ok(Err(error))) => tracing::error!(?error, "Failed to accept incoming client connection"),
                             Some(Err(error)) => tracing::error!(?error, "Connection pool failed to yield a connection"),
                             None => {
-                                // This shouldn't really be possible since we add a new connection for each accepted one
-                                tracing::error!("Connection pool exhausted unexpectedly; report this as a bug. Attempting to continue...");
-                                while connection_pool.len() < self.config.connection_pool_size {
-                                    self.accept(&mut connection_pool)?;
-                                }
+                                // This occurs when connections aren't being successfully established
+                                tracing::error!("Connection pool exhausted; trying again in 15 seconds...");
+                                tokio::time::sleep(Duration::from_secs(15)).await;
+                                self.accept(&mut connection_pool)?;
                             },
                         }
                     },
@@ -156,14 +164,51 @@ impl Server {
 }
 
 #[instrument(skip_all, fields(session_id = conn.session_id().to_string(), client = conn.peer_common_name()))]
-async fn handle(db: Pool<Sqlite>, mut conn: Nestls) -> Result<(), anyhow::Error> {
+async fn handle(
+    config: Arc<Config>,
+    db: Pool<Sqlite>,
+    mut conn: Nestls,
+) -> Result<(), anyhow::Error> {
     let user = conn
         .peer_common_name()
         .ok_or(protocol::Error::MissingCommonName)?;
     let mut db_conn = db.acquire().await?;
     let user = db::User::get(&mut db_conn, &user).await?;
+    tracing::info!(user.name, "User authenticated");
     drop(db_conn);
 
+    // Any keys stored on the filesystem that are unlocked by the client are stored in this
+    // ephemeral keystore.
+    let mut temp_builder = tempfile::Builder::new();
+    temp_builder
+        .permissions(Permissions::from_mode(0o700))
+        .rand_bytes(32)
+        .prefix(".siguldry-ks-");
+    let keystore_directory = std::env::var("RUNTIME_DIRECTORY").map_or_else(
+        |_error| {
+            tracing::warn!("No usable RUNTIME_DIRECTORY detected; use systemd in production");
+            temp_builder.tempdir()
+        },
+        |runtime_dir| {
+            let mut workdir = PathBuf::from(runtime_dir);
+            workdir.push("ephemeral_keystores");
+            temp_builder.tempdir_in(workdir)
+        },
+    )?;
+    tracing::trace!(keystore=?keystore_directory.path(), "directory for ephemeral soft key storage created");
+
+    let keystore_context = sequoia_keystore::Context::configure()
+        .ipc_policy(sequoia_keystore::sequoia_ipc::IPCPolicy::External)
+        // This is where the sequoia-keystore-server rpm installs it
+        .lib("/usr/libexec/")
+        .home(keystore_directory.path())
+        .build()?;
+    // For GPG keys, we set up a Sequoia keystore server per connection and insert any GPG
+    // keys the client unlocks into it.
+    let mut gpg_keystore = sequoia_keystore::Keystore::connect(&keystore_context)
+        .context("failed to create Sequoia keystore")?;
+    // For non-GPG keys, we keep a map of key names to user passwords provided by the client
+    let mut key_passwords: HashMap<String, Password> = HashMap::new();
     loop {
         let mut frame_buffer = [0_u8; std::mem::size_of::<protocol::Frame>()];
         conn.read_exact(&mut frame_buffer).await?;
@@ -204,13 +249,42 @@ async fn handle(db: Pool<Sqlite>, mut conn: Nestls) -> Result<(), anyhow::Error>
         }
         let mut request_bytes = request_buffer.into_inner().freeze();
 
-        let _binary_bytes = request_bytes.split_off(json_size);
+        let binary_bytes = request_bytes.split_off(json_size);
         let outer_request: protocol::json::OuterRequest = serde_json::from_slice(&request_bytes)
             .context("The request's JSON could not be deserialized")?;
         let mut db_transaction = db.begin().await?;
         let response = match outer_request.request {
             Request::WhoAmI {} => handlers::who_am_i(&user).await,
             Request::ListUsers {} => handlers::list_users(&mut db_transaction).await,
+            Request::Unlock {
+                key: name,
+                password,
+            } => {
+                handlers::unlock(
+                    &mut db_transaction,
+                    &mut gpg_keystore,
+                    &mut key_passwords,
+                    &config,
+                    &user,
+                    name,
+                    Password::from(password),
+                )
+                .await
+            }
+            Request::GpgSign {
+                key,
+                signature_type,
+            } => {
+                handlers::gpg_sign(
+                    &mut db_transaction,
+                    &mut gpg_keystore,
+                    &key,
+                    signature_type,
+                    binary_bytes,
+                )
+                .await
+            }
+            Request::Certificates { key } => handlers::public_key(&mut db_transaction, key).await,
         };
 
         match response {

@@ -20,3 +20,9 @@ A library for interacting with a [Sigul](https://pagure.io/sigul) server.
 
 In addition to the client library, a command-line application that provides a subset of commands supported
 by Sigul is also available. To build the CLI, enable the `siguldry-client` Cargo feature.
+
+## siguldry-server
+
+### Test dependencies
+
+To run the test suite, you will need the `pkcs11-tool` (provided by the `opensc` package on Fedora) and `softhsm2-util` (provided by `softhsm` on Fedora) binaries.

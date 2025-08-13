@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM key_accesses WHERE key_id = $1 AND user_id = $2;",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7c7acebd1590769ebe561c0edbb47be3bb91ca67be9e0049a5b8be5b505540e6"
+}
