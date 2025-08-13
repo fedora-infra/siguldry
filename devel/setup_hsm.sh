@@ -17,6 +17,12 @@ HSM_PIN="abc123def"
 HSM_SO_PIN="fed321cba"
 TOKEN_LABEL="Sigul Token 0"
 
+. /etc/os-release
+case "$ID" in
+    ubuntu)  HSM_MODULE="/usr/lib/softhsm/libsofthsm2.so" ;;
+    *) HSM_MODULE="/usr/lib64/softhsm/libsofthsm.so" ;;
+esac
+
 mkdir -p creds/
 pushd creds
 
@@ -25,11 +31,11 @@ softhsm2-util \
 	--init-token --slot 0 --label "$TOKEN_LABEL" \
 	--pin "$HSM_PIN" --so-pin "$HSM_SO_PIN"
 # Make a keypair for a CA and for code signing
-pkcs11-tool --module /usr/lib64/softhsm/libsofthsm.so \
+pkcs11-tool --module "$HSM_MODULE" \
 	--login --pin "$HSM_PIN" \
 	--keypairgen --label="Secure Boot CA" \
 	--key-type rsa:2048 --usage-sig --id 1
-pkcs11-tool --module /usr/lib64/softhsm/libsofthsm.so \
+pkcs11-tool --module "$HSM_MODULE" \
 	--login --pin "$HSM_PIN" \
 	--keypairgen --label="Secure Boot Code Signing" \
 	--key-type rsa:2048 --usage-sig --id 2
@@ -64,11 +70,11 @@ openssl verify -CAfile secure-boot-ca-cert.pem secure-boot-ca-cert.pem
 openssl verify -CAfile secure-boot-ca-cert.pem secure-boot-code-signing-cert.pem
 
 # Write the certificates to the token
-pkcs11-tool --module /usr/lib64/softhsm/libsofthsm.so \
+pkcs11-tool --module "$HSM_MODULE" \
 	--login --pin "$HSM_PIN" \
 	--write-object secure-boot-ca-cert.pem \
 	--type cert --label "Secure Boot CA Certificate" --id 1
-pkcs11-tool --module /usr/lib64/softhsm/libsofthsm.so \
+pkcs11-tool --module "$HSM_MODULE" \
 	--login --pin "$HSM_PIN" \
 	--write-object secure-boot-code-signing-cert.pem \
 	--type cert --label "Secure Boot Code Signing Certificate" --id 2

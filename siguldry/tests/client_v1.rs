@@ -1164,6 +1164,7 @@ pub async fn change_key_passphrase() -> anyhow::Result<()> {
             None,
         )
         .await?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
     client
         .change_passphrase(
             key_name.clone(),
@@ -1173,6 +1174,7 @@ pub async fn change_key_passphrase() -> anyhow::Result<()> {
             None,
         )
         .await?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
 
     client
         .create_user(
@@ -1182,6 +1184,7 @@ pub async fn change_key_passphrase() -> anyhow::Result<()> {
             Some("with-password".into()),
         )
         .await?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
     let failure = client
         .grant_key_access(
             "my-admin-password".into(),
@@ -1193,6 +1196,7 @@ pub async fn change_key_passphrase() -> anyhow::Result<()> {
             None,
         )
         .await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
     assert!(matches!(
         failure,
         Err(ClientError::Sigul(Sigul::AuthenticationFailed))

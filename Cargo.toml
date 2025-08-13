@@ -1,6 +1,6 @@
 [workspace]
-resolver = "2"
-members = [ 
+resolver = "3"
+members = [
     "sample-uefi",
     "sigul-pesign-bridge",
     "siguldry",

@@ -59,6 +59,8 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-latest
+    container:
+      image: quay.io/fedora/fedora:42
     strategy:
       matrix:
         # Support current stable and the toolchain that ships with
@@ -75,13 +77,29 @@ jobs:
         with:
           toolchain: ${{matrix.rust-toolchain}}
           components: clippy, rustfmt
+      - name: Install nextest
+        uses: taiki-e/install-action@133a13585eb96b576726757d256e9531cd6dddf2 # 2.58.32
+        with:
+          tool: nextest@0.9
 
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0
 
       - name: Install test packages
         run: |
-          sudo apt update
-          sudo apt install pesign libssl-dev libsqlite3-dev clang
+          dnf install -y \
+            capnproto \
+            clang \
+            sequoia-sq \
+            sequoia-keystore-server \
+            pesign \
+            pkcs11-provider \
+            pkg-config \
+            python3-devel \
+            opensc \
+            openssl \
+            openssl-devel \
+            softhsm \
+            sqlite-devel
 
           # pesign-client doesn't let you configure the socket location, so make it available to the world
           sudo mkdir -p /run/pesign/
@@ -97,7 +115,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- --deny warnings
 
       - name: Run unit tests
-        run: cargo test --all-features --workspace --no-fail-fast --bins --examples --benches --lib --test end_to_end
+        run: cargo nextest run
 
       - name: Check manual is up-to-date
         run: cargo xtask manual && test -z "$(git status --porcelain)"
@@ -135,6 +153,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Install nextest
+        uses: taiki-e/install-action@133a13585eb96b576726757d256e9531cd6dddf2 # 2.58.32
+        with:
+          tool: nextest@0.9
 
       - name: Integration tests
         run: |
@@ -146,4 +168,10 @@ jobs:
           export RUNTIME_DIRECTORY=/run/pesign
           export CREDENTIALS_DIRECTORY=/srv/siguldry/creds/
           export SIGUL_PESIGN_BRIDGE_CONFIG=$(pwd)/devel/github/config.toml
-          cargo test --package sigul-pesign-bridge -- --nocapture
+          export RUST_BACKTRACE=1
+          pushd siguldry
+          cargo nextest --profile sigul run --no-default-features --features "sigul-client"
+          popd
+          pushd sigul-pesign-bridge
+          cargo nextest --profile sigul run
+          popd

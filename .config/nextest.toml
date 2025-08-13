@@ -1,0 +1,22 @@
+[test-groups]
+# Sigul tests share a database and some need exclusive access to /var/run/pesign
+sigul = { max-threads = 1 }
+
+[profile.default]
+# These depend on the sigul server to be set up manually
+default-filter = "not (binary(client_v1) | binary(pesign_client))"
+fail-fast = false
+global-timeout = "10m"
+slow-timeout = { period = "15s", terminate-after = 4 }
+
+[profile.sigul]
+default-filter = "binary(client_v1) | binary(pesign_client)"
+fail-fast = false
+global-timeout = "10m"
+slow-timeout = { period = "30s", terminate-after = 4 }
+# siguldry::client_v1 change_key_passphrase is flaky and seems like a server issue
+retries = { backoff = "fixed", count = 15, delay = "1s" }
+
+[[profile.default.overrides]]
+filter = 'binary(client_v1) | binary(pesign_client)'
+test-group = 'sigul'
