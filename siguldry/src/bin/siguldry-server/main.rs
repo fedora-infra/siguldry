@@ -1,142 +1,54 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::Context;
 use clap::Parser;
 use siguldry::{
     config::load_config,
-    server::{config::Config, db, service::Server},
+    server::{service::Server, Config},
 };
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+    signal::unix::{signal, SignalKind},
+    time::timeout,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter};
 
+use crate::management::PromptPassword;
+
+mod acquire_pin;
+mod cli;
+mod management;
+
 // The path, relative to $XDG_CONFIG_HOME, of the default config file location.
 const DEFAULT_CONFIG: &str = "siguldry/server.toml";
 
-/// The siguldry signing server.
-///
-/// This includes a command to run the server, along with a set of management commands.
-/// These include applying database migrations, creating new remote users, and so on.
-///
-/// To begin, you'll need to provide a configuration file. For an example of the current
-/// format, consult the `config` subcommand.
-///
-/// Once you have a valid configuration, create a new database using the `manage migrate` subcommand.
-///
-/// Finally, create a remote user with the `manage users add` subcommand.
-#[derive(Debug, Parser)]
-#[command(version)]
-struct Cli {
-    /// The path to the server's configuration file.
-    ///
-    /// If no path is provided, the defaults are used. To view the service configuration,
-    /// run the `config` subcommand.
-    #[arg(long, short, env = "SIGULDRY_SERVER_CONFIG")]
-    config: Option<PathBuf>,
-
-    /// A set of one or more comma-separated directives to filter logs.
-    ///
-    /// The general format is "target_name[span_name{field=value}]=level" where level is
-    /// one of TRACE, DEBUG, INFO, WARN, ERROR.
-    ///
-    /// Details: https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/filter/struct.EnvFilter.html#directives
-    #[arg(
-        long,
-        env = "SIGULDRY_SERVER_LOG",
-        default_value = "WARN,siguldry=INFO"
-    )]
-    pub log_filter: String,
-    #[command(subcommand)]
-    pub command: Command,
-}
-
-#[derive(clap::Subcommand, Debug)]
-enum Command {
-    /// Run the service.
-    Listen {
-        /// The directory containing the service's secrets.
-        ///
-        /// Any file referenced in the configuration that are not absolute paths are
-        /// expected to be in this directory.
-        ///
-        /// When run under systemd, providing a `ImportCredential=`,
-        /// `LoadCredentialEncrypted=`, or `LoadCredential=` directive will
-        /// set the environment variable automatically for you.
-        #[arg(long, env = "CREDENTIALS_DIRECTORY")]
-        credentials_directory: PathBuf,
-    },
-
-    /// See the current server configuration.
-    Config {
-        /// The directory containing the service's secrets.
-        ///
-        /// Any file referenced in the configuration that are not absolute paths are
-        /// expected to be in this directory.
-        ///
-        /// When run under systemd, providing a `ImportCredential=`,
-        /// `LoadCredentialEncrypted=`, or `LoadCredential=` directive will
-        /// set the environment variable automatically for you.
-        #[arg(
-            long,
-            env = "CREDENTIALS_DIRECTORY",
-            default_value = "/etc/credstore.encrypted/"
-        )]
-        credentials_directory: PathBuf,
-    },
-
-    /// Perform management tasks on the server.
-    #[command(subcommand)]
-    Manage(ManagementCommands),
-}
-
-#[derive(clap::Subcommand, Debug)]
-enum ManagementCommands {
-    /// Manage remote users.
-    ///
-    /// Remote users can perform non-destructive actions such as creating keys and requesting
-    /// signatures. Users authenticate via client TLS certificates. It is up to you to handle
-    /// issuing and revoking those certificates after you create or remove a user. Users with
-    /// valid certificates that are not explicitly added are rejected.
-    #[command(subcommand)]
-    Users(UserCommands),
-
-    /// Apply any database migrations.
-    ///
-    /// This should be run on first use to create an empty database. This should also be run after
-    /// upgrading to a new version; it is a no-op if no new migrations are available.
-    Migrate {},
-}
-
-#[derive(clap::Subcommand, Debug)]
-enum UserCommands {
-    Add {
-        /// The username of the new user.
-        ///
-        /// The name must be unique. Additionally, you must issue a client certificate with this
-        /// name in the CommonName field to authenticate as this user.
-        name: String,
-    },
-    Remove {
-        /// The username of the user to delete.
-        name: String,
-    },
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let opts = Cli::parse();
+    let opts = cli::Cli::parse();
 
-    // Unfortunately we can't use clap's value_parser since EnvFilter does not
-    // implement Clone.
-    let log_filter = EnvFilter::builder().parse(&opts.log_filter).context(
-        "SIGULDRY_SERVER_LOG contains an invalid log directive; refer to \
+    // For management commands the defaults are too noisy.
+    let log_filter = if matches!(opts.command, cli::Command::Manage(_))
+        && opts.log_filter == "WARN,siguldry=INFO"
+    {
+        EnvFilter::builder()
+            .parse("WARN")
+            .context("The developer messed up and provided an invalid default")
+    } else {
+        // Unfortunately we can't use clap's value_parser since EnvFilter does not
+        // implement Clone.
+        EnvFilter::builder().parse(&opts.log_filter).context(
+            "SIGULDRY_SERVER_LOG contains an invalid log directive; refer to \
             https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/\
             filter/struct.EnvFilter.html#directives for format details.",
-    )?;
+        )
+    }?;
+
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
         .with_writer(std::io::stderr);
@@ -149,9 +61,13 @@ async fn main() -> anyhow::Result<()> {
     let mut config = load_config::<Config>(opts.config, PathBuf::from(DEFAULT_CONFIG).as_path())?;
 
     match opts.command {
-        Command::Listen {
+        cli::Command::Listen {
             credentials_directory,
         } => {
+            if !config.pkcs11_bindings.is_empty() {
+                acquire_pin::read(&mut config).await?;
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
             config
                 .credentials
                 .with_credentials_dir(&credentials_directory)?;
@@ -168,7 +84,16 @@ async fn main() -> anyhow::Result<()> {
             .instrument(root_span)
             .await?;
         }
-        Command::Config {
+        cli::Command::EnterPin { socket } => {
+            let mut connection =
+                timeout(Duration::from_secs(3), UnixStream::connect(socket)).await??;
+            let mut buf = String::new();
+            timeout(Duration::from_secs(3), connection.read_to_string(&mut buf)).await??;
+            let prompt = PromptPassword::new(format!("Please enter the PIN for {buf}:"))?;
+            let password = prompt.prompt()?;
+            connection.write_all(&password.map(|p| p.to_vec())).await?;
+        }
+        cli::Command::Config {
             credentials_directory,
         } => {
             println!("# This is the current configuration\n\n{config}\n# This concludes the configuration.\n");
@@ -176,29 +101,7 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("The configuration format is valid, but the referenced credentials aren't valid: {error:?}");
             });
         }
-        Command::Manage(command) => {
-            let db_pool = db::pool(
-                config
-                    .database()
-                    .as_os_str()
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("Database path isn't valid UTF8"))?,
-            )
-            .await?;
-
-            let mut conn = db_pool.begin().await?;
-            match command {
-                ManagementCommands::Users(user_commands) => match user_commands {
-                    UserCommands::Add { name } => _ = db::User::create(&mut conn, &name).await?,
-                    UserCommands::Remove { name } => {
-                        let users_deleted = db::User::delete(&mut conn, &name).await?;
-                        println!("Deleted {} user(s) from the database", users_deleted);
-                    }
-                },
-                ManagementCommands::Migrate {} => db::migrate(&db_pool).await?,
-            }
-            conn.commit().await?;
-        }
+        cli::Command::Manage(command) => management::manage(command, config).await?,
     };
 
     Ok(())
