@@ -507,7 +507,7 @@ mod tests {
 
         let rust_result = super::to_bytes(&fields)?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let code = std::ffi::CString::new(SIGUL)?;
             let sigul = PyModule::from_code(py, &code, c"serde.py", c"serde")?;
             let format_fields = sigul.getattr("format_fields")?;
@@ -542,7 +542,7 @@ mod tests {
 
         let rust_result = super::to_bytes(&op)?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let code = std::ffi::CString::new(SIGUL)?;
             let sigul = PyModule::from_code(py, &code, c"serde.py", c"serde")?;
             let format_fields = sigul.getattr("format_fields")?;
@@ -577,7 +577,7 @@ mod tests {
 
         let rust_result = super::to_bytes(&op)?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let code = std::ffi::CString::new(SIGUL)?;
             let sigul = PyModule::from_code(py, &code, c"serde.py", c"serde")?;
             let format_fields = sigul.getattr("format_fields")?;
@@ -617,7 +617,7 @@ mod tests {
         let rust_result = super::to_bytes(&op)?;
 
         // There should only be one serialized field.
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let code = std::ffi::CString::new(SIGUL)?;
             let sigul = PyModule::from_code(py, &code, c"serde.py", c"serde")?;
             let format_fields = sigul.getattr("format_fields")?;
