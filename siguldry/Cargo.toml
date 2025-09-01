@@ -107,7 +107,7 @@ version = "0.2"
 features = ["no-env-filter"]
 
 [dev-dependencies.pyo3]
-version = "0.25"
+version = "0.26"
 features = ["auto-initialize"]
 
 # As we use OpenSSL for the TLS connection, let's stick with it for this as well.
