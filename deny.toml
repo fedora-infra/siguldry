@@ -97,6 +97,9 @@ allow = [
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
+    "LGPL-2.0-or-later",
+    "MPL-2.0",
+    "BSL-1.0",
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the
@@ -106,9 +109,9 @@ confidence-threshold = 1.0
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
 # aren't accepted for every possible crate as with the normal allow list
 exceptions = [
-    # Each entry is the crate and version constraint, and its specific allow
-    # list
-    #{ allow = ["Zlib"], crate = "adler32" },
+    # Fedora has some restrictions on this license; this is for sequoia which
+    # is already included, so only allow the license for that dependency.
+    { allow = ["CC0-1.0"], crate = "tiny-keccak" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
