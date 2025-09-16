@@ -8,6 +8,7 @@
 use std::{num::NonZeroU32, path::PathBuf};
 
 use clap::Parser;
+use siguldry::server::db::KeyAlgorithm;
 
 /// The siguldry signing server.
 ///
@@ -148,6 +149,9 @@ pub enum GpgCommands {
 pub enum KeyCommands {
     /// Generate a new signing key.
     Create {
+        /// The key algorithm to use.
+        #[arg(short, long, value_enum, default_value_t)]
+        algorithm: KeyAlgorithm,
         /// A file containing the password needed to unlock and use the key.
         ///
         /// The file should include the password on the first line and the file should include a newline.

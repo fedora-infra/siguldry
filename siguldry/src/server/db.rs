@@ -4,6 +4,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteConnectOptions, Pool, Sqlite, SqliteConnection, SqlitePool};
 use tracing::instrument;
 
@@ -88,7 +89,7 @@ impl User {
 /// Possible key types.
 ///
 /// This enumeration matches the values in the database's `key_algorithms` table.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
 #[non_exhaustive]
 pub enum KeyAlgorithm {
     /// 4096 bit RSA keys.
@@ -97,6 +98,12 @@ pub enum KeyAlgorithm {
     Ed25519,
     /// NIST P-256 ECC keys (also known as prime256v1 and secp256r1).
     P256,
+}
+
+impl Default for KeyAlgorithm {
+    fn default() -> Self {
+        Self::Rsa4K
+    }
 }
 
 impl KeyAlgorithm {

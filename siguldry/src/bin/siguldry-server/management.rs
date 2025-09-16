@@ -188,6 +188,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
         },
         ManagementCommands::Key(key_commands) => match key_commands {
             KeyCommands::Create {
+                algorithm,
                 password_file,
                 admin,
                 name,
@@ -204,12 +205,12 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                 )?;
 
                 let (handle, encrypted_password, private_key, public_key) =
-                    create_encrypted_key(&config, user_password, db::KeyAlgorithm::P256)?;
+                    create_encrypted_key(&config, user_password, algorithm)?;
                 let key = db::Key::create(
                     &mut conn,
                     &name,
                     &handle,
-                    db::KeyAlgorithm::P256,
+                    algorithm,
                     db::KeyLocation::Encrypted,
                     &private_key,
                     &public_key,
