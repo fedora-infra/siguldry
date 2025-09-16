@@ -170,9 +170,6 @@ pub enum KeyCommands {
         /// The name of the key in Siguldry to create a certificate for.
         #[arg(short, long)]
         key_name: String,
-        /// The purpose of the key.
-        #[arg(long, default_value_t, value_enum)]
-        usage: KeyUsage,
         /// The Common Name field to use in the certificate; the remaining portions of the subject are
         /// specified in the server configuration.
         #[arg(short, long)]
@@ -183,6 +180,7 @@ pub enum KeyCommands {
         /// The name of the key to use when signing the key's x509 certificate.
         ///
         /// For certificate authorities, leave this blank to self-sign.
+        #[arg(long)]
         certificate_authority: Option<String>,
         /// A file containing the password needed to unlock and use the certificate authority's key.
         ///
@@ -190,6 +188,9 @@ pub enum KeyCommands {
         /// If this option is not provided, input is read from stdin.
         #[arg(long, default_value = None)]
         ca_password_file: Option<PathBuf>,
+        /// The purpose of the key.
+        #[arg(value_enum)]
+        usage: KeyUsage,
     },
     /// List available keys.
     List {},

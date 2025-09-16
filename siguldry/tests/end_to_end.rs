@@ -157,6 +157,96 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
         panic!("failed to create test key");
     }
 
+    // Set up a CA
+    let mut create_ca_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut child = create_ca_key_command
+        .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
+        .args(["manage", "key", "create", "sigul-client", "test-ca-key"])
+        .stdin(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all("🦀🦀🦀🦀\n".as_bytes())?;
+    drop(stdin);
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        panic!("failed to create test key");
+    }
+    let mut sign_ca_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut child = sign_ca_key_command
+        .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
+        .args([
+            "manage",
+            "key",
+            "x509",
+            "--user-name",
+            "sigul-client",
+            "--key-name",
+            "test-ca-key",
+            "--common-name",
+            "test-ca-key",
+            "--validity-days",
+            "30",
+            "certificate-authority",
+        ])
+        .stdin(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all("🦀🦀🦀🦀\n".as_bytes())?;
+    drop(stdin);
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        panic!("failed to create test key");
+    }
+
+    // Create codesigning key
+    let mut create_codesigning_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut child = create_codesigning_key_command
+        .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
+        .args([
+            "manage",
+            "key",
+            "create",
+            "sigul-client",
+            "test-codesigning-key",
+        ])
+        .stdin(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all("🪶🪶🪶🪶\n".as_bytes())?;
+    drop(stdin);
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        panic!("failed to create test key");
+    }
+    let mut sign_codesigning_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut child = sign_codesigning_key_command
+        .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
+        .args([
+            "manage",
+            "key",
+            "x509",
+            "--user-name",
+            "sigul-client",
+            "--key-name",
+            "test-codesigning-key",
+            "--common-name",
+            "test-codesigning-key",
+            "--validity-days",
+            "30",
+            "--certificate-authority",
+            "test-ca-key",
+            "code-signing",
+        ])
+        .stdin(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all("🦀🦀🦀🦀\n".as_bytes())?;
+    drop(stdin);
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        panic!("failed to create test key");
+    }
+
     let server = server::service::Server::new(server_config).await?;
     let server = server.run();
 
@@ -551,6 +641,79 @@ Hash: SHA512
                 "Authenticated signature made by {} ({} <admin@example.com>)",
                 fingerprint, key_name
             )));
+        }
+        _ => panic!("unexpected key type"),
+    }
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn check_x509_certs() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+    let ca_key_name = "test-ca-key";
+    let codesigning_key_name = "test-codesigning-key";
+    let ca_key = client
+        .certificates(ca_key_name.to_string())
+        .await?
+        .pop()
+        .unwrap();
+    let codesigning_key = client
+        .certificates(codesigning_key_name.to_string())
+        .await?
+        .pop()
+        .unwrap();
+    match (ca_key, codesigning_key) {
+        (
+            siguldry::protocol::Certificate::X509 {
+                certificate: ca_cert,
+            },
+            siguldry::protocol::Certificate::X509 {
+                certificate: codesigning_cert,
+            },
+        ) => {
+            let ca_path = instance.state_dir.path().join("ca.pem");
+            std::fs::write(&ca_path, &ca_cert)?;
+            let codesigning_path = instance.state_dir.path().join("codesigning.pem");
+            std::fs::write(&codesigning_path, &codesigning_cert)?;
+            // The CA should be self-signed
+            let mut command = tokio::process::Command::new("openssl");
+            let output = command
+                .arg("verify")
+                .arg("-CAfile")
+                .arg(&ca_path)
+                .arg(&ca_path)
+                .output()
+                .await?;
+            assert!(output.status.success());
+
+            // The CA has signed the codesigning certificate
+            let mut command = tokio::process::Command::new("openssl");
+            let output = command
+                .arg("verify")
+                .arg("-CAfile")
+                .arg(&ca_path)
+                .arg(&codesigning_path)
+                .output()
+                .await?;
+            assert!(output.status.success());
+
+            // And the CA isn't signed by codesigning
+            let mut invalid_verify = tokio::process::Command::new("openssl");
+            let output = invalid_verify
+                .arg("verify")
+                .arg("-CAfile")
+                .arg(&codesigning_path)
+                .arg(&ca_path)
+                .output()
+                .await?;
+            assert!(!output.status.success());
         }
         _ => panic!("unexpected key type"),
     }
