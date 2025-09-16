@@ -3,16 +3,12 @@
 
 use std::{collections::HashMap, io::Write};
 
-use anyhow::Context;
 use bytes::Bytes;
 use sequoia_keystore::Keystore;
 use sequoia_openpgp::{
     crypto::Password,
     parse::Parse,
-    serialize::{
-        stream::{LiteralWriter, Message, Signer},
-        MarshalInto,
-    },
+    serialize::stream::{LiteralWriter, Message, Signer},
     KeyHandle,
 };
 use sqlx::SqliteConnection;
@@ -56,13 +52,10 @@ pub(crate) async fn public_key(
         let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material.as_bytes())?;
         let version = cert.primary_key().key().version();
         let fingerprint = cert.fingerprint().to_hex();
-        let certificate = cert.strip_secret_key_material().armored().to_vec()?;
-        let certificate =
-            String::from_utf8(certificate).context("The armored public key isn't valid UTF-8")?;
         crate::protocol::Certificate::Gpg {
             version,
-            certificate,
             fingerprint,
+            certificate: key.public_key,
         }
     } else {
         let mut cert =

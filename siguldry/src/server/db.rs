@@ -191,8 +191,6 @@ impl From<String> for KeyLocation {
 pub enum PublicKeyMaterialType {
     /// An X509 certificate.
     X509,
-    /// A plain public key.
-    PublicKey,
     /// A signed revocation for a key.
     Revocation,
 }
@@ -203,7 +201,6 @@ impl TryFrom<&str> for PublicKeyMaterialType {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "x509" => Ok(Self::X509),
-            "public_key" => Ok(Self::PublicKey),
             "revocation" => Ok(Self::Revocation),
             _ => Err(anyhow::anyhow!(
                 "The database contains public key material types the application \
@@ -219,7 +216,6 @@ impl PublicKeyMaterialType {
         match self {
             PublicKeyMaterialType::X509 => "x509",
             PublicKeyMaterialType::Revocation => "revocation",
-            PublicKeyMaterialType::PublicKey => "public_key",
         }
     }
 }
@@ -307,6 +303,8 @@ pub struct Key {
     /// The scheme is dependent on the type of key, but it will be a text representation
     /// (ASCII-armored, PEM-encoded, etc).
     pub key_material: String,
+    /// The public key in a text-friendly encoding (ASCII-armored, PEM-encoded, etc).
+    pub public_key: String,
 }
 
 impl std::fmt::Display for Key {
@@ -352,12 +350,13 @@ impl Key {
         key_algorithm: KeyAlgorithm,
         key_location: KeyLocation,
         key_material: &str,
+        public_key: &str,
     ) -> Result<Key, sqlx::Error> {
         let key_algorithm_str = key_algorithm.as_str();
         let key_location_str = key_location.as_str();
         sqlx::query!(
-            "INSERT INTO keys (name, key_algorithm, key_location, handle, key_material) VALUES (?, ?, ?, ?, ?) RETURNING id",
-            name, key_algorithm_str, key_location_str, handle, key_material)
+            "INSERT INTO keys (name, key_algorithm, key_location, handle, key_material, public_key) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+            name, key_algorithm_str, key_location_str, handle, key_material, public_key)
             .fetch_one(&mut *conn)
             .await
             .map(|record| Key {
@@ -367,6 +366,7 @@ impl Key {
                 key_location,
                 handle: handle.to_string(),
                 key_material: key_material.to_string(),
+                public_key: public_key.to_string(),
             })
     }
 
@@ -611,10 +611,9 @@ mod tests {
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
-        assert_eq!(3, public_key_material_types.len());
+        assert_eq!(2, public_key_material_types.len());
         assert!(public_key_material_types.contains(&PublicKeyMaterialType::X509));
         assert!(public_key_material_types.contains(&PublicKeyMaterialType::Revocation));
-        assert!(public_key_material_types.contains(&PublicKeyMaterialType::PublicKey));
 
         Ok(())
     }
@@ -632,6 +631,7 @@ mod tests {
             KeyAlgorithm::Ed25519,
             KeyLocation::Pkcs11,
             "pkcs11://something",
+            "public-key",
         )
         .await?;
 
@@ -653,13 +653,14 @@ mod tests {
         let mut conn = db_pool.begin().await?;
         let key_algorithm_str = KeyAlgorithm::Ed25519.as_str();
         let result = sqlx::query(
-            "INSERT INTO keys (name, key_algorithm, key_location, handle, key_material) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO keys (name, key_algorithm, key_location, handle, key_material, public_key) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind("test-name")
         .bind(key_algorithm_str)
         .bind("not-valid")
         .bind("unique")
         .bind("some-encrypted-key")
+        .bind("some-public-key")
         .fetch_one(&mut *conn)
         .await;
 
@@ -682,13 +683,14 @@ mod tests {
         let mut conn = db_pool.begin().await?;
         let key_location_str = KeyLocation::SequoiaSoftkey.as_str();
         let result = sqlx::query(
-            "INSERT INTO keys (name, key_algorithm, key_location, handle, key_material) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO keys (name, key_algorithm, key_location, handle, key_material, public_key) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind("test-name")
         .bind("not-valid")
         .bind(key_location_str)
         .bind("unique")
         .bind("key-material")
+        .bind("public-key")
         .fetch_one(&mut *conn)
         .await;
 

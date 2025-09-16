@@ -153,6 +153,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                 )?;
                 let armored_private_key = bound_key.armored_key()?;
                 let armored_private_key = String::from_utf8(armored_private_key)?;
+                let public_key = bound_key.public_key()?;
 
                 let key = db::Key::create(
                     &mut conn,
@@ -161,6 +162,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     db::KeyAlgorithm::Rsa4K,
                     db::KeyLocation::SequoiaSoftkey,
                     &armored_private_key,
+                    &public_key,
                 )
                 .await?;
                 db::KeyAccess::create(
@@ -210,16 +212,10 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     db::KeyAlgorithm::P256,
                     db::KeyLocation::Encrypted,
                     &private_key,
+                    &public_key,
                 )
                 .await?;
                 db::KeyAccess::create(&mut conn, &key, &user, encrypted_password, true).await?;
-                db::PublicKeyMaterial::create(
-                    &mut conn,
-                    &key,
-                    db::PublicKeyMaterialType::PublicKey,
-                    public_key,
-                )
-                .await?;
             }
             KeyCommands::X509 {
                 user_name,
@@ -255,16 +251,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                 }
 
                 let mut builder = x509::X509Builder::new()?;
-                let mut pubkey = db::PublicKeyMaterial::list(
-                    &mut conn,
-                    &key,
-                    db::PublicKeyMaterialType::PublicKey,
-                )
-                .await?;
-                let pubkey = pubkey
-                    .pop()
-                    .ok_or_else(|| anyhow::anyhow!("No public key for {key_name} found"))?;
-                let pubkey = openssl::pkey::PKey::public_key_from_pem(pubkey.data.as_bytes())?;
+                let pubkey = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
                 builder.set_pubkey(&pubkey)?;
 
                 let mut serial_number = [0; 20];

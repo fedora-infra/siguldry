@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS "keys" (
     --
     -- The scheme is dependent on the type of key, but it will be a text representation (ASCII-armored, PEM-encoded, etc)
     "key_material" TEXT NOT NULL,
+    -- The public key in a text-friendly encoding (ASCII-armored, PEM-encoded, etc)
+    "public_key" TEXT NOT NULL,
     FOREIGN KEY(key_algorithm) REFERENCES key_algorithms(type) ON DELETE RESTRICT,
     FOREIGN KEY(key_location) REFERENCES key_locations(location) ON DELETE RESTRICT
 );
@@ -43,7 +45,6 @@ CREATE TABLE IF NOT EXISTS "public_key_material_types" (
     "type" TEXT NOT NULL PRIMARY KEY
 );
 INSERT INTO public_key_material_types(type) VALUES ("x509");
-INSERT INTO public_key_material_types(type) VALUES ("public_key");
 INSERT INTO public_key_material_types(type) VALUES ("revocation");
 
 -- This table contains data associated with a key pair that is meant to be distributed.
