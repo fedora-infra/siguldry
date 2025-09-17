@@ -37,6 +37,9 @@ default-features = false
 features = ["std", "derive", "env", "help", "usage", "error-context"]
 optional = true
 
+[dependencies.hex]
+version = "0.4"
+
 [dependencies.openssl]
 version = "0.10"
 

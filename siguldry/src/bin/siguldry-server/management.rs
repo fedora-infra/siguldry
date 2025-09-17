@@ -14,9 +14,12 @@ use openssl::{
 };
 use rustix::termios::Termios;
 use sequoia_openpgp::{cert::CipherSuite, crypto::Password, Profile};
-use siguldry::server::{
-    crypto::{self, create_encrypted_key, decrypt_key_password},
-    db, Config,
+use siguldry::{
+    protocol::KeyAlgorithm,
+    server::{
+        crypto::{self, create_encrypted_key, decrypt_key_password},
+        db, Config,
+    },
 };
 use tracing::instrument;
 
@@ -159,7 +162,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     &mut conn,
                     &name,
                     &bound_key.fingerprint(),
-                    db::KeyAlgorithm::Rsa4K,
+                    KeyAlgorithm::Rsa4K,
                     db::KeyLocation::SequoiaSoftkey,
                     &armored_private_key,
                     &public_key,

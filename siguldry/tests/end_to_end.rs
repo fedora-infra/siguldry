@@ -18,7 +18,7 @@ use siguldry::{
     bridge, client,
     config::Credentials,
     error::{ClientError, ConnectionError, ProtocolError, ServerError},
-    protocol::GpgSignatureType,
+    protocol::{DigestAlgorithm, GpgSignatureType},
     server,
 };
 use tokio::process::Command;
@@ -717,6 +717,104 @@ async fn check_x509_certs() -> anyhow::Result<()> {
         }
         _ => panic!("unexpected key type"),
     }
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+/// Get a signature that digests the data prior to signing.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn digest_signature() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let key_name = "test-codesigning-key";
+
+    let public_key = client
+        .unlock(key_name.to_string(), "🪶🪶🪶🪶".to_string())
+        .await?;
+
+    let signature = client
+        .sign(
+            key_name.to_string(),
+            DigestAlgorithm::Sha256,
+            bytes::Bytes::from(data),
+        )
+        .await?;
+
+    let pubkey_path = instance.state_dir.path().join("codesigning-pubkey.pem");
+    std::fs::write(&pubkey_path, &public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, &signature)?;
+    let data_path = instance.state_dir.path().join("data");
+    std::fs::write(&data_path, data)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("dgst")
+        .arg("-verify")
+        .arg(pubkey_path)
+        .arg("-signature")
+        .arg(sig_path)
+        .arg(data_path)
+        .output()
+        .await?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!("Verified OK\n", stdout);
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
+
+    Ok(())
+}
+
+/// Get a signature on pre-hashed data.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn prehashed_signature() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let data_sum = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), data)?.to_vec();
+    let data_hex = hex::encode(&data_sum);
+    let key_name = "test-codesigning-key";
+
+    let public_key = client
+        .unlock(key_name.to_string(), "🪶🪶🪶🪶".to_string())
+        .await?;
+    let signature = client
+        .sign_prehashed(
+            key_name.to_string(),
+            vec![(DigestAlgorithm::Sha256, data_hex)],
+        )
+        .await?
+        .pop()
+        .unwrap();
+
+    let pubkey_path = instance.state_dir.path().join("codesigning-pubkey.pem");
+    std::fs::write(&pubkey_path, &public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, &signature.signature)?;
+    let data_path = instance.state_dir.path().join("data");
+    std::fs::write(&data_path, data)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("dgst")
+        .arg("-verify")
+        .arg(pubkey_path)
+        .arg("-signature")
+        .arg(sig_path)
+        .arg(data_path)
+        .output()
+        .await?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!("Verified OK\n", stdout);
 
     drop(client);
     instance.server.halt().await?;

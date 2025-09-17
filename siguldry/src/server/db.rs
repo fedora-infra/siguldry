@@ -4,9 +4,10 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteConnectOptions, Pool, Sqlite, SqliteConnection, SqlitePool};
 use tracing::instrument;
+
+use crate::protocol::KeyAlgorithm;
 
 static MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/");
 
@@ -86,61 +87,6 @@ impl User {
     }
 }
 
-/// Possible key types.
-///
-/// This enumeration matches the values in the database's `key_algorithms` table.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
-#[non_exhaustive]
-pub enum KeyAlgorithm {
-    /// 4096 bit RSA keys.
-    Rsa4K,
-    /// Ed25519 ECC keys.
-    Ed25519,
-    /// NIST P-256 ECC keys (also known as prime256v1 and secp256r1).
-    P256,
-}
-
-impl Default for KeyAlgorithm {
-    fn default() -> Self {
-        Self::Rsa4K
-    }
-}
-
-impl KeyAlgorithm {
-    pub fn as_str(&self) -> &str {
-        match self {
-            KeyAlgorithm::Rsa4K => "rsa4k",
-            KeyAlgorithm::Ed25519 => "Ed25519",
-            KeyAlgorithm::P256 => "P256",
-        }
-    }
-}
-
-impl TryFrom<&str> for KeyAlgorithm {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "rsa4k" => Ok(Self::Rsa4K),
-            "Ed25519" => Ok(Self::Ed25519),
-            "P256" => Ok(Self::P256),
-            _ => Err(anyhow::anyhow!("Unknown key type '{value}'!")),
-        }
-    }
-}
-
-impl From<String> for KeyAlgorithm {
-    fn from(value: String) -> Self {
-        // In the event that the database we're working from has been migrated to a different level
-        // than the application, it's possible there's a variant we're not aware of. It's not great
-        // but we really should panic and stop.
-        let msg = "The database contains key types the application is unaware \
-            of; this is either an application bug, or the database migration level does not match \
-            the application";
-        Self::try_from(value.as_str()).expect(msg)
-    }
-}
-
 /// Possible key locations.
 ///
 /// This enumeration matches the values in the database's `key_locations` table.
@@ -154,7 +100,7 @@ pub enum KeyLocation {
     Pkcs11,
     /// GPG keys for use with Sequoia's softkey keystore; they are encrypted by a server-generated password.
     SequoiaSoftkey,
-    /// Keys for use with OpenSSL for CMS signatures; they are encrypted by a server-generated password.
+    /// Keys for use with OpenSSL; they are encrypted by a server-generated password.
     Encrypted,
 }
 
@@ -249,7 +195,7 @@ pub struct PublicKeyMaterial {
 
 impl PublicKeyMaterial {
     /// Create a new public key material record.
-    #[instrument(skip(conn))]
+    #[instrument(skip(conn, key, data), fields(key.name = key.name))]
     pub async fn create(
         conn: &mut SqliteConnection,
         key: &Key,
@@ -272,7 +218,7 @@ impl PublicKeyMaterial {
     }
 
     /// List all public key material for a given key and type
-    #[instrument(skip(conn))]
+    #[instrument(skip(conn, key), fields(key.name = key.name))]
     pub async fn list(
         conn: &mut SqliteConnection,
         key: &Key,
@@ -349,7 +295,7 @@ impl Key {
     /// Create a new key record in the database.
     ///
     /// This does not validate that the key actually exists, or that the handle is valid.
-    #[instrument(skip(conn))]
+    #[instrument(skip(conn, key_material, public_key))]
     pub async fn create(
         conn: &mut SqliteConnection,
         name: &str,
@@ -472,7 +418,7 @@ impl KeyAccess {
             })
     }
 
-    #[instrument(skip(conn))]
+    #[instrument(skip_all, fields(key.name = key.name, user.name = %user))]
     pub async fn get(
         conn: &mut SqliteConnection,
         key: &Key,
@@ -489,7 +435,7 @@ impl KeyAccess {
     }
 
     /// Remove key access for a user.
-    #[instrument(skip(conn))]
+    #[instrument(skip_all, fields(key.name = key.name, user.name = %user))]
     pub async fn delete(
         conn: &mut SqliteConnection,
         key: &Key,
@@ -568,8 +514,7 @@ mod tests {
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
-        assert_eq!(3, key_algorithms.len());
-        assert!(key_algorithms.contains(&KeyAlgorithm::Ed25519));
+        assert_eq!(2, key_algorithms.len());
         assert!(key_algorithms.contains(&KeyAlgorithm::Rsa4K));
         assert!(key_algorithms.contains(&KeyAlgorithm::P256));
 
@@ -635,7 +580,7 @@ mod tests {
             &mut conn,
             "test-name",
             "unique-handle",
-            KeyAlgorithm::Ed25519,
+            KeyAlgorithm::P256,
             KeyLocation::Pkcs11,
             "pkcs11://something",
             "public-key",
@@ -658,7 +603,7 @@ mod tests {
         let db_pool = pool("sqlite::memory:").await?;
         migrate(&db_pool).await?;
         let mut conn = db_pool.begin().await?;
-        let key_algorithm_str = KeyAlgorithm::Ed25519.as_str();
+        let key_algorithm_str = KeyAlgorithm::P256.as_str();
         let result = sqlx::query(
             "INSERT INTO keys (name, key_algorithm, key_location, handle, key_material, public_key) VALUES (?, ?, ?, ?, ?, ?)",
         )

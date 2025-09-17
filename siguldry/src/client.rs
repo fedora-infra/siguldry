@@ -20,7 +20,8 @@ use tracing::instrument;
 use uuid::Uuid;
 use zerocopy::{IntoBytes, TryFromBytes};
 
-use crate::protocol::GpgSignatureType;
+use crate::protocol::json::Signature;
+use crate::protocol::{DigestAlgorithm, GpgSignatureType};
 use crate::{
     config::Credentials,
     error::{ClientError, ConnectionError},
@@ -212,7 +213,7 @@ impl Client {
     }
 
     // TODO return opaque handle to provide to gpg_sign etc
-    pub async fn unlock(&self, key: String, password: String) -> Result<(), ClientError> {
+    pub async fn unlock(&self, key: String, password: String) -> Result<String, ClientError> {
         let request = Request {
             message: protocol::json::Request::Unlock { key, password },
             binary: None,
@@ -220,7 +221,7 @@ impl Client {
 
         let response = self.reconnecting_send(request).await?;
         match response.json {
-            Response::Unlock {} => Ok(()),
+            Response::Unlock { public_key } => Ok(public_key),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }
@@ -262,6 +263,46 @@ impl Client {
             Response::GpgSign {} => response.binary.ok_or_else(|| {
                 anyhow::anyhow!("Server response didn't include a signature").into()
             }),
+            Response::Error { reason } => Err(reason.into()),
+            _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
+        }
+    }
+
+    pub async fn sign(
+        &self,
+        key: String,
+        digest: DigestAlgorithm,
+        data: Bytes,
+    ) -> Result<Bytes, ClientError> {
+        let request = Request {
+            message: protocol::json::Request::Sign { key, digest },
+            binary: Some(data),
+        };
+
+        let response = self.reconnecting_send(request).await?;
+        match response.json {
+            Response::Sign {} => response.binary.ok_or_else(|| {
+                anyhow::anyhow!("Server response didn't include a signature").into()
+            }),
+            Response::Error { reason } => Err(reason.into()),
+            _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
+        }
+    }
+
+    /// Sign prehashed content.
+    pub async fn sign_prehashed(
+        &self,
+        key: String,
+        digests: Vec<(DigestAlgorithm, String)>,
+    ) -> Result<Vec<Signature>, ClientError> {
+        let request = Request {
+            message: protocol::json::Request::SignPrehashed { key, digests },
+            binary: None,
+        };
+
+        let response = self.reconnecting_send(request).await?;
+        match response.json {
+            Response::SignPrehashed { signatures } => Ok(signatures),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }

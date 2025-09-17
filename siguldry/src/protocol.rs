@@ -382,9 +382,30 @@ pub(crate) mod json {
             /// The password to unlock the key with.
             password: String,
         },
+        /// Request a GPG signature.
+        ///
+        /// The content to be signed should be sent in the binary section of the request.
         GpgSign {
+            /// The key to use for signing. The request will fail if this is not a GPG key.
             key: String,
+            /// The format of the signature to produce.
             signature_type: super::GpgSignatureType,
+        },
+        /// Request an RSA or ECDSA signature.
+        ///
+        /// The type of signature is dependant on the type of the given key.
+        ///
+        /// # RSA
+        ///
+        /// For RSA key types, the PKCS #1 padding mode is used.
+        Sign {
+            key: String,
+            digest: super::DigestAlgorithm,
+        },
+        SignPrehashed {
+            key: String,
+            /// The set of digests to sign. Digests should be hex-encoded.
+            digests: Vec<(super::DigestAlgorithm, String)>,
         },
         Certificates {
             key: String,
@@ -396,10 +417,39 @@ pub(crate) mod json {
     pub(crate) enum Response {
         WhoAmI { user: String },
         ListUsers { users: Vec<String> },
-        Unlock {},
+        Unlock { public_key: String },
         Certificates { keys: Vec<super::Certificate> },
         GpgSign {},
+        Sign {},
+        SignPrehashed { signatures: Vec<Signature> },
         Error { reason: ServerError },
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Signature {
+        /// The signature. This is base64-encoded in the JSON objects.
+        #[serde(with = "base64")]
+        pub signature: Vec<u8>,
+        /// The digest algorithm used on the payload.
+        pub digest: super::DigestAlgorithm,
+        /// The hex-encoded digest value that was signed.
+        pub hash: String,
+    }
+
+    mod base64 {
+        use serde::{Deserialize, Serialize};
+        use serde::{Deserializer, Serializer};
+
+        pub fn serialize<S: Serializer>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+            String::serialize(&openssl::base64::encode_block(value), serializer)
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Vec<u8>, D::Error> {
+            openssl::base64::decode_block(&String::deserialize(deserializer)?)
+                .map_err(|error| serde::de::Error::custom(format!("invalid base64: {error:?}")))
+        }
     }
 }
 
@@ -426,19 +476,118 @@ pub enum Certificate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum GpgSignatureType {
+    /// Create a detached signature as described in [Section 10.4 of RFC 9580].
+    ///
+    /// Detached signatures are one or more Signature packets stored separately from the
+    /// data for which they are a signature.
+    ///
+    /// [Section 10.4 of RFC 9580]: https://www.rfc-editor.org/rfc/rfc9580.html#section-10.4
     Detached,
+
+    /// Create a cleartext signature as described in [Section 7 of RFC 9580].
+    ///
+    /// [Section 7 of RFC 9580]: https://www.rfc-editor.org/rfc/rfc9580.html#section-7
     Cleartext,
+
+    /// Create an inline signature. The signature includes the data signed, but it is not
+    /// cleartext.
+    ///
+    /// However, this mode also does not alter the signed data like the cleartext mode
+    /// does. Note that the output of this is _not_ ASCII-armored.
     Inline,
 }
 
-/// The key type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Possible key types.
+///
+/// This enumeration matches the values in the database's `key_algorithms` table.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[non_exhaustive]
 pub enum KeyAlgorithm {
     /// 4096 bit RSA keys.
     Rsa4K,
-    /// Ed25519 ECC keys.
-    Ed25519,
+    /// NIST P-256 ECC keys (also known as prime256v1 and secp256r1).
+    P256,
+}
+
+impl Default for KeyAlgorithm {
+    fn default() -> Self {
+        Self::Rsa4K
+    }
+}
+
+impl KeyAlgorithm {
+    pub fn as_str(&self) -> &str {
+        match self {
+            KeyAlgorithm::Rsa4K => "rsa4k",
+            KeyAlgorithm::P256 => "P256",
+        }
+    }
+}
+
+impl TryFrom<&str> for KeyAlgorithm {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "rsa4k" => Ok(Self::Rsa4K),
+            "P256" => Ok(Self::P256),
+            _ => Err(anyhow::anyhow!("Unknown key type '{value}'!")),
+        }
+    }
+}
+
+impl From<String> for KeyAlgorithm {
+    fn from(value: String) -> Self {
+        // In the event that the database we're working from has been migrated to a different level
+        // than the application, it's possible there's a variant we're not aware of. It's not great
+        // but we really should panic and stop.
+        let msg = "The database contains key types the application is unaware \
+            of; this is either an application bug, or the database migration level does not match \
+            the application";
+        Self::try_from(value.as_str()).expect(msg)
+    }
+}
+
+/// The digest algorithm to use when signing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum DigestAlgorithm {
+    Sha256,
+    Sha512,
+    Sha3_256,
+    Sha3_512,
+}
+
+impl DigestAlgorithm {
+    /// The size, in bytes, of the digest algorithm
+    pub fn size(self) -> usize {
+        let algorithm: openssl::hash::MessageDigest = self.into();
+        algorithm.size()
+    }
+}
+
+impl std::fmt::Display for DigestAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            DigestAlgorithm::Sha256 => "sha256",
+            DigestAlgorithm::Sha512 => "sha512",
+            DigestAlgorithm::Sha3_256 => "sha3-256",
+            DigestAlgorithm::Sha3_512 => "sha3-512",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+impl From<DigestAlgorithm> for openssl::hash::MessageDigest {
+    fn from(value: DigestAlgorithm) -> Self {
+        match value {
+            DigestAlgorithm::Sha256 => openssl::hash::MessageDigest::sha256(),
+            DigestAlgorithm::Sha512 => openssl::hash::MessageDigest::sha512(),
+            DigestAlgorithm::Sha3_256 => openssl::hash::MessageDigest::sha3_256(),
+            DigestAlgorithm::Sha3_512 => openssl::hash::MessageDigest::sha3_512(),
+        }
+    }
 }
 
 /// A request sent by the client.

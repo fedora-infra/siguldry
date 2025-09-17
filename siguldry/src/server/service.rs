@@ -207,8 +207,8 @@ async fn handle(
     // keys the client unlocks into it.
     let mut gpg_keystore = sequoia_keystore::Keystore::connect(&keystore_context)
         .context("failed to create Sequoia keystore")?;
-    // For non-GPG keys, we keep a map of key names to user passwords provided by the client
-    let mut key_passwords: HashMap<String, Password> = HashMap::new();
+    // For non-GPG keys, we keep a map of key names to key passwords provided by the client
+    let mut key_passwords: HashMap<String, (PathBuf, Password)> = HashMap::new();
     loop {
         let mut frame_buffer = [0_u8; std::mem::size_of::<protocol::Frame>()];
         conn.read_exact(&mut frame_buffer).await?;
@@ -263,6 +263,7 @@ async fn handle(
                 handlers::unlock(
                     &mut db_transaction,
                     &mut gpg_keystore,
+                    keystore_directory.path(),
                     &mut key_passwords,
                     &config,
                     &user,
@@ -283,6 +284,20 @@ async fn handle(
                     binary_bytes,
                 )
                 .await
+            }
+            Request::Sign { key, digest } => {
+                handlers::sign(
+                    &mut db_transaction,
+                    &mut key_passwords,
+                    &key,
+                    digest,
+                    binary_bytes,
+                )
+                .await
+            }
+            Request::SignPrehashed { key, digests } => {
+                handlers::sign_prehashed(&mut db_transaction, &mut key_passwords, &key, digests)
+                    .await
             }
             Request::Certificates { key } => handlers::public_key(&mut db_transaction, key).await,
         };

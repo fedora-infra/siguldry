@@ -8,7 +8,7 @@
 use std::{num::NonZeroU32, path::PathBuf};
 
 use clap::Parser;
-use siguldry::server::db::KeyAlgorithm;
+use siguldry::protocol::KeyAlgorithm;
 
 /// The siguldry signing server.
 ///

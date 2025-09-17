@@ -40,7 +40,7 @@ use sequoia_openpgp::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::server::{config::Pkcs11Binding, db::KeyAlgorithm};
+use crate::{protocol::KeyAlgorithm, server::config::Pkcs11Binding};
 
 pub(crate) fn generate_password() -> anyhow::Result<Password> {
     let mut buf = [0; 128];
@@ -56,7 +56,6 @@ pub fn create_encrypted_key(
     let key_password = generate_password()?;
     let key = match algorithm {
         KeyAlgorithm::Rsa4K => PKey::from_rsa(Rsa::generate(4096)?)?,
-        KeyAlgorithm::Ed25519 => PKey::generate_ed25519()?,
         KeyAlgorithm::P256 => PKey::from_ec_key(EcKey::generate(
             EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?.as_ref(),
         )?)?,
@@ -218,6 +217,7 @@ enum BoundPassword {
 // binding but that does appear to actually be used. This structure will be useful for writing
 // the migration script later.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 struct SigulPkcs11BoundPassword {
     method: String,
     value: String,
@@ -373,7 +373,6 @@ fn symmetric_decrypt(password: Password, data: &[u8]) -> anyhow::Result<Vec<u8>>
 ///
 /// The options here are primarily chosen because they match Sigul.
 fn binding_encrypt(binding: &Pkcs11Binding, data: &[u8]) -> anyhow::Result<BoundPassword> {
-    // Switch to openssl::pkcs7 after confirming the output matches this.
     let certificate = std::fs::read_to_string(&binding.public_key)?;
     let certificate = X509::from_pem(certificate.as_bytes())?;
     let mut cert_stack = Stack::new()?;

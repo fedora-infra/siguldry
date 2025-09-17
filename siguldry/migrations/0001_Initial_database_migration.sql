@@ -6,8 +6,6 @@ CREATE TABLE IF NOT EXISTS "key_algorithms" (
 );
 -- 4096 bit RSA keys
 INSERT INTO key_algorithms(type) VALUES ("rsa4k");
--- Ed25519 ECC keys
-INSERT INTO key_algorithms(type) VALUES ("Ed25519");
 -- NIST-P256 ECC keys
 INSERT INTO key_algorithms(type) VALUES ("P256");
 
@@ -19,7 +17,7 @@ INSERT INTO key_locations(location) VALUES ("sequoia-softkey");
 -- Keys accessible via PKCS11; it's assumed p11-kit is being used to manage pkcs11 modules.
 -- These keys are only for signatures created via OpenSSL
 INSERT INTO key_locations(location) VALUES ("pkcs11");
--- Keys for use with OpenSSL for CMS signatures; they are encrypted by a server-generated password.
+-- Keys for use with OpenSSL; they are encrypted by a server-generated password.
 INSERT INTO key_locations(location) VALUES ("encrypted");
 
 CREATE TABLE IF NOT EXISTS "keys" (
