@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update to siguldry v0.4 (#64)
 
+### Fixed
+
+- Removed references to the Sigul client in the documentation (#76)
+
 
 ## [0.5.0] - 2025-06-12
 

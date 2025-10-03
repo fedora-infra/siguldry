@@ -120,6 +120,14 @@ pub struct Key {
     /// The name of the certificate in the Sigul server.
     pub certificate_name: String,
     /// The systemd credential ID containing the passphrase.
+    ///
+    /// The passphrase inside the file must be entirely on the first line of
+    /// the file and the file should be terminated with a newline. The default
+    /// settings for `systemd-ask-password` will produce an acceptable file:
+    ///
+    /// ```bash
+    /// systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/sigul.key.phrase
+    /// ```
     pub passphrase_path: PathBuf,
     /// If set, the service will validate the PE has been signed with the given
     /// certificate before returning the signed file to the client.

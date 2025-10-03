@@ -25,18 +25,6 @@ The service provides a Unix socket at, by default, `/run/pesign/socket`. `pesign
 sigul-pesign-bridge config
 ```
 
-`sigul-pesign-bridge` relies on the `sigul` client CLI when forwarding requests.
-You must prepare a [sigul client
-configuration](https://pagure.io/sigul/blob/a3c76ae339670a309681c883771172c46409488a/f/config/client.conf)
-for `sigul-pesign-bridge` to use. The `nss` section of this configuration
-includes the path to the NSS database containing the sigul client's TLS
-certificate used for authentication. The database must be readable by the
-`sigul-pesign-bridge` service which runs as the `pesign` user, by default.
-Additionally, the configuration file includes the `nss-password` used to access
-the database, so the configuration file itself should be protected. The
-configuration below includes in-line comments on how to encrypt the file with
-systemd credentials.
-
 The configuration format with in-line documentation:
 
 ```toml
@@ -145,26 +133,29 @@ secrets are handled by systemd.
 To start with, a few secrets need to be prepared. Refer to [systemd's
 credentials documentation](https://systemd.io/CREDENTIALS/) for details.
 
-To begin, the Sigul client configuration should be encrypted. The client
-configuration contains the password needed to access the Sigul client
-certificate in the NSS database:
-
-```bash
-# Assuming your sigul client configuration is prepared at /secure/ramfs/sigul-client-config
-systemd-creds encrypt /secure/ramfs/sigul-client-config /etc/credstore.encrypted/sigul.client.config
-```
-
-Next, for each signing key in Sigul, we should configure the passphrase needed to unlock it:
+For each signing key in Sigul, we should configure the passphrase needed to unlock it (the key access
+password for the user):
 
 ```bash
 # This will prompt you for both passwords.
-systemd-ask-password -n | systemd-creds encrypt - /etc/credstore.encrypted/sigul.signing-key.passphrase
-systemd-ask-password -n | systemd-creds encrypt - /etc/credstore.encrypted/sigul.other-signing-key.passphrase
+systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/sigul.signing-key.passphrase
+systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/sigul.other-signing-key.passphrase
 ```
 
-The service rejects passphrase files with newlines, so if you use
-`systemd-creds` directly for the passphrases, ensure they do not include
-trailing newlines.
+The service expects passwords to be on a single line, terminated by a newline.
+Anything after the newline is ignored.
+
+In addition to the key access password, you should encrypt the private key used for client
+authentication:
+
+```bash
+systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/sigul.client.private_key
+```
+
+While not technically secrets, you can also store the client certificate and CA certificate as systemd
+credentials, either encrypted in `/etc/credstore.encrypted/` or in `/etc/credstore/` as plaintext. They
+should have names that start with `sigul.` as the systemd unit will automatically load any credential
+starting with that prefix.
 
 Now that the secrets are prepared, place your TOML configuration at
 `/etc/sigul-pesign-bridge/config.toml`, which is the default set in the systemd
@@ -173,7 +164,7 @@ unit file.
 Finally, start the service:
 
 ```bash
-sudo systemctl enable --now sigul-client-config.service
+sudo systemctl enable --now sigul-pesign-bridge.service
 ```
 
 ## Signing
