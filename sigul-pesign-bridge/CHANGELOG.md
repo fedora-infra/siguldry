@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Removed references to the Sigul client in the documentation (#76)
 
+- Note the AllowDevice directive for the TPM is not necessary for systemd-257+
+  and update the documentation for ImportCredential in the systemd unit (#77)
+
 
 ## [0.5.0] - 2025-06-12
 

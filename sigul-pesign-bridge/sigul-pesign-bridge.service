@@ -34,8 +34,8 @@ NoNewPrivileges=true
 PrivateDevices=true
 # Credentials may require the TPM to decrypt.
 #
-# Refer to https://github.com/systemd/systemd/issues/35959 as this directive
-# might be removable in the future.
+# For systemd >= 257 this directive should be removed.
+# Refer to https://github.com/systemd/systemd/issues/35959.
 DeviceAllow=/dev/tpmrm0
 PrivateTmp=true
 ProtectClock=true
@@ -59,15 +59,13 @@ SystemCallErrorNumber=EPERM
 SystemCallFilter=@system-service
 
 # The service needs to authenticate with Sigul. It does this via a
-# password-protected TLS certificate. The password can be provided
-# via systemd's Credentials features.
+# client TLS certificate.
 #
-# For the NSS password, sigul uses getpass if it's not in the config file. We can set the password in
-# the configuration file and encrypt the entire thing.
-# $ systemd-creds encrypt /secure/ramfs/sigul-client-config /etc/credstore.encrypted/sigul.client.config
+# You can use the systemd-creds utility to prepare the private key
+# and the password needed to access the signing key for the user.
 #
-# You can use the systemd-creds utility to set up the passphrase file.
 # For example:
-# $ systemd-ask-password -n | systemd-creds encrypt - /etc/sigul-pesign-bridge/sigul-signing-key-passphrase
+# $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/sigul.client.private_key
+# $ systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/sigul.signing-key.passphrase
 ImportCredential=sigul.*
 
