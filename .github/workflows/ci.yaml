@@ -78,7 +78,7 @@ jobs:
           toolchain: ${{matrix.rust-toolchain}}
           components: clippy, rustfmt
       - name: Install nextest
-        uses: taiki-e/install-action@cd39cb0572834c149bf3533a143f05e09def0f3c # 2.62.2
+        uses: taiki-e/install-action@c5b1b6f479c32f356cc6f4ba672a47f63853b13b # 2.62.38
         with:
           tool: nextest@0.9
 
@@ -154,7 +154,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install nextest
-        uses: taiki-e/install-action@cd39cb0572834c149bf3533a143f05e09def0f3c # 2.62.2
+        uses: taiki-e/install-action@c5b1b6f479c32f356cc6f4ba672a47f63853b13b # 2.62.38
         with:
           tool: nextest@0.9
 
