@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::bail;
-use assert_cmd::cargo::CommandCargoExt;
+use assert_cmd::cargo;
 use siguldry::{
     bridge, client,
     config::Credentials,
@@ -120,7 +120,7 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     };
     let server_config_file = tempdir.path().join("server.toml");
     std::fs::write(&server_config_file, toml::to_string_pretty(&server_config)?)?;
-    let mut migrate_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut migrate_command = std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let result = migrate_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args(["manage", "migrate"])
@@ -128,7 +128,7 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     if !result.status.success() {
         panic!("failed to create test database");
     }
-    let mut create_user_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut create_user_command = std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let result = create_user_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args(["manage", "users", "create", "sigul-client"])
@@ -136,7 +136,8 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     if !result.status.success() {
         panic!("failed to create test user");
     }
-    let mut create_gpg_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut create_gpg_key_command =
+        std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let mut child = create_gpg_key_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args([
@@ -158,7 +159,8 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     }
 
     // Set up a CA
-    let mut create_ca_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut create_ca_key_command =
+        std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let mut child = create_ca_key_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args(["manage", "key", "create", "sigul-client", "test-ca-key"])
@@ -171,7 +173,7 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     if !result.status.success() {
         panic!("failed to create test key");
     }
-    let mut sign_ca_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut sign_ca_key_command = std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let mut child = sign_ca_key_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args([
@@ -199,7 +201,8 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     }
 
     // Create codesigning key
-    let mut create_codesigning_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut create_codesigning_key_command =
+        std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let mut child = create_codesigning_key_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args([
@@ -218,7 +221,8 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     if !result.status.success() {
         panic!("failed to create test key");
     }
-    let mut sign_codesigning_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut sign_codesigning_key_command =
+        std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let mut child = sign_codesigning_key_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args([

@@ -4,13 +4,13 @@
 use std::process::{Command, Stdio};
 
 use anyhow::Result;
-use assert_cmd::cargo::CommandCargoExt;
+use assert_cmd::cargo;
 
 #[test]
 fn config_with_default_works() -> Result<()> {
     let mut creds_directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     creds_directory.push("../devel/creds/");
-    let mut command = Command::cargo_bin("sigul-pesign-bridge")?;
+    let mut command = Command::new(cargo::cargo_bin!("sigul-pesign-bridge"));
     let output = command
         .env("CREDENTIALS_DIRECTORY", creds_directory)
         .arg("config")

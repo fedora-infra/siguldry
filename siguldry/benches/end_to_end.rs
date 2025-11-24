@@ -16,7 +16,7 @@ use std::{
 };
 
 use anyhow::bail;
-use assert_cmd::cargo::CommandCargoExt;
+use assert_cmd::cargo;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use siguldry::{bridge, client, config::Credentials, protocol::GpgSignatureType, server};
 use tokio::{process::Command, task::JoinSet};
@@ -118,7 +118,7 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     };
     let server_config_file = tempdir.path().join("server.toml");
     std::fs::write(&server_config_file, toml::to_string_pretty(&server_config)?)?;
-    let mut migrate_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut migrate_command = std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let result = migrate_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args(["manage", "migrate"])
@@ -126,7 +126,7 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     if !result.status.success() {
         panic!("failed to create test database");
     }
-    let mut create_user_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut create_user_command = std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let result = create_user_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args(["manage", "users", "create", "sigul-client"])
@@ -134,7 +134,8 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
     if !result.status.success() {
         panic!("failed to create test user");
     }
-    let mut create_gpg_key_command = std::process::Command::cargo_bin("siguldry-server")?;
+    let mut create_gpg_key_command =
+        std::process::Command::new(cargo::cargo_bin!("siguldry-server"));
     let mut child = create_gpg_key_command
         .env("SIGULDRY_SERVER_CONFIG", &server_config_file)
         .args([

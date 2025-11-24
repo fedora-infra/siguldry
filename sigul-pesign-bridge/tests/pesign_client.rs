@@ -19,7 +19,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use assert_cmd::cargo::CommandCargoExt;
+use assert_cmd::cargo;
 use rustix::{
     fs::Mode,
     process::{kill_process, Pid},
@@ -63,7 +63,7 @@ fn run_command(
         }
     });
 
-    let mut server_command = Command::cargo_bin("sigul-pesign-bridge")?;
+    let mut server_command = Command::new(cargo::cargo_bin!("sigul-pesign-bridge"));
     server_command
         .env("RUNTIME_DIRECTORY", working_dir)
         .env("CREDENTIALS_DIRECTORY", creds_directory)

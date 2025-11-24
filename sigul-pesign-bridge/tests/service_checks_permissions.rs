@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
-use assert_cmd::cargo::CommandCargoExt;
+use assert_cmd::cargo;
 
 #[test]
 fn stops_world_readable() -> Result<()> {
@@ -16,7 +16,7 @@ fn stops_world_readable() -> Result<()> {
     creds_directory.push("../devel/creds/");
 
     rustix::process::umask(rustix::fs::Mode::empty());
-    let mut command = Command::cargo_bin("sigul-pesign-bridge")?;
+    let mut command = Command::new(cargo::cargo_bin!("sigul-pesign-bridge"));
     let output = command
         .env("SIGUL_PESIGN_BRIDGE_LOG", "trace")
         .env("RUNTIME_DIRECTORY", socket_dir.path())
