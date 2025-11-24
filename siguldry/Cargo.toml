@@ -82,7 +82,7 @@ version = "2"
 
 [dependencies.tokio]
 version = "1.27"
-features = ["macros", "net", "rt", "io-util", "time"]
+features = ["macros", "net", "process", "rt", "io-util", "time"]
 
 [dependencies.tokio-util]
 version = "0.7"
@@ -120,10 +120,6 @@ anyhow = "1"
 assert_cmd = "2"
 criterion = "0.7"
 proptest = "1.6"
-
-[dev-dependencies.tokio]
-version = "1.27"
-features = ["process"]
 
 [dev-dependencies.tracing-test]
 version = "0.2"
