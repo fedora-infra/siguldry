@@ -1,6 +1,6 @@
 [package]
 name = "sigul-pesign-bridge"
-version = "0.7.0"
+version = "0.6.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = "MIT"
@@ -37,7 +37,7 @@ features = ["net"]
 
 [dependencies.siguldry]
 path = "../siguldry"
-version = "0.5"
+version = "0.4"
 default-features = false
 features = ["sigul-client"]
 
