@@ -5,19 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2025-11-24
 
 ### Added
 
 - Added support for the `sign-certificate` command to create certificates for Sigul-managed keys (#48)
 
-- A new protocol, based on Sigul 1.2, has been added  (#64)
+- A new protocol, based on Sigul 1.2, has been added; this includes a new server, bridge, and
+  client implementation. At this time it is still incomplete, but does support basic signing
+  requests, such as inline PGP signatures (#64, #72)
 
 ### Removed
 
 - The legacy Sigul client is has been removed as a default feature and been
   moved into the `v1` submodule. To continue using the legacy Sigul client,
   enable the `sigul-client` feature and adjust your imports accordingly (#64)
+
+## Changed
+
+- Updated the pyo3 test dependency from 0.26 to 0.27 (#84)
 
 
 ## [0.3.1] - 2025-06-12
