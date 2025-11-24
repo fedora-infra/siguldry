@@ -200,17 +200,12 @@ pub enum KeyCommands {
     List {},
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, clap::ValueEnum)]
 #[non_exhaustive]
 pub enum KeyUsage {
+    #[default]
     CodeSigning,
     CertificateAuthority,
-}
-
-impl Default for KeyUsage {
-    fn default() -> Self {
-        Self::CodeSigning
-    }
 }
 
 #[derive(clap::Subcommand, Debug)]

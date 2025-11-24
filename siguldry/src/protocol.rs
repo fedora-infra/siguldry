@@ -500,20 +500,15 @@ pub enum GpgSignatureType {
 /// Possible key types.
 ///
 /// This enumeration matches the values in the database's `key_algorithms` table.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[non_exhaustive]
 pub enum KeyAlgorithm {
     /// 4096 bit RSA keys.
+    #[default]
     Rsa4K,
     /// NIST P-256 ECC keys (also known as prime256v1 and secp256r1).
     P256,
-}
-
-impl Default for KeyAlgorithm {
-    fn default() -> Self {
-        Self::Rsa4K
-    }
 }
 
 impl KeyAlgorithm {
