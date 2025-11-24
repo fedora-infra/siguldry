@@ -89,7 +89,6 @@ zero_sized_map_values = "warn"
 # The following rules are machine-applicable.
 dbg_macro = "warn"
 lossy_float_literal = "warn"
-string_to_string = "warn"
 
 # The following rules are NOT machine-applicable.
 exit = "warn"
