@@ -10,14 +10,14 @@ use std::{
     process::Stdio,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use bytes::Bytes;
 use sequoia_keystore::Keystore;
 use sequoia_openpgp::{
+    KeyHandle,
     crypto::Password,
     parse::Parse,
     serialize::stream::{LiteralWriter, Message, Signer},
-    KeyHandle,
 };
 use sqlx::SqliteConnection;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -25,13 +25,12 @@ use tracing::instrument;
 
 use crate::{
     protocol::{
-        json::{self, Signature},
         DigestAlgorithm, GpgSignatureType, KeyAlgorithm, Response, ServerError,
+        json::{self, Signature},
     },
     server::{
-        crypto,
+        Config, crypto,
         db::{self, KeyLocation, User},
-        Config,
     },
 };
 

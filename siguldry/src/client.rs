@@ -10,8 +10,8 @@ use std::{sync::Arc, time::Duration};
 use anyhow::Context;
 use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot::Receiver;
 use tokio::sync::Mutex;
+use tokio::sync::oneshot::Receiver;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::{mpsc, oneshot},
@@ -27,9 +27,8 @@ use crate::{
     error::{ClientError, ConnectionError},
     nestls::Nestls,
     protocol::{
-        self,
+        self, Frame, Request, Role,
         json::{OuterRequest, OuterResponse, Response},
-        Frame, Request, Role,
     },
 };
 

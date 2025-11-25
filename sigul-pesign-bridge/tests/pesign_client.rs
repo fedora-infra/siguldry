@@ -18,11 +18,11 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assert_cmd::cargo;
 use rustix::{
     fs::Mode,
-    process::{kill_process, Pid},
+    process::{Pid, kill_process},
 };
 use tempfile::NamedTempFile;
 
@@ -347,8 +347,11 @@ fn kill() -> Result<()> {
     );
     assert!(service_output.status.success());
     let service_logs = String::from_utf8_lossy(&service_output.stderr);
-    assert!(service_logs
-        .contains("Client queried for the server version of command Kill, which is not supported"));
+    assert!(
+        service_logs.contains(
+            "Client queried for the server version of command Kill, which is not supported"
+        )
+    );
 
     Ok(())
 }

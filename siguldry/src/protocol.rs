@@ -78,8 +78,8 @@ use tokio_openssl::SslStream;
 use tracing::instrument;
 use uuid::Uuid;
 use zerocopy::{
-    byteorder::network_endian::{U128, U32, U64},
     Immutable, IntoBytes, KnownLayout, TryFromBytes,
+    byteorder::network_endian::{U32, U64, U128},
 };
 
 use crate::error::ConnectionError;

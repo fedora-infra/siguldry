@@ -9,10 +9,10 @@ use siguldry::{
     bridge::{self, Config},
     config::load_config,
 };
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
-use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt};
 
 // The path, relative to $XDG_CONFIG_HOME, of the default config file location.
 const DEFAULT_CONFIG: &str = "siguldry/bridge.toml";
@@ -127,7 +127,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Config {
             credentials_directory,
         } => {
-            println!("# This is the current configuration\n\n{config}\n# This concludes the configuration.\n");
+            println!(
+                "# This is the current configuration\n\n{config}\n# This concludes the configuration.\n"
+            );
             _ = config.credentials.with_credentials_dir(&credentials_directory).inspect_err(|error|{
                 eprintln!("The configuration format is valid, but the referenced credentials aren't valid: {error:?}");
             });
