@@ -9,7 +9,7 @@ use siguldry::{
     client::{Client, Config},
     config::load_config,
 };
-use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt};
 
 // The path, relative to $XDG_CONFIG_HOME, of the default config file location.
 const DEFAULT_CONFIG: &str = "siguldry/client.toml";
@@ -105,7 +105,9 @@ async fn main() -> anyhow::Result<()> {
     let mut config = load_config::<Config>(opts.config, PathBuf::from(DEFAULT_CONFIG).as_path())?;
 
     if let Command::Config = opts.command {
-        println!("# This is the current configuration\n\n{config}\n# This concludes the configuration.\n");
+        println!(
+            "# This is the current configuration\n\n{config}\n# This concludes the configuration.\n"
+        );
 
         opts.credentials_directory
         .as_ref()

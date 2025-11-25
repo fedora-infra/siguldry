@@ -58,18 +58,56 @@ jobs:
       - name: Run zizmor 🌈
         run: zizmor .
 
+  style:
+    name: Code style checks
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/fedora/fedora:43
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
+        id: rust-toolchain
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: Install test packages
+        run: |
+          dnf install -y \
+            capnproto \
+            clang \
+            sequoia-sq \
+            sequoia-keystore-server \
+            pesign \
+            pkcs11-provider \
+            pkg-config \
+            python3-devel \
+            opensc \
+            openssl \
+            openssl-devel \
+            softhsm \
+            sqlite-devel
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- --deny warnings
+
   test:
     name: Unit tests
     runs-on: ubuntu-latest
     container:
-      image: quay.io/fedora/fedora:42
+      image: quay.io/fedora/fedora:43
     strategy:
       matrix:
         # Support current stable and the toolchain that ships with
-        # the latest RHEL 9 minor release. 9.6 targets 1.84.
-        #
-        # https://issues.redhat.com/browse/RHEL-61964
-        rust-toolchain: [stable, "1.84"]
+        # the latest RHEL 10 minor release. 10.1 targets 1.88.
+        rust-toolchain: [stable, "1.88"]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -107,14 +145,8 @@ jobs:
           sudo mkdir -p /run/pesign/
           sudo chmod -R 777 /run/pesign/
 
-      - name: cargo fmt
-        run: cargo fmt --all --check
-
       - name: cargo build
         run: cargo build
-
-      - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- --deny warnings
 
       - name: Run unit tests
         run: cargo nextest run

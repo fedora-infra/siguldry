@@ -23,20 +23,20 @@ use openssl::{
     x509::X509,
 };
 use sequoia_openpgp::{
+    Profile,
     cert::CipherSuite,
     crypto::Password,
     packet,
     parse::{
-        stream::{DecryptionHelper, DecryptorBuilder, VerificationHelper},
         Parse,
+        stream::{DecryptionHelper, DecryptorBuilder, VerificationHelper},
     },
     policy::StandardPolicy,
     serialize::{
-        stream::{Armorer, Encryptor, LiteralWriter, Message, Signer},
         MarshalInto,
+        stream::{Armorer, Encryptor, LiteralWriter, Message, Signer},
     },
     types::{KeyFlags, SymmetricAlgorithm},
-    Profile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -531,7 +531,7 @@ mod tests {
 
     #[derive(Debug)]
     struct SoftHsm {
-        conf_file: NamedTempFile,
+        _conf_file: NamedTempFile,
         _directory: TempDir,
         bindings: Vec<Pkcs11Binding>,
     }
@@ -678,8 +678,20 @@ mod tests {
             });
         }
 
+        // SAFETY:
+        // These tests are required to run with nextest, which starts a new process for each test.
+        // Using set_var is only safe if no other code is interacting with the environment variables,
+        // which should be true under nextest. Refer to
+        // https://nexte.st/docs/configuration/env-vars/#altering-the-environment-within-tests to ensure
+        // this remains the case with current versions of Rust.
+        //
+        // The alternative approach is to use the default config and randomly generate key names, but
+        // cleanup isn't as neat. Maybe one day softhsm will allow for config files via arguments.
+        unsafe {
+            std::env::set_var("SOFTHSM2_CONF", softhsm_conf_file.path());
+        }
         Ok(SoftHsm {
-            conf_file: softhsm_conf_file,
+            _conf_file: softhsm_conf_file,
             _directory: hsm_dir,
             bindings,
         })
@@ -689,7 +701,6 @@ mod tests {
     #[tokio::test]
     async fn encrypt_decrypt_binding() -> Result<()> {
         let softhsm = setup_softhsm()?;
-        std::env::set_var("SOFTHSM2_CONF", softhsm.conf_file.path());
 
         let binding = softhsm.bindings.first().unwrap();
         let bound_password = binding_encrypt(binding, b"some data")?;
@@ -712,7 +723,6 @@ mod tests {
     #[tokio::test]
     async fn encrypt_decrypt_key_password() -> Result<()> {
         let softhsm = setup_softhsm()?;
-        std::env::set_var("SOFTHSM2_CONF", softhsm.conf_file.path());
 
         let key_password = Password::from("a secret that never leaves the server");
         let user_password = Password::from("some long password clients provide");
@@ -733,7 +743,6 @@ mod tests {
     #[tokio::test]
     async fn encrypt_decrypt_key_password_binding_no_key() -> Result<()> {
         let softhsm = setup_softhsm()?;
-        std::env::set_var("SOFTHSM2_CONF", softhsm.conf_file.path());
 
         let key_password = Password::from("a secret that never leaves the server");
         let user_password = Password::from("some long password clients provide");
@@ -753,7 +762,6 @@ mod tests {
     #[tokio::test]
     async fn encrypt_decrypt_key_password_wrong_user_password() -> Result<()> {
         let softhsm = setup_softhsm()?;
-        std::env::set_var("SOFTHSM2_CONF", softhsm.conf_file.path());
 
         let key_password = Password::from("a secret that never leaves the server");
         let user_password = Password::from("some long password clients provide");

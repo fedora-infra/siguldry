@@ -16,7 +16,7 @@
 
 use std::{num::NonZeroU64, path::PathBuf};
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
 /// The configuration file.
@@ -160,11 +160,7 @@ impl Key {
             .next()
             .and_then(|pass| {
                 let pass = pass.trim();
-                if !pass.is_empty() {
-                    Some(pass)
-                } else {
-                    None
-                }
+                if !pass.is_empty() { Some(pass) } else { None }
             })
             .ok_or_else(|| {
                 anyhow!(
@@ -207,15 +203,13 @@ impl Config {
                     key.passphrase_path = passphrase_path;
                 }
 
-                if let Some(ca_cert) = &key.certificate_file {
-                    if !ca_cert.is_absolute() {
+                if let Some(ca_cert) = &key.certificate_file  && !ca_cert.is_absolute() {
                         let absolute_ca_cert = credentials_dir.join(ca_cert);
                         if !absolute_ca_cert.exists() {
                             tracing::error!(key.key_name, ?key.certificate_file, "CA file is not an absolute path and isn't in the credentials directory");
                             return Err(anyhow::anyhow!("CA file '{}' is missing", ca_cert.display()));
                         }
                         key.certificate_file = Some(absolute_ca_cert);
-                    }
 
                 }
 

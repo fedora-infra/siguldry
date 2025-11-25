@@ -15,13 +15,13 @@ use tokio::{
 };
 use tokio_openssl::SslStream;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 use uuid::Uuid;
 use zerocopy::{IntoBytes, TryFromBytes};
 
 use crate::{
     config::Credentials,
-    protocol::{self, peer_common_name, BridgeStatus, ProtocolAck, Role},
+    protocol::{self, BridgeStatus, ProtocolAck, Role, peer_common_name},
 };
 
 /// Configuration for the siguldry bridge.
@@ -81,7 +81,7 @@ async fn accept_conn(
     let mut header_buf = [0_u8; std::mem::size_of::<protocol::ProtocolHeader>()];
     stream.read_exact(&mut header_buf).await?;
     let header = protocol::ProtocolHeader::try_ref_from_bytes(&header_buf)
-        .map_err(|err| anyhow!("Failed to parse protocol header: {}", err))?;
+        .map_err(|err| anyhow!("Failed to parse protocol header: {err}"))?;
 
     match header.check(role) {
         BridgeStatus::Ok => {
@@ -103,7 +103,9 @@ async fn accept_conn(
             tracing::info!(username, ?role, "Sigul connection established");
         }
         Err(protocol::Error::MissingCommonName) => {
-            tracing::warn!("Incoming connection presented a client certificate without a common name; dropping connection");
+            tracing::warn!(
+                "Incoming connection presented a client certificate without a common name; dropping connection"
+            );
             let ack = protocol::ProtocolAck::new(protocol::BridgeStatus::MissingCommonName);
             stream.write_all(ack.as_bytes()).await?;
         }

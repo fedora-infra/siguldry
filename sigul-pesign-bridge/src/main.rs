@@ -3,9 +3,9 @@
 
 use anyhow::Context;
 use clap::Parser;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt};
 
 use sigul_pesign_bridge::{cli, listen};
 

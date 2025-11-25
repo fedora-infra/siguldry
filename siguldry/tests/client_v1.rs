@@ -608,9 +608,10 @@ async fn key_modify() -> anyhow::Result<()> {
         .await?;
 
     let keys = client.keys("my-admin-password".into()).await?;
-    assert!(keys
-        .iter()
-        .any(|k| *k == format!("{} (gnupg)", &new_key_name,)));
+    assert!(
+        keys.iter()
+            .any(|k| *k == format!("{} (gnupg)", &new_key_name,))
+    );
 
     client
         .delete_key("my-admin-password".into(), new_key_name)
@@ -785,9 +786,10 @@ pub async fn key_rsa_import() -> anyhow::Result<()> {
         )
         .await?;
     let keys = client.keys("my-admin-password".into()).await?;
-    assert!(keys
-        .iter()
-        .any(|k| *k == format!("{} ({})", &key_name, KeyType::Rsa)));
+    assert!(
+        keys.iter()
+            .any(|k| *k == format!("{} ({})", &key_name, KeyType::Rsa))
+    );
 
     client
         .delete_key("my-admin-password".into(), key_name)
@@ -829,9 +831,10 @@ pub async fn key_ecc_import() -> anyhow::Result<()> {
         )
         .await?;
     let keys = client.keys("my-admin-password".into()).await?;
-    assert!(keys
-        .iter()
-        .any(|k| *k == format!("{} ({})", &key_name, KeyType::Ecc)));
+    assert!(
+        keys.iter()
+            .any(|k| *k == format!("{} ({})", &key_name, KeyType::Ecc))
+    );
 
     client
         .delete_key("my-admin-password".into(), key_name)
@@ -1123,10 +1126,11 @@ pub async fn key_gpg_expiration() -> anyhow::Result<()> {
     ))?;
     assert!(cert.with_policy(&policy, pre_expiration)?.alive().is_ok());
     assert!(cert.with_policy(&policy, post_expiration)?.alive().is_ok());
-    assert!(cert
-        .with_policy(&policy, post_post_expiration)?
-        .alive()
-        .is_err());
+    assert!(
+        cert.with_policy(&policy, post_post_expiration)?
+            .alive()
+            .is_err()
+    );
 
     Ok(())
 }

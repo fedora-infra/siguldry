@@ -17,7 +17,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context as AnyhowContext};
+use anyhow::{Context as AnyhowContext, anyhow};
 use bytes::Bytes;
 use siguldry::v1::error::ClientError;
 use tokio::{
@@ -26,7 +26,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 use crate::pesign::{self, Command, Header, Response, SignAttachedRequest};
 
@@ -491,7 +491,7 @@ mod tests {
     use std::time::Duration;
     use std::{io, num::NonZeroU64};
 
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use bytes::{BufMut, Bytes, BytesMut};
     use rustix::fs::Mode;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

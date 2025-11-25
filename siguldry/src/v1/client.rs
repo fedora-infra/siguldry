@@ -13,7 +13,7 @@ use openssl::ssl::{SslConnector, SslFiletype, SslMethod, SslVerifyMode, SslVersi
 use openssl::x509::X509;
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite};
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 use crate::v1::connection::Connection;
 use crate::v1::error::ClientError as Error;
@@ -64,11 +64,7 @@ impl TryFrom<&Path> for Password {
             .next()
             .and_then(|pass| {
                 let pass = pass.trim();
-                if !pass.is_empty() {
-                    Some(pass)
-                } else {
-                    None
-                }
+                if !pass.is_empty() { Some(pass) } else { None }
             })
             .ok_or_else(|| {
                 anyhow::anyhow!(

@@ -17,7 +17,7 @@ use std::{
 
 use anyhow::bail;
 use assert_cmd::cargo;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use siguldry::{bridge, client, config::Credentials, protocol::GpgSignatureType, server};
 use tokio::{process::Command, task::JoinSet};
 use tracing::Instrument;

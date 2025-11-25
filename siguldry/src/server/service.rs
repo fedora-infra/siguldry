@@ -19,13 +19,13 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 use zerocopy::{IntoBytes, TryFromBytes};
 
 use crate::{
     error::ConnectionError,
     nestls::Nestls,
-    protocol::{self, json::Request, Role},
+    protocol::{self, Role, json::Request},
     server::{config::Config, db, handlers},
 };
 

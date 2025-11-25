@@ -10,14 +10,14 @@ use std::{
     process::Stdio,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use bytes::Bytes;
 use sequoia_keystore::Keystore;
 use sequoia_openpgp::{
+    KeyHandle,
     crypto::Password,
     parse::Parse,
     serialize::stream::{LiteralWriter, Message, Signer},
-    KeyHandle,
 };
 use sqlx::SqliteConnection;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -25,13 +25,12 @@ use tracing::instrument;
 
 use crate::{
     protocol::{
-        json::{self, Signature},
         DigestAlgorithm, GpgSignatureType, KeyAlgorithm, Response, ServerError,
+        json::{self, Signature},
     },
     server::{
-        crypto,
+        Config, crypto,
         db::{self, KeyLocation, User},
-        Config,
     },
 };
 
@@ -166,7 +165,7 @@ pub(crate) async fn gpg_sign(
         .await?
         .into_iter()
         .next()
-        .ok_or_else(|| anyhow::anyhow!("No key with handle {} available!", key_handle))?;
+        .ok_or_else(|| anyhow::anyhow!("No key with handle {key_handle} available!"))?;
     tracing::debug!(handle=?key_handle, "keystore found key");
 
     // Unfortunately there's not an async interface for this yet.
@@ -247,7 +246,7 @@ async fn private_sign_prehashed(
             .arg("-provider")
             .arg("pkcs11")
             .arg("-pkeyopt")
-            .arg(format!("digest:{}", algorithm));
+            .arg(format!("digest:{algorithm}"));
 
         if key.key_algorithm == KeyAlgorithm::Rsa4K {
             // PKCS #1 should be the default, but lets be explicit about it.

@@ -4,7 +4,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use sqlx::{sqlite::SqliteConnectOptions, Pool, Sqlite, SqliteConnection, SqlitePool};
+use sqlx::{Pool, Sqlite, SqliteConnection, SqlitePool, sqlite::SqliteConnectOptions};
 use tracing::instrument;
 
 use crate::protocol::KeyAlgorithm;
@@ -455,7 +455,7 @@ impl KeyAccess {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use sqlx::{error::ErrorKind, Row};
+    use sqlx::{Row, error::ErrorKind};
 
     use super::*;
 

@@ -78,8 +78,8 @@ use tokio_openssl::SslStream;
 use tracing::instrument;
 use uuid::Uuid;
 use zerocopy::{
-    byteorder::network_endian::{U128, U32, U64},
     Immutable, IntoBytes, KnownLayout, TryFromBytes,
+    byteorder::network_endian::{U32, U64, U128},
 };
 
 use crate::error::ConnectionError;
@@ -570,7 +570,7 @@ impl std::fmt::Display for DigestAlgorithm {
             DigestAlgorithm::Sha3_256 => "sha3-256",
             DigestAlgorithm::Sha3_512 => "sha3-512",
         };
-        write!(f, "{}", name)
+        write!(f, "{name}")
     }
 }
 
