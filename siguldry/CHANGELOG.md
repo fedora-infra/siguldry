@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-11-25
+
+### Fixed
+
+-  Fixed building the siguldry crate outside the git repository by relocating the sqlx fixtures to
+   the crate (#86)
+
+
 ## [0.4.0] - 2025-11-24
 
 ### Added
@@ -21,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moved into the `v1` submodule. To continue using the legacy Sigul client,
   enable the `sigul-client` feature and adjust your imports accordingly (#64)
 
-## Changed
+### Changed
 
 - Updated the pyo3 test dependency from 0.26 to 0.27 (#84)
 
