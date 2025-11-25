@@ -7,17 +7,17 @@ use anyhow::Context;
 use clap::Parser;
 use siguldry::{
     config::load_config,
-    server::{service::Server, Config},
+    server::{Config, service::Server},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
-    signal::unix::{signal, SignalKind},
+    signal::unix::{SignalKind, signal},
     time::timeout,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
-use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt};
 
 use crate::management::PromptPassword;
 
@@ -96,7 +96,9 @@ async fn main() -> anyhow::Result<()> {
         cli::Command::Config {
             credentials_directory,
         } => {
-            println!("# This is the current configuration\n\n{config}\n# This concludes the configuration.\n");
+            println!(
+                "# This is the current configuration\n\n{config}\n# This concludes the configuration.\n"
+            );
             _ = config.credentials.with_credentials_dir(&credentials_directory).inspect_err(|error|{
                 eprintln!("The configuration format is valid, but the referenced credentials aren't valid: {error:?}");
             });

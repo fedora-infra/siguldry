@@ -25,7 +25,7 @@
 //! - Values must be less than 256 bytes long.
 //!
 //! Additionally, the map must have a known length when serializing.
-use serde::{ser, Serialize};
+use serde::{Serialize, ser};
 
 use super::{Error, Result};
 

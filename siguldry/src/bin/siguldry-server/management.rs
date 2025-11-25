@@ -13,12 +13,13 @@ use openssl::{
     x509,
 };
 use rustix::termios::Termios;
-use sequoia_openpgp::{cert::CipherSuite, crypto::Password, Profile};
+use sequoia_openpgp::{Profile, cert::CipherSuite, crypto::Password};
 use siguldry::{
     protocol::KeyAlgorithm,
     server::{
+        Config,
         crypto::{self, create_encrypted_key, decrypt_key_password},
-        db, Config,
+        db,
     },
 };
 use tracing::instrument;

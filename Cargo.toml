@@ -9,13 +9,11 @@ members = [
 
 [workspace.package]
 # This targets the latest Enterprise Linux Rust version.
-rust-version = "1.84"
-edition = "2021"
+rust-version = "1.88"
+edition = "2024"
 license = "MIT"
 
 [workspace.lints.rust]
-# We shouldn't need to do anything unsafe
-unsafe-code = {level = "forbid", priority = 1}
 # Opt in to a few additional lints from rustc
 #
 # Refer to `rustc -W help` output for lint groups and individual rules.
