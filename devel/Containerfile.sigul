@@ -9,7 +9,7 @@
 #   # printf "my-signing-password\0" | sigul --batch -v -v sign-pe -o grub.signed.efi \
 #       signing-key codesigning grubx64.efi
 
-FROM quay.io/almalinuxorg/almalinux:9
+FROM quay.io/almalinuxorg/almalinux:9.7
 
 RUN dnf install -y epel-release
 RUN dnf install -y \
