@@ -1,0 +1,91 @@
+[package]
+name = "siguldry-pkcs11"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+description = """
+A minimal PKCS#11 module that implements the interfaces required to sign content using the Siguldry server.
+"""
+keywords = ["pkcs11", "siguldry", "fedora"]
+repository = "https://github.com/fedora-infra/siguldry"
+
+[lints]
+workspace = true
+
+[lib]
+name = "siguldry_pkcs11"
+crate-type = ["cdylib"]
+
+[dependencies.anyhow]
+version = "1"
+
+[dependencies.asn1]
+version = "0.23"
+
+[dependencies.cryptoki]
+version = "0.12"
+
+[dependencies.chrono]
+version = "0.4"
+default-features = false
+features = ["std"]
+
+# Convenient bindings for PKCS#11 types; we could generate these ourselves
+# from pkcs11.h but cryptoki comes with some safe wrappers we want, too.
+[dependencies.cryptoki-sys]
+version = "0.5"
+
+[dependencies.hex]
+version = "0.4"
+
+[dependencies.openssl]
+version = "0.10"
+
+[dependencies.sequoia-openpgp]
+version = "2"
+default-features = false
+features = ["crypto-openssl"]
+
+[dependencies.serde]
+version = "1.0.145"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1"
+
+[dependencies.siguldry]
+path = "../siguldry"
+version = "0.5"
+default-features = false
+
+[dependencies.tokio]
+version = "1.27"
+features = ["rt"]
+
+[dependencies.tracing]
+version = "0.1.36"
+
+[dependencies.tracing-subscriber]
+version = "0.3.17"
+default-features = false
+features = ["std", "registry", "fmt", "env-filter"]
+
+[dev-dependencies]
+anyhow = "1"
+tempfile = "3"
+toml = "0.9"
+
+[dev-dependencies.tokio-util]
+version = "0.7"
+features = ["io", "rt"]
+
+[dev-dependencies.siguldry-test]
+version = "0.1"
+path = "../siguldry-test"
+
+[dev-dependencies.tracing-test]
+version = "0.2"
+# env filtering breaks usage in integration tests
+features = ["no-env-filter"]

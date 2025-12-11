@@ -553,7 +553,7 @@ impl InstanceBuilder {
         // This is only safe when the set runner is nextest _or_ cargo-test is using a single
         // thread. Expect random test failures in other scenarios.
         unsafe {
-            std::env::set_var("SIGULDRY_PKCS11_PROXY_PATH", &socket_path);
+            std::env::set_var("LIBSIGULDRY_PKCS11_PROXY_PATH", &socket_path);
         }
 
         let proxy_halt = halt_token.clone();
