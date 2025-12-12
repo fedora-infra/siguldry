@@ -53,19 +53,19 @@ async fn create_credentials(
     let creds_directory = dir.join("creds/");
     Ok(Creds {
         server: Credentials {
-            private_key: creds_directory.join("sigul.server.private_key.pem"),
-            certificate: creds_directory.join("sigul.server.certificate.pem"),
-            ca_certificate: creds_directory.join("sigul.ca.certificate.pem"),
+            private_key: creds_directory.join("siguldry.server.private_key.pem"),
+            certificate: creds_directory.join("siguldry.server.certificate.pem"),
+            ca_certificate: creds_directory.join("siguldry.ca_certificate.pem"),
         },
         bridge: Credentials {
-            private_key: creds_directory.join("sigul.bridge.private_key.pem"),
-            certificate: creds_directory.join("sigul.bridge.certificate.pem"),
-            ca_certificate: creds_directory.join("sigul.ca.certificate.pem"),
+            private_key: creds_directory.join("siguldry.bridge.private_key.pem"),
+            certificate: creds_directory.join("siguldry.bridge.certificate.pem"),
+            ca_certificate: creds_directory.join("siguldry.ca_certificate.pem"),
         },
         client: Credentials {
-            private_key: creds_directory.join("sigul.client.private_key.pem"),
-            certificate: creds_directory.join("sigul.client.certificate.pem"),
-            ca_certificate: creds_directory.join("sigul.ca.certificate.pem"),
+            private_key: creds_directory.join("siguldry.client.private_key.pem"),
+            certificate: creds_directory.join("siguldry.client.certificate.pem"),
+            ca_certificate: creds_directory.join("siguldry.ca_certificate.pem"),
         },
     })
 }

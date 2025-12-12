@@ -132,9 +132,9 @@ impl Default for Config {
             connection_pool_size: 32,
             user_password_length: NonZeroU16::new(32).unwrap(),
             credentials: Credentials {
-                private_key: PathBuf::from("sigul.server.private_key.pem"),
-                certificate: PathBuf::from("sigul.server.certificate.pem"),
-                ca_certificate: PathBuf::from("sigul.ca.certificate.pem"),
+                private_key: PathBuf::from("siguldry.server.private_key.pem"),
+                certificate: PathBuf::from("siguldry.server.certificate.pem"),
+                ca_certificate: PathBuf::from("siguldry.ca_certificate.pem"),
             },
             pkcs11_bindings: vec![Pkcs11Binding {
                 public_key: PathBuf::from("/etc/siguldry/public_key.pem"),

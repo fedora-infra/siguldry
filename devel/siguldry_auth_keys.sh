@@ -17,10 +17,10 @@ pushd creds
 openssl req -x509 -new -nodes -sha256 \
     -days 3650 \
     -extensions v3_ca \
-    -subj "/CN=Sigul CA" \
+    -subj "/CN=Siguldry CA" \
     -newkey rsa:2048 \
-    -keyout sigul.ca.private_key.pem \
-    -out sigul.ca.certificate.pem
+    -keyout siguldry.ca.private_key.pem \
+    -out siguldry.ca_certificate.pem
 
 # Create and sign a server certificate
 openssl req -new -nodes -sha256 \
@@ -28,15 +28,15 @@ openssl req -new -nodes -sha256 \
     -addext "extendedKeyUsage = clientAuth,serverAuth" \
     -subj "/CN=$SERVER_CN" \
     -newkey rsa:2048 \
-    -keyout sigul.server.private_key.pem \
+    -keyout siguldry.server.private_key.pem \
     -out server-cert.csr
 openssl x509 -req -in server-cert.csr \
-    -CAkey sigul.ca.private_key.pem \
-    -CA sigul.ca.certificate.pem \
+    -CAkey siguldry.ca.private_key.pem \
+    -CA siguldry.ca_certificate.pem \
     -copy_extensions copyall \
     -days 3650 \
     -sha256 \
-    -out sigul.server.certificate.pem
+    -out siguldry.server.certificate.pem
 
 # Create and sign a bridge certificate
 openssl req -new -nodes -sha256 \
@@ -44,35 +44,35 @@ openssl req -new -nodes -sha256 \
     -addext "extendedKeyUsage = serverAuth" \
     -subj "/CN=$BRIDGE_CN" \
     -newkey rsa:2048 \
-    -keyout sigul.bridge.private_key.pem \
+    -keyout siguldry.bridge.private_key.pem \
     -out bridge-cert.csr
 openssl x509 -req -in bridge-cert.csr \
-    -CAkey sigul.ca.private_key.pem \
-    -CA sigul.ca.certificate.pem \
+    -CAkey siguldry.ca.private_key.pem \
+    -CA siguldry.ca_certificate.pem \
     -copy_extensions copyall \
     -days 3650 \
     -sha256 \
-    -out sigul.bridge.certificate.pem
+    -out siguldry.bridge.certificate.pem
 
 # Create and sign a client certificate
 openssl req -new -nodes -sha256 \
     -addext "extendedKeyUsage = clientAuth" \
     -subj "/CN=$CLIENT_CN" \
     -newkey rsa:2048 \
-    -keyout sigul.client.private_key.pem \
+    -keyout siguldry.client.private_key.pem \
     -out client-cert.csr
 openssl x509 -req -in client-cert.csr \
-    -CAkey sigul.ca.private_key.pem \
-    -CA sigul.ca.certificate.pem \
+    -CAkey siguldry.ca.private_key.pem \
+    -CA siguldry.ca_certificate.pem \
     -copy_extensions copyall \
     -days 3650 \
     -sha256 \
-    -out sigul.client.certificate.pem
+    -out siguldry.client.certificate.pem
 
-rm sigul.ca.private_key.pem *.csr
+rm siguldry.ca.private_key.pem *.csr
 
-openssl verify -CAfile ./sigul.ca.certificate.pem sigul.server.certificate.pem
-openssl verify -CAfile ./sigul.ca.certificate.pem sigul.bridge.certificate.pem
-openssl verify -CAfile ./sigul.ca.certificate.pem sigul.client.certificate.pem
+openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.server.certificate.pem
+openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.bridge.certificate.pem
+openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.client.certificate.pem
 
 popd

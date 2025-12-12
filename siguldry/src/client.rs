@@ -61,9 +61,9 @@ impl Default for Config {
             bridge_port: 44334,
             request_timeout: Duration::from_secs(30),
             credentials: Credentials {
-                private_key: PathBuf::from("sigul.client.private_key.pem"),
-                certificate: PathBuf::from("sigul.client.certificate.pem"),
-                ca_certificate: PathBuf::from("sigul.ca.certificate.pem"),
+                private_key: PathBuf::from("siguldry.client.private_key.pem"),
+                certificate: PathBuf::from("siguldry.client.certificate.pem"),
+                ca_certificate: PathBuf::from("siguldry.ca_certificate.pem"),
             },
         }
     }
