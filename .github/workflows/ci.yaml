@@ -22,7 +22,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
         id: rust-toolchain
 
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Install cargo-deny
         run: |
@@ -73,7 +73,7 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: cargo fmt
         run: cargo fmt --all --check
@@ -122,7 +122,7 @@ jobs:
         with:
           tool: nextest@0.9
 
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Install test packages
         run: |
@@ -188,7 +188,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install nextest
-        uses: taiki-e/install-action@cd39cb0572834c149bf3533a143f05e09def0f3c # 2.62.2
+        uses: taiki-e/install-action@132c875eef0d3e3be95c2d08d74e8559cbf74bdb # 2.62.55
         with:
           tool: nextest@0.9
 
