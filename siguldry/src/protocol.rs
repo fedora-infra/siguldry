@@ -372,6 +372,7 @@ pub(crate) mod json {
     pub(crate) enum Request {
         WhoAmI {},
         ListUsers {},
+        ListKeys {},
         /// Unlock a key for signing.
         ///
         /// This request must be sent on a connection before any signing requests referencing
@@ -417,6 +418,7 @@ pub(crate) mod json {
     pub(crate) enum Response {
         WhoAmI { user: String },
         ListUsers { users: Vec<String> },
+        ListKeys { keys: Vec<super::Key> },
         Unlock { public_key: String },
         Certificates { keys: Vec<super::Certificate> },
         GpgSign {},
@@ -471,6 +473,20 @@ pub enum Certificate {
         /// The PEM-encoded certificate.
         certificate: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Key {
+    /// A name that uniquely identifies the key.
+    pub name: String,
+    /// Indicates the key type.
+    pub key_algorithm: KeyAlgorithm,
+    /// This uniquely identifies a key. For example, the GPG key fingerprint, or the SHA256 sum of
+    /// the public key.
+    pub handle: String,
+    /// The public key in a text-friendly encoding (ASCII-armored, PEM-encoded, etc).
+    pub public_key: String,
+    pub certificates: Vec<Certificate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

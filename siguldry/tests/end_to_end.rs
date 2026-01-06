@@ -104,6 +104,8 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
         client_listening_address: SocketAddr::from_str("127.0.0.1:0").unwrap(),
         credentials: creds.bridge.clone(),
     };
+    let bridge_config_file = tempdir.path().join("bridge.toml");
+    std::fs::write(&bridge_config_file, toml::to_string_pretty(&bridge_config)?)?;
     let bridge = bridge::listen(bridge_config)
         .instrument(tracing::info_span!("bridge"))
         .await?;
@@ -261,6 +263,8 @@ async fn create_instance(creds: Option<Creds>) -> anyhow::Result<Instance> {
         credentials: creds.client.clone(),
         ..Default::default()
     };
+    let client_config_file = tempdir.path().join("client.toml");
+    std::fs::write(&client_config_file, toml::to_string_pretty(&client_config)?)?;
     let client = client::Client::new(client_config)?;
 
     Ok(Instance {
@@ -462,6 +466,22 @@ async fn unlock_key_doesnt_exist() -> anyhow::Result<()> {
     instance.server.halt().await?;
     instance.bridge.halt().await?;
 
+    Ok(())
+}
+
+/// List keys available
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn list_keys() -> anyhow::Result<()> {
+    let instance = create_instance(None).await?;
+    let client = instance.client;
+
+    let keys = client.list_keys().await?;
+    assert_eq!(3, keys.len());
+
+    drop(client);
+    instance.server.halt().await?;
+    instance.bridge.halt().await?;
     Ok(())
 }
 

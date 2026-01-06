@@ -211,6 +211,20 @@ impl Client {
         }
     }
 
+    pub async fn list_keys(&self) -> Result<Vec<protocol::Key>, ClientError> {
+        let request = Request {
+            message: protocol::json::Request::ListKeys {},
+            binary: None,
+        };
+
+        let response = self.reconnecting_send(request).await?;
+        match response.json {
+            Response::ListKeys { keys } => Ok(keys),
+            Response::Error { reason } => Err(reason.into()),
+            _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
+        }
+    }
+
     // TODO return opaque handle to provide to gpg_sign etc
     pub async fn unlock(&self, key: String, password: String) -> Result<String, ClientError> {
         let request = Request {

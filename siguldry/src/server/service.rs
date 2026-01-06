@@ -256,6 +256,7 @@ async fn handle(
         let response = match outer_request.request {
             Request::WhoAmI {} => handlers::who_am_i(&user).await,
             Request::ListUsers {} => handlers::list_users(&mut db_transaction).await,
+            Request::ListKeys {} => handlers::list_keys(&mut db_transaction).await,
             Request::Unlock {
                 key: name,
                 password,

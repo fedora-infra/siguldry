@@ -25,7 +25,7 @@ use tracing::instrument;
 
 use crate::{
     protocol::{
-        DigestAlgorithm, GpgSignatureType, KeyAlgorithm, Response, ServerError,
+        self, DigestAlgorithm, GpgSignatureType, KeyAlgorithm, Response, ServerError,
         json::{self, Signature},
     },
     server::{
@@ -51,6 +51,40 @@ pub(crate) async fn list_users(conn: &mut SqliteConnection) -> Result<Response, 
         .collect();
 
     Ok(json::Response::ListUsers { users }.into())
+}
+
+#[instrument(skip_all, err)]
+pub(crate) async fn list_keys(conn: &mut SqliteConnection) -> Result<Response, ServerError> {
+    let mut keys = vec![];
+    for key in db::Key::list(conn).await? {
+        let certificates = if key.key_location == KeyLocation::SequoiaSoftkey {
+            let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material.as_bytes())?;
+            let version = cert.primary_key().key().version();
+            let fingerprint = cert.fingerprint().to_hex();
+            vec![crate::protocol::Certificate::Gpg {
+                version,
+                fingerprint,
+                certificate: key.public_key.clone(),
+            }]
+        } else {
+            db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
+                .await?
+                .into_iter()
+                .map(|cert| crate::protocol::Certificate::X509 {
+                    certificate: cert.data,
+                })
+                .collect()
+        };
+        keys.push(protocol::Key {
+            name: key.name,
+            key_algorithm: key.key_algorithm,
+            handle: key.handle,
+            public_key: key.public_key,
+            certificates,
+        });
+    }
+
+    Ok(json::Response::ListKeys { keys }.into())
 }
 
 #[instrument(skip_all, err, fields(key = key_name))]
