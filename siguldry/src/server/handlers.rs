@@ -337,6 +337,7 @@ async fn private_sign_prehashed(
     Ok(signatures)
 }
 
+#[instrument(skip_all, err, fields(key = key_name))]
 pub(crate) async fn sign(
     conn: &mut SqliteConnection,
     key_passwords: &mut HashMap<String, (PathBuf, Password)>,
@@ -357,6 +358,7 @@ pub(crate) async fn sign(
     })
 }
 
+#[instrument(skip_all, err, fields(key = key_name))]
 pub(crate) async fn sign_prehashed(
     conn: &mut SqliteConnection,
     key_passwords: &mut HashMap<String, (PathBuf, Password)>,
