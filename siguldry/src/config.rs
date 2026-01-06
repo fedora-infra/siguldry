@@ -135,8 +135,9 @@ where
 
 /// Load the configuration with fallback options.
 ///
-/// If `path` is [`None`], the `default` path, which should be relative to XDG_CONFIG_HOME, is
-/// checked.  If the default config doesn't exist, the [`Default`] implementation is returned.
+/// If `path` is [`None`], the `default` path, which should be relative to CONFIGURATION_DIRECTORY, is
+/// checked.  If the default config doesn't exist, the [`Default`] implementation is returned. It's
+/// expected that CONFIGURATION_DIRECTORY is set via systemd.
 ///
 /// # Errors
 ///
@@ -147,13 +148,26 @@ where
     T: Default + std::fmt::Display + serde::de::DeserializeOwned,
 {
     path.or_else(|| {
-        // Look for XDG_CONFIG_HOME or fall back to $HOME/.config per the spec
-        env::var("XDG_CONFIG_HOME")
+        env::var("CONFIGURATION_DIRECTORY")
+            .inspect_err(|error| {
+                tracing::warn!(
+                    ?error,
+                    "CONFIGURATION_DIRECTORY environment variable isn't readable"
+                );
+            })
             .map(PathBuf::from)
-            .or_else(|_| env::var("HOME").map(|path| PathBuf::from(path).join(".config")))
             .ok()
             .map(|base_path| base_path.join(default))
             .filter(|path| path.is_file())
     })
-    .map_or_else(|| Ok(T::default()), |path| private_load_config::<T>(&path))
+    .map_or_else(
+        || {
+            tracing::warn!("No configuration file found; using defaults");
+            Ok(T::default())
+        },
+        |path| {
+            tracing::info!(?path, "Attempting to  load configuration");
+            private_load_config::<T>(&path)
+        },
+    )
 }

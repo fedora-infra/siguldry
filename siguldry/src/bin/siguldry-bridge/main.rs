@@ -14,8 +14,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt};
 
-// The path, relative to $XDG_CONFIG_HOME, of the default config file location.
-const DEFAULT_CONFIG: &str = "siguldry/bridge.toml";
+// The name of the default config file location. Since this is expected to run under systemd,
+// this is looked for under the provided CONFIGURATION_DIRECTORY environment variable.
+const DEFAULT_CONFIG: &str = "bridge.toml";
 
 /// The siguldry bridge.
 ///
@@ -104,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("Programming error: set_global_default should only be called once.");
 
     let mut config = load_config::<Config>(opts.config, PathBuf::from(DEFAULT_CONFIG).as_path())?;
+    tracing::info!("Loaded configuration");
 
     match opts.command {
         Command::Listen {

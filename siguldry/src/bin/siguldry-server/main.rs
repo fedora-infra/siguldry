@@ -25,8 +25,9 @@ mod acquire_pin;
 mod cli;
 mod management;
 
-// The path, relative to $XDG_CONFIG_HOME, of the default config file location.
-const DEFAULT_CONFIG: &str = "siguldry/server.toml";
+// The name of the default config file location. Since this is expected to run under systemd,
+// this is looked for under the provided CONFIGURATION_DIRECTORY environment variable.
+const DEFAULT_CONFIG: &str = "server.toml";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
