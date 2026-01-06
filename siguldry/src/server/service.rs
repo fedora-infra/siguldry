@@ -189,11 +189,7 @@ async fn handle(
             tracing::warn!("No usable RUNTIME_DIRECTORY detected; use systemd in production");
             temp_builder.tempdir()
         },
-        |runtime_dir| {
-            let mut workdir = PathBuf::from(runtime_dir);
-            workdir.push("ephemeral_keystores");
-            temp_builder.tempdir_in(workdir)
-        },
+        |runtime_dir| temp_builder.tempdir_in(PathBuf::from(runtime_dir)),
     )?;
     tracing::trace!(keystore=?keystore_directory.path(), "directory for ephemeral soft key storage created");
 
