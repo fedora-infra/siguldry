@@ -308,14 +308,19 @@ async fn bridge(
     tracing::info!("Bridging new connection");
 
     let size = 1024 * 64;
-    let (client_sent_bytes, server_sent_bytes) =
-        tokio::io::copy_bidirectional_with_sizes(&mut client_conn, &mut server_conn, size, size)
-            .await?;
-    tracing::info!(
-        client_sent_bytes,
-        server_sent_bytes,
-        "Connection bridge completed"
-    );
+    match tokio::io::copy_bidirectional_with_sizes(&mut client_conn, &mut server_conn, size, size)
+        .await
+    {
+        Ok((client_sent_bytes, server_sent_bytes)) => tracing::info!(
+            client_sent_bytes,
+            server_sent_bytes,
+            "Connection bridge completed"
+        ),
+        Err(result) => tracing::info!(
+            ?result,
+            "Connection bridge completed; connection closed ungracefully"
+        ),
+    };
 
     Ok(())
 }

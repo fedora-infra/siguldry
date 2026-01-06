@@ -320,25 +320,33 @@ impl Client {
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }
     }
+
+    pub async fn shutdown(self) {
+        if let Some(client) = self.inner.lock().await.take() {
+            client.shutdown().await;
+        }
+    }
 }
 
 // This structure maps to a single connection to the server.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct InnerClient {
     request_tx: mpsc::Sender<(Bytes, oneshot::Sender<protocol::Response>)>,
     session_id: Uuid,
     request_id: u64,
+    handler_task: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
 }
 
 impl InnerClient {
     fn new(connection: Nestls) -> Self {
         let (request_tx, request_rx) = mpsc::channel(128);
         let session_id = connection.session_id();
-        tokio::spawn(Self::request_handler(connection, request_rx));
+        let handler_task = tokio::spawn(Self::request_handler(connection, request_rx));
         Self {
             request_tx,
             session_id,
             request_id: 0,
+            handler_task,
         }
     }
 
@@ -516,6 +524,7 @@ impl InnerClient {
             };
         }
 
+        connection.shutdown().await?;
         Ok(())
     }
 
@@ -564,5 +573,16 @@ impl InnerClient {
                 )))
             })?;
         Ok(response_rx)
+    }
+
+    #[instrument(skip_all, fields(session_id = self.session_id.to_string()))]
+    async fn shutdown(self) {
+        let handle = self.handler_task;
+        drop(self.request_tx);
+        match handle.await {
+            Ok(Ok(())) => (),
+            Ok(Err(error)) => tracing::warn!(?error, "Request task did not exit cleanly"),
+            Err(error) => tracing::warn!(?error, "Failed to join tokio task"),
+        };
     }
 }

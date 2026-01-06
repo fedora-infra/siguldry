@@ -358,5 +358,6 @@ async fn handle(
         }
     }
 
+    conn.shutdown().await?;
     Ok(())
 }
