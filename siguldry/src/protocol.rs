@@ -416,15 +416,33 @@ pub(crate) mod json {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum Response {
-        WhoAmI { user: String },
-        ListUsers { users: Vec<String> },
-        ListKeys { keys: Vec<super::Key> },
-        Unlock { public_key: String },
-        Certificates { keys: Vec<super::Certificate> },
+        WhoAmI {
+            user: String,
+        },
+        ListUsers {
+            users: Vec<String>,
+        },
+        ListKeys {
+            keys: Vec<super::Key>,
+        },
+        Unlock {
+            public_key: String,
+        },
+        Certificates {
+            keys: Vec<super::Certificate>,
+        },
         GpgSign {},
         Sign {},
-        SignPrehashed { signatures: Vec<Signature> },
-        Error { reason: ServerError },
+        SignPrehashed {
+            signatures: Vec<Signature>,
+        },
+        Error {
+            reason: ServerError,
+        },
+        /// The client requested a command the server does not support; this could be
+        /// a newer client combined with an older server, or a server that has opted to
+        /// implement only a subset of commands.
+        Unsupported,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -163,7 +163,7 @@ impl Server {
     }
 }
 
-#[instrument(skip_all, fields(session_id = conn.session_id().to_string(), client = conn.peer_common_name()))]
+#[instrument(skip_all, err, fields(session_id = conn.session_id().to_string(), client = conn.peer_common_name()))]
 async fn handle(
     config: Arc<Config>,
     db: Pool<Sqlite>,
@@ -250,8 +250,33 @@ async fn handle(
         let mut request_bytes = request_buffer.into_inner().freeze();
 
         let binary_bytes = request_bytes.split_off(json_size);
-        let outer_request: protocol::json::OuterRequest = serde_json::from_slice(&request_bytes)
-            .context("The request's JSON could not be deserialized")?;
+        let request_value = serde_json::from_slice::<serde_json::Value>(&request_bytes)?;
+        let outer_request =
+            match serde_json::from_value::<protocol::json::OuterRequest>(request_value) {
+                Ok(request) => request,
+                Err(error) => {
+                    tracing::error!(
+                        ?error,
+                        "Client request is valid JSON, but is not a supported request"
+                    );
+                    let request_value =
+                        serde_json::from_slice::<serde_json::Value>(&request_bytes)?;
+                    let json_response = protocol::json::OuterResponse {
+                        session_id: conn.session_id(),
+                        request_id: request_value
+                            .get("request_id")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        response: protocol::json::Response::Unsupported,
+                    };
+                    let json_response = serde_json::to_string(&json_response)?;
+                    let response_frame = protocol::Frame::new(json_response.len().try_into()?, 0);
+                    conn.write_all(response_frame.as_bytes()).await?;
+                    conn.write_all(json_response.as_bytes()).await?;
+                    continue;
+                }
+            };
+
         let mut db_transaction = db.begin().await?;
         let response = match outer_request.request {
             Request::WhoAmI {} => handlers::who_am_i(&user).await,
