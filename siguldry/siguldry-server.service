@@ -1,0 +1,77 @@
+[Unit]
+Description=Siguldry signing server
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/siguldry-server listen
+User=siguldry
+Group=siguldry
+Restart=on-failure
+
+# Refer to https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/filter/struct.EnvFilter.html#directives
+# for more fine-grain logging output.
+# Environment=SIGULDRY_SERVER_LOG="WARN,siguldry=INFO"
+
+
+# The default configuration location is "siguldry/server.toml" relative to /etc/ for system units
+# and relative to $XDG_CONFIG_HOME for user units. It can be manually specified as an absolute
+# path, for example:
+# Environment=SIGULDRY_SERVER_CONFIG=/etc/siguldry/server.toml
+
+UMask=017
+RuntimeDirectory=siguldry
+RuntimeDirectoryPreserve=no
+RuntimeDirectoryMode=750
+ConfigurationDirectory=siguldry
+StateDirectory=siguldry
+StateDirectoryMode=750
+
+# Opt-in to most systemd sandboxing
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+PrivateDevices=true
+# Credentials may require the TPM to decrypt.
+#
+# For systemd 257 and older you'll need to explicitly allow access to the TPM
+# Refer to https://github.com/systemd/systemd/issues/35959.
+# DeviceAllow=/dev/tpmrm0
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+RemoveIPC=true
+
+# Restrict write-able and executable filesystem locations
+ReadOnlyPaths=/
+ReadWritePaths=/var /run
+NoExecPaths=/
+ExecPaths=/usr/bin/siguldry-server /usr/bin/openssl /usr/libexec/sequoia-keystore /usr/lib /usr/lib64
+
+# The service must be able to open TCP connections to the Siguldry bridge.
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# Filter available system calls
+# This can likely be restricted further
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+
+# The service used TLS to authenticate with the Siguldry bridge and with the Siguldry client
+#
+# You can use the systemd-creds utility to encrypt the private key.
+#
+# For example:
+# $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/siguldry.client.private_key
+# $ systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/siguldry.signing-key.passphrase
+ImportCredential=siguldry.*
