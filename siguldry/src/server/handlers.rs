@@ -93,27 +93,35 @@ pub(crate) async fn public_key(
     key_name: String,
 ) -> Result<Response, ServerError> {
     let key = db::Key::get(conn, &key_name).await?;
-    let key = if key.key_location == KeyLocation::SequoiaSoftkey {
+    let certificates = if key.key_location == KeyLocation::SequoiaSoftkey {
         let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material.as_bytes())?;
         let version = cert.primary_key().key().version();
         let fingerprint = cert.fingerprint().to_hex();
-        crate::protocol::Certificate::Gpg {
+        vec![crate::protocol::Certificate::Gpg {
             version,
             fingerprint,
-            certificate: key.public_key,
-        }
+            certificate: key.public_key.clone(),
+        }]
     } else {
-        let mut cert =
-            db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509).await?;
-        let cert = cert
-            .pop()
-            .ok_or_else(|| anyhow::anyhow!("No certificate for this key"))?;
-        crate::protocol::Certificate::X509 {
-            certificate: cert.data,
-        }
+        db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
+            .await?
+            .into_iter()
+            .map(|cert| crate::protocol::Certificate::X509 {
+                certificate: cert.data,
+            })
+            .collect()
     };
 
-    Ok(json::Response::Certificates { keys: vec![key] }.into())
+    Ok(json::Response::GetKey {
+        key: protocol::Key {
+            name: key.name,
+            key_algorithm: key.key_algorithm,
+            handle: key.handle,
+            public_key: key.public_key,
+            certificates,
+        },
+    }
+    .into())
 }
 
 // TODO: Probably create a struct to hold common args and create a handler instance per connection
@@ -147,10 +155,7 @@ pub(crate) async fn unlock(
             .tempfile_in(keystore_dir)?;
         tokio::fs::write(f.path(), key.key_material).await?;
         key_passwords.insert(key.name, (f.path().to_path_buf(), password));
-        return Ok(json::Response::Unlock {
-            public_key: key.public_key,
-        }
-        .into());
+        return Ok(json::Response::Unlock {}.into());
     }
 
     let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material)?;
@@ -174,14 +179,18 @@ pub(crate) async fn unlock(
         )
     })?;
     let signing_capable = imported_key.signing_capable_async().await?;
-    tracing::debug!(?import_status, signing_capable, handle=?imported_key.key_handle(), "Successfully imported PGP key");
-    imported_key.unlock_async(password).await?;
-    tracing::info!(handle=?imported_key.key_handle(), "Successfully unlocked PGP key");
-
-    Ok(json::Response::Unlock {
-        public_key: key.public_key,
+    match import_status {
+        sequoia_keystore::ImportStatus::New => {
+            imported_key.unlock_async(password).await?;
+            tracing::info!(handle=?imported_key.key_handle(), "Successfully unlocked PGP key");
+        }
+        sequoia_keystore::ImportStatus::Updated | sequoia_keystore::ImportStatus::Unchanged => {
+            tracing::info!(?import_status, handle=?imported_key.key_handle(), "Key was already unlocked");
+        }
     }
-    .into())
+    tracing::debug!(?import_status, signing_capable, handle=?imported_key.key_handle(), "Successfully imported PGP key");
+
+    Ok(json::Response::Unlock {}.into())
 }
 
 #[instrument(skip_all, err, fields(key = key_name))]

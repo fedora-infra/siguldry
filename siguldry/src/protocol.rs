@@ -292,7 +292,7 @@ impl Frame {
     }
 }
 
-pub(crate) mod json {
+pub mod json {
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
 
@@ -369,7 +369,8 @@ pub(crate) mod json {
     /// The set of requests a client and server must support.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
-    pub(crate) enum Request {
+    #[non_exhaustive]
+    pub enum Request {
         WhoAmI {},
         ListUsers {},
         ListKeys {},
@@ -408,14 +409,15 @@ pub(crate) mod json {
             /// The set of digests to sign. Digests should be hex-encoded.
             digests: Vec<(super::DigestAlgorithm, String)>,
         },
-        Certificates {
+        GetKey {
             key: String,
         },
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
-    pub(crate) enum Response {
+    #[non_exhaustive]
+    pub enum Response {
         WhoAmI {
             user: String,
         },
@@ -425,11 +427,9 @@ pub(crate) mod json {
         ListKeys {
             keys: Vec<super::Key>,
         },
-        Unlock {
-            public_key: String,
-        },
-        Certificates {
-            keys: Vec<super::Certificate>,
+        Unlock {},
+        GetKey {
+            key: super::Key,
         },
         GpgSign {},
         Sign {},

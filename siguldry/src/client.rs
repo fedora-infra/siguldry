@@ -9,6 +9,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
 use bytes::{BufMut, Bytes, BytesMut};
+use sequoia_openpgp::crypto::Password;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Receiver;
@@ -51,6 +52,9 @@ pub struct Config {
     /// The credentials to use when authenticating to the Siguldry bridge and server. Note that
     /// the certificate must have the `clientAuth` extended key usage extension.
     pub credentials: Credentials,
+
+    /// A list of keys to unlock for the client.
+    pub keys: Vec<Key>,
 }
 
 impl Default for Config {
@@ -65,6 +69,7 @@ impl Default for Config {
                 certificate: PathBuf::from("siguldry.client.certificate.pem"),
                 ca_certificate: PathBuf::from("siguldry.ca_certificate.pem"),
             },
+            keys: vec![],
         }
     }
 }
@@ -80,18 +85,93 @@ impl std::fmt::Display for Config {
     }
 }
 
+/// A key to unlock for the client
+#[derive(Debug, Clone, Serialize)]
+pub struct Key {
+    /// The name of the key in the Siguldry server.
+    pub key_name: String,
+    /// The systemd credential ID containing the passphrase.
+    ///
+    /// The passphrase inside the file must be entirely on the first line of
+    /// the file and the file should be terminated with a newline. The default
+    /// settings for `systemd-ask-password` will produce an acceptable file:
+    ///
+    /// ```bash
+    /// systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/siguldry.my_key_password
+    /// ```
+    pub passphrase_path: PathBuf,
+    #[serde(skip)]
+    passphrase: Password,
+}
+
+impl<'de> Deserialize<'de> for Key {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct KeyHelper {
+            key_name: String,
+            passphrase_path: PathBuf,
+        }
+
+        let helper = KeyHelper::deserialize(deserializer)?;
+
+        let passphrase = std::fs::read_to_string(&helper.passphrase_path)
+            .map_err(|e| {
+                serde::de::Error::custom(format!(
+                    "Failed to read passphrase file {}: {}",
+                    helper.passphrase_path.display(),
+                    e
+                ))
+            })?
+            .lines()
+            .next()
+            .and_then(|pass| {
+                let pass = pass.trim();
+                if !pass.is_empty() { Some(pass) } else { None }
+            })
+            .ok_or_else(|| {
+                serde::de::Error::custom(format!(
+                    "Passphrase file {} does not contain a password on the first line",
+                    helper.passphrase_path.display()
+                ))
+            })?
+            .to_string()
+            .into();
+
+        Ok(Key {
+            key_name: helper.key_name,
+            passphrase_path: helper.passphrase_path,
+            passphrase,
+        })
+    }
+}
+
+impl Key {
+    pub fn password(&self) -> String {
+        self.passphrase
+            .map(|p| String::from_utf8(p.to_vec()).expect("The password deserialized to a string"))
+    }
+}
+
 /// A siguldry client.
 #[derive(Clone, Debug)]
 pub struct Client {
     config: Arc<Config>,
+    // Keys to unlock on reconnection; this is a combination of keys from the config and those
+    // unlocked manually via the Client::unlock call.
+    keys: Arc<Mutex<Vec<Key>>>,
     inner: Arc<Mutex<Option<InnerClient>>>,
 }
 
 impl Client {
     /// Create a new client
     pub fn new(config: Config) -> Result<Self, ClientError> {
+        let keys = config.keys.clone();
         Ok(Self {
             config: Arc::new(config),
+            keys: Arc::new(Mutex::new(keys)),
             inner: Arc::new(Mutex::new(None)),
         })
     }
@@ -133,26 +213,8 @@ impl Client {
                     }
                 }
             } else {
-                let tls_config = self.config.credentials.ssl_connector()?;
-                let bridge_ssl = tls_config
-                    .configure()?
-                    .into_ssl(&self.config.bridge_hostname)?;
-                let server_ssl = tls_config
-                    .configure()?
-                    .into_ssl(&self.config.server_hostname)?;
-                let conn = tokio::time::timeout(
-                    Duration::from_secs(15),
-                    Nestls::builder(bridge_ssl, Role::Client).connect(
-                        format!(
-                            "{}:{}",
-                            &self.config.bridge_hostname, self.config.bridge_port
-                        ),
-                        server_ssl,
-                    ),
-                )
-                .await;
-                if let Ok(conn) = conn {
-                    *service_lock = Some(InnerClient::new(conn?));
+                if let Some(client) = self.new_inner_client().await? {
+                    *service_lock = Some(client);
                 } else {
                     tracing::warn!(
                         "Timed out while attempting to connect with the server; retrying..."
@@ -178,6 +240,107 @@ impl Client {
                 tokio::time::sleep(Duration::from_secs(3)).await;
             }
         }
+    }
+
+    /// Create a new client connection and unlock any configured keys.
+    async fn new_inner_client(&self) -> Result<Option<InnerClient>, ClientError> {
+        let tls_config = self.config.credentials.ssl_connector()?;
+        let bridge_ssl = tls_config
+            .configure()?
+            .into_ssl(&self.config.bridge_hostname)?;
+        let server_ssl = tls_config
+            .configure()?
+            .into_ssl(&self.config.server_hostname)?;
+        let conn = match tokio::time::timeout(
+            Duration::from_secs(15),
+            Nestls::builder(bridge_ssl, Role::Client).connect(
+                format!(
+                    "{}:{}",
+                    &self.config.bridge_hostname, self.config.bridge_port
+                ),
+                server_ssl,
+            ),
+        )
+        .await
+        {
+            Ok(conn) => conn,
+            Err(_elapsed) => {
+                tracing::warn!(
+                    "Timed out while attempting to connect with the server; retrying..."
+                );
+                return Ok(None);
+            }
+        };
+        let conn = conn?;
+        let mut client = InnerClient::new(conn);
+        let keys = self.keys.lock().await.clone();
+        for key in keys {
+            let request = Request {
+                message: protocol::json::Request::Unlock {
+                    key: key.key_name.clone(),
+                    password: key.password(),
+                },
+                binary: None,
+            };
+            match tokio::time::timeout(self.config.request_timeout, client.send(request)).await {
+                Ok(Ok(pending_response)) => {
+                    let response = match tokio::time::timeout(
+                        self.config.request_timeout,
+                        pending_response,
+                    )
+                    .await
+                    {
+                        Ok(Ok(response)) => response,
+                        Ok(Err(_error)) => {
+                            tracing::warn!(
+                                "Connection failed before server responded; retrying..."
+                            );
+                            return Ok(None);
+                        }
+                        Err(_elapsed) => {
+                            tracing::warn!(
+                                "Request timed out without a response; retrying on a new connection..."
+                            );
+                            return Ok(None);
+                        }
+                    };
+
+                    match response.json {
+                        Response::Unlock {} => {
+                            tracing::debug!(key = key.key_name, "Successfully unlocked key");
+                        }
+                        Response::Error { reason } => return Err(reason.into()),
+                        _other => {
+                            return Err(anyhow::anyhow!("Unexpected response from server").into());
+                        }
+                    };
+                }
+                Ok(Err(ClientError::Connection(ConnectionError::Io(error)))) => {
+                    tracing::info!(
+                        ?error,
+                        "An I/O error occurred while connecting; retrying..."
+                    );
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    return Ok(None);
+                }
+                Ok(Err(error)) => {
+                    tracing::error!(
+                        ?error,
+                        key = key.key_name,
+                        "failed to unlock configured key"
+                    );
+                    return Err(error);
+                }
+                Err(_timeout_err) => {
+                    tracing::warn!(
+                        "Timed out while attempting to send request; restarting connection..."
+                    );
+                    return Ok(None);
+                }
+            }
+        }
+
+        Ok(Some(client))
     }
 
     /// Attempt to authenticate against the server.
@@ -226,7 +389,24 @@ impl Client {
     }
 
     // TODO return opaque handle to provide to gpg_sign etc
-    pub async fn unlock(&self, key: String, password: String) -> Result<String, ClientError> {
+    pub async fn unlock(&self, key: String, password: String) -> Result<(), ClientError> {
+        // This key has already been unlocked
+        let mut keys = self.keys.lock().await;
+        if keys.iter().any(|k| k.key_name == key) {
+            return Ok(());
+        }
+
+        // Ensure the key is unlocked again on reconnection.
+        // If this is the first call issued it'll result in the call to unlock the key twice
+        // since starting the connection pull the key list to unlock from this vec,
+        // but that's not a huge deal.
+        keys.push(Key {
+            key_name: key.clone(),
+            passphrase_path: PathBuf::new(),
+            passphrase: password.clone().into(),
+        });
+        drop(keys);
+
         let request = Request {
             message: protocol::json::Request::Unlock { key, password },
             binary: None,
@@ -234,24 +414,21 @@ impl Client {
 
         let response = self.reconnecting_send(request).await?;
         match response.json {
-            Response::Unlock { public_key } => Ok(public_key),
+            Response::Unlock {} => Ok(()),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }
     }
 
-    pub async fn certificates(
-        &self,
-        key: String,
-    ) -> Result<Vec<crate::protocol::Certificate>, ClientError> {
+    pub async fn get_key(&self, key: String) -> Result<crate::protocol::Key, ClientError> {
         let request = Request {
-            message: protocol::json::Request::Certificates { key },
+            message: protocol::json::Request::GetKey { key },
             binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;
         match response.json {
-            Response::Certificates { keys } => Ok(keys),
+            Response::GetKey { key } => Ok(key),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }

@@ -496,9 +496,9 @@ async fn gpg_sign_inline() -> anyhow::Result<()> {
     client
         .unlock(key_name.to_string(), "🪿🪿🪿".to_string())
         .await?;
-    let mut keys = client.certificates(key_name.to_string()).await?;
-    assert_eq!(1, keys.len());
-    let key = keys.pop().unwrap();
+    let mut key = client.get_key(key_name.to_string()).await?;
+    assert_eq!(1, key.certificates.len());
+    let certificate = key.certificates.pop().unwrap();
     let signature = client
         .gpg_sign(
             key_name.to_string(),
@@ -507,7 +507,7 @@ async fn gpg_sign_inline() -> anyhow::Result<()> {
         )
         .await?;
 
-    match key {
+    match certificate {
         siguldry::protocol::Certificate::Gpg {
             version: _version,
             certificate,
@@ -556,9 +556,9 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
     client
         .unlock(key_name.to_string(), "🪿🪿🪿".to_string())
         .await?;
-    let mut keys = client.certificates(key_name.to_string()).await?;
-    assert_eq!(1, keys.len());
-    let key = keys.pop().unwrap();
+    let mut key = client.get_key(key_name.to_string()).await?;
+    assert_eq!(1, key.certificates.len());
+    let certificate = key.certificates.pop().unwrap();
     let signature = client
         .gpg_sign(
             key_name.to_string(),
@@ -567,7 +567,7 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
         )
         .await?;
 
-    match key {
+    match certificate {
         siguldry::protocol::Certificate::Gpg {
             version: _version,
             certificate,
@@ -618,9 +618,9 @@ async fn gpg_sign_cleartext() -> anyhow::Result<()> {
     client
         .unlock(key_name.to_string(), "🪿🪿🪿".to_string())
         .await?;
-    let mut keys = client.certificates(key_name.to_string()).await?;
-    assert_eq!(1, keys.len());
-    let key = keys.pop().unwrap();
+    let mut key = client.get_key(key_name.to_string()).await?;
+    assert_eq!(1, key.certificates.len());
+    let key = key.certificates.pop().unwrap();
 
     let signature = client
         .gpg_sign(
@@ -683,17 +683,12 @@ async fn check_x509_certs() -> anyhow::Result<()> {
     let client = instance.client;
     let ca_key_name = "test-ca-key";
     let codesigning_key_name = "test-codesigning-key";
-    let ca_key = client
-        .certificates(ca_key_name.to_string())
-        .await?
-        .pop()
-        .unwrap();
-    let codesigning_key = client
-        .certificates(codesigning_key_name.to_string())
-        .await?
-        .pop()
-        .unwrap();
-    match (ca_key, codesigning_key) {
+    let mut ca_key = client.get_key(ca_key_name.to_string()).await?;
+    let mut codesigning_key = client.get_key(codesigning_key_name.to_string()).await?;
+    match (
+        ca_key.certificates.pop().unwrap(),
+        codesigning_key.certificates.pop().unwrap(),
+    ) {
         (
             siguldry::protocol::Certificate::X509 {
                 certificate: ca_cert,
@@ -758,9 +753,10 @@ async fn digest_signature() -> anyhow::Result<()> {
     let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
     let key_name = "test-codesigning-key";
 
-    let public_key = client
+    client
         .unlock(key_name.to_string(), "🪶🪶🪶🪶".to_string())
         .await?;
+    let key = client.get_key(key_name.to_string()).await?;
 
     let signature = client
         .sign(
@@ -771,7 +767,7 @@ async fn digest_signature() -> anyhow::Result<()> {
         .await?;
 
     let pubkey_path = instance.state_dir.path().join("codesigning-pubkey.pem");
-    std::fs::write(&pubkey_path, &public_key)?;
+    std::fs::write(&pubkey_path, &key.public_key)?;
     let sig_path = instance.state_dir.path().join("data.sig");
     std::fs::write(&sig_path, &signature)?;
     let data_path = instance.state_dir.path().join("data");
@@ -808,9 +804,10 @@ async fn prehashed_signature() -> anyhow::Result<()> {
     let data_hex = hex::encode(&data_sum);
     let key_name = "test-codesigning-key";
 
-    let public_key = client
+    client
         .unlock(key_name.to_string(), "🪶🪶🪶🪶".to_string())
         .await?;
+    let key = client.get_key(key_name.to_string()).await?;
     let signature = client
         .sign_prehashed(
             key_name.to_string(),
@@ -821,7 +818,7 @@ async fn prehashed_signature() -> anyhow::Result<()> {
         .unwrap();
 
     let pubkey_path = instance.state_dir.path().join("codesigning-pubkey.pem");
-    std::fs::write(&pubkey_path, &public_key)?;
+    std::fs::write(&pubkey_path, &key.public_key)?;
     let sig_path = instance.state_dir.path().join("data.sig");
     std::fs::write(&sig_path, &signature.signature)?;
     let data_path = instance.state_dir.path().join("data");

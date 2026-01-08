@@ -321,7 +321,7 @@ async fn handle(
                 handlers::sign_prehashed(&mut db_transaction, &mut key_passwords, &key, digests)
                     .await
             }
-            Request::Certificates { key } => handlers::public_key(&mut db_transaction, key).await,
+            Request::GetKey { key } => handlers::public_key(&mut db_transaction, key).await,
         };
 
         match response {

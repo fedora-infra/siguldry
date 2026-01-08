@@ -17,7 +17,7 @@ workspace = true
 [features]
 default = ["server", "cli"]
 # Enable the server APIs
-server = ["sqlx", "sequoia-keystore", "sequoia-openpgp", "rustix"]
+server = ["sqlx", "sequoia-keystore", "rustix"]
 # Build command-line interfaces for enabled components
 cli = ["clap", "tracing-subscriber", "toml", "tokio/rt-multi-thread", "tokio/signal"]
 
@@ -58,7 +58,6 @@ features = ["derive"]
 version = "2"
 default-features = false
 features = ["crypto-openssl"]
-optional = true
 
 [dependencies.sequoia-keystore]
 version = "0.7"
