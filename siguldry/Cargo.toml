@@ -19,7 +19,7 @@ default = ["server", "cli"]
 # Enable the server APIs
 server = ["dep:cryptoki", "dep:sqlx", "dep:sequoia-keystore", "dep:rustix"]
 # Build command-line interfaces for enabled components
-cli = ["clap", "tracing-subscriber", "toml", "tokio/rt-multi-thread", "tokio/signal"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:toml", "tokio/rt-multi-thread", "tokio/signal"]
 
 # Build the Sigul 1.2 client
 sigul-client = []
@@ -27,6 +27,9 @@ sigul-client = []
 
 [dependencies.anyhow]
 version = "1"
+
+[dependencies.asn1]
+version = "0.23"
 
 [dependencies.bytes]
 version = "1"
@@ -150,6 +153,10 @@ required-features = ["cli"]
 
 [[bin]]
 name = "siguldry-server"
+required-features = ["server", "cli"]
+
+[[bin]]
+name = "siguldry-signer"
 required-features = ["server", "cli"]
 
 [[bin]]

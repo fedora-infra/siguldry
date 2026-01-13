@@ -448,6 +448,10 @@ pub mod json {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Signature {
         /// The signature. This is base64-encoded in the JSON objects.
+        ///
+        /// The structure of the signature is dependent on the key used in the signature.
+        /// For RSA keys, the signature is an RSA PKCS#1 v1.5 structure. For P-256 keys,
+        /// it is the DER-encoded R and S values in a format OpenSSL would emit.
         #[serde(with = "base64")]
         pub signature: Vec<u8>,
         /// The digest algorithm used on the payload.
@@ -615,6 +619,17 @@ impl From<DigestAlgorithm> for openssl::hash::MessageDigest {
             DigestAlgorithm::Sha512 => openssl::hash::MessageDigest::sha512(),
             DigestAlgorithm::Sha3_256 => openssl::hash::MessageDigest::sha3_256(),
             DigestAlgorithm::Sha3_512 => openssl::hash::MessageDigest::sha3_512(),
+        }
+    }
+}
+
+impl From<DigestAlgorithm> for &'static openssl::md::MdRef {
+    fn from(value: DigestAlgorithm) -> Self {
+        match value {
+            DigestAlgorithm::Sha256 => openssl::md::Md::sha256(),
+            DigestAlgorithm::Sha512 => openssl::md::Md::sha512(),
+            DigestAlgorithm::Sha3_256 => openssl::md::Md::sha3_256(),
+            DigestAlgorithm::Sha3_512 => openssl::md::Md::sha3_512(),
         }
     }
 }

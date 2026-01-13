@@ -3,16 +3,12 @@
 
 //! The Siguldry server.
 
-use std::collections::HashMap;
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
-use std::{fs::Permissions, sync::Arc};
 
 use anyhow::Context;
 use bytes::{BufMut, BytesMut};
 use openssl::ssl::{Ssl, SslAcceptor, SslConnector};
-use sequoia_openpgp::crypto::Password;
 use sqlx::{Pool, Sqlite};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -81,6 +77,7 @@ impl Server {
                 .as_os_str()
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("Database path isn't valid UTF8"))?,
+            true,
         )
         .await?;
         Ok(Self {
@@ -104,37 +101,58 @@ impl Server {
             }
 
             'accept: loop {
-                tokio::select! {
+                let conn = tokio::select! {
                     _ = server_halt_token.cancelled() => {
                         tracing::info!("Shutdown requested, no new requests will be accepted");
                         connection_pool.abort_all();
+                        tracing::debug!("Aborted all connections in the pool");
                         break 'accept;
                     },
-                    conn = connection_pool.join_next() => {
-                        match conn {
-                            Some(Ok(Ok(conn))) => {
-                                tracing::info!("New request accepted");
-                                while connection_pool.len() < self.config.connection_pool_size {
-                                    self.accept(&mut connection_pool)?;
-                                }
-                                request_tracker.spawn(handle(self.config.clone(), self.db_pool.clone(), conn).instrument(tracing::Span::current()));
-                            },
-                            Some(Ok(Err(error))) => tracing::error!(?error, "Failed to accept incoming client connection"),
-                            Some(Err(error)) => tracing::error!(?error, "Connection pool failed to yield a connection"),
-                            None => {
-                                // This occurs when connections aren't being successfully established
-                                tracing::error!("Connection pool exhausted; trying again in 15 seconds...");
-                                tokio::time::sleep(Duration::from_secs(15)).await;
-                                self.accept(&mut connection_pool)?;
-                            },
+                    conn = connection_pool.join_next() => conn,
+                };
+
+                match conn {
+                    Some(Ok(Ok(conn))) => {
+                        tracing::info!("New request accepted");
+                        while connection_pool.len() < self.config.connection_pool_size {
+                            self.accept(&mut connection_pool)?;
                         }
-                    },
+                        request_tracker.spawn(
+                            handle(self.config.clone(), self.db_pool.clone(), conn)
+                                .instrument(tracing::Span::current()),
+                        );
+                    }
+                    Some(Ok(Err(error))) => {
+                        tracing::error!(?error, "Failed to accept incoming client connection");
+                    }
+                    Some(Err(error)) => {
+                        tracing::error!(?error, "Connection pool failed to yield a connection");
+                    }
+                    None => {
+                        // This occurs when connections aren't being successfully established
+                        tracing::error!("Connection pool exhausted; trying again in 15 seconds...");
+                        let delay = tokio::time::sleep(Duration::from_secs(15));
+                        tokio::select! {
+                            _ = server_halt_token.cancelled() => {
+                                tracing::info!("Shutdown requested, no new requests will be accepted");
+                                connection_pool.abort_all();
+                                tracing::debug!("Aborted all connections in the pool");
+                                break 'accept;
+                            },
+                            _ = delay => {},
+                        }
+                        self.accept(&mut connection_pool)?;
+                    }
                 }
             }
 
+            tracing::debug!("Beginning shutdown");
             request_tracker.close();
+            tracing::debug!("Request tracker closed");
             connection_pool.shutdown().await;
+            tracing::debug!("Connection pool shutdown");
             request_tracker.wait().await;
+            tracing::info!("All pending requests are now complete");
 
             Ok::<_, anyhow::Error>(())
         });
@@ -177,34 +195,8 @@ async fn handle(
     tracing::info!(user.name, "User authenticated");
     drop(db_conn);
 
-    // Any keys stored on the filesystem that are unlocked by the client are stored in this
-    // ephemeral keystore.
-    let mut temp_builder = tempfile::Builder::new();
-    temp_builder
-        .permissions(Permissions::from_mode(0o700))
-        .rand_bytes(32)
-        .prefix(".siguldry-ks-");
-    let keystore_directory = std::env::var("RUNTIME_DIRECTORY").map_or_else(
-        |_error| {
-            tracing::warn!("No usable RUNTIME_DIRECTORY detected; use systemd in production");
-            temp_builder.tempdir()
-        },
-        |runtime_dir| temp_builder.tempdir_in(PathBuf::from(runtime_dir)),
-    )?;
-    tracing::trace!(keystore=?keystore_directory.path(), "directory for ephemeral soft key storage created");
-
-    let keystore_context = sequoia_keystore::Context::configure()
-        .ipc_policy(sequoia_keystore::sequoia_ipc::IPCPolicy::External)
-        // This is where the sequoia-keystore-server rpm installs it
-        .lib("/usr/libexec/")
-        .home(keystore_directory.path())
-        .build()?;
-    // For GPG keys, we set up a Sequoia keystore server per connection and insert any GPG
-    // keys the client unlocks into it.
-    let mut gpg_keystore = sequoia_keystore::Keystore::connect(&keystore_context)
-        .context("failed to create Sequoia keystore")?;
-    // For non-GPG keys, we keep a map of key names to key passwords provided by the client
-    let mut key_passwords: HashMap<String, (PathBuf, Password)> = HashMap::new();
+    let mut request_handler =
+        handlers::Handler::new(config.clone(), user.clone(), conn.session_id()).await?;
     loop {
         let mut frame_buffer = [0_u8; std::mem::size_of::<protocol::Frame>()];
         conn.read_exact(&mut frame_buffer).await?;
@@ -275,53 +267,23 @@ async fn handle(
 
         let mut db_transaction = db.begin().await?;
         let response = match outer_request.request {
-            Request::WhoAmI {} => handlers::who_am_i(&user).await,
-            Request::ListUsers {} => handlers::list_users(&mut db_transaction).await,
-            Request::ListKeys {} => handlers::list_keys(&mut db_transaction).await,
-            Request::Unlock {
-                key: name,
-                password,
-            } => {
-                handlers::unlock(
-                    &mut db_transaction,
-                    &mut gpg_keystore,
-                    keystore_directory.path(),
-                    &mut key_passwords,
-                    &config,
-                    &user,
-                    name,
-                    Password::from(password),
-                )
-                .await
-            }
+            Request::WhoAmI {} => request_handler.who_am_i(),
+            Request::ListUsers {} => request_handler.list_users(&mut db_transaction).await,
+            Request::ListKeys {} => request_handler.list_keys(&mut db_transaction).await,
+            Request::Unlock { key, password } => request_handler.unlock(key, password).await,
             Request::GpgSign {
                 key,
                 signature_type,
             } => {
-                handlers::gpg_sign(
-                    &mut db_transaction,
-                    &mut gpg_keystore,
-                    &key,
-                    signature_type,
-                    binary_bytes,
-                )
-                .await
-            }
-            Request::Sign { key, digest } => {
-                handlers::sign(
-                    &mut db_transaction,
-                    &mut key_passwords,
-                    &key,
-                    digest,
-                    binary_bytes,
-                )
-                .await
-            }
-            Request::SignPrehashed { key, digests } => {
-                handlers::sign_prehashed(&mut db_transaction, &mut key_passwords, &key, digests)
+                request_handler
+                    .pgp_sign(key, signature_type, binary_bytes)
                     .await
             }
-            Request::GetKey { key } => handlers::public_key(&mut db_transaction, key).await,
+            Request::Sign { key, digest } => request_handler.sign(&key, digest, binary_bytes).await,
+            Request::SignPrehashed { key, digests } => {
+                request_handler.sign_prehashed(&key, digests).await
+            }
+            Request::GetKey { key } => request_handler.public_key(&mut db_transaction, key).await,
         };
 
         match response {
@@ -357,7 +319,7 @@ async fn handle(
             }
         }
     }
-
+    request_handler.shutdown().await?;
     conn.shutdown().await?;
     Ok(())
 }

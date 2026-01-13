@@ -16,7 +16,21 @@ pub struct Config {
     /// This includes an SQLite database as well as encrypted private keys,
     /// certificates, and any other state required to operate. To back up
     /// the service, back up this directory.
+    ///
+    /// Defaults to "/var/lib/siguldry" if not set.
+    #[serde(default = "default_state_directory")]
     pub state_directory: PathBuf,
+
+    /// The path to the socket-activated signer socket.
+    ///
+    /// This socket should be managed by a systemd socket unit (siguldry-signer.socket)
+    /// with Accept=yes. When a connection is made to this socket, systemd will spawn
+    /// a new siguldry-signer instance.
+    ///
+    /// Defaults to "/run/siguldry-signer/signer.socket", which matches the default systemd
+    /// socket unit shipped with Siguldry; ordinarily you should not need to set this.
+    #[serde(default = "default_socket_path")]
+    pub signer_socket_path: PathBuf,
 
     /// The hostname of the Sigul bridge; this is used to verify the bridge's
     /// TLS certificate.
@@ -46,6 +60,13 @@ pub struct Config {
     ///
     /// The rest of the certificate's subject is specified here.
     pub certificate_subject: X509SubjectName,
+
+    /// Path to the helper executable used by the server to isolate the signing
+    /// operation from the process serving client requests. This option exists primarily for
+    /// testing purposes and should not be used in production. See `signer_socket_path` instead.
+    #[doc(hidden)]
+    #[serde(default)]
+    pub signer_executable: Option<PathBuf>,
 
     /// The set of certificates to encrypt passwords with.
     ///
@@ -100,12 +121,13 @@ pub struct Pkcs11Binding {
     /// database is migrated from one to the other.
     ///
     /// In production it's strongly recommended that the key is in a hardware token (Yubikey, TPM, etc).
-    /// For testing and development, SoftHSMv2 can be used.
+    /// For testing and development, a software token like Kryoptic can be used.
     pub private_key: Option<String>,
     /// The PIN to access the private key.
     ///
     /// This field is _not_ read from configuration. Instead, it must be input at service startup using
     /// the `siguldry-server` CLI.
+    #[doc(hidden)]
     #[serde(skip)]
     pub pin: Option<Password>,
 }
@@ -126,11 +148,13 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            state_directory: PathBuf::from("/var/lib/siguldry/"),
+            state_directory: default_state_directory(),
+            signer_socket_path: default_socket_path(),
             bridge_hostname: "bridge.example.com".to_string(),
             bridge_port: 44333,
             connection_pool_size: 32,
             user_password_length: NonZeroU16::new(32).unwrap(),
+            signer_executable: None,
             credentials: Credentials {
                 private_key: PathBuf::from("siguldry.server.private_key.pem"),
                 certificate: PathBuf::from("siguldry.server.certificate.pem"),
@@ -154,4 +178,12 @@ impl std::fmt::Display for Config {
             toml::ser::to_string_pretty(&self).unwrap_or_default()
         )
     }
+}
+
+fn default_socket_path() -> PathBuf {
+    PathBuf::from("/run/siguldry-signer/signer.socket")
+}
+
+fn default_state_directory() -> PathBuf {
+    PathBuf::from("/var/lib/siguldry/")
 }

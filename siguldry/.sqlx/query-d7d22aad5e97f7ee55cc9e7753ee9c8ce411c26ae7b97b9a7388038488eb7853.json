@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO pkcs11_tokens (module_path, label, manufacturer_id, model, serial_number) VALUES (?, ?, ?, ?, ?) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d7d22aad5e97f7ee55cc9e7753ee9c8ce411c26ae7b97b9a7388038488eb7853"
+}

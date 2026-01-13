@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO keys (name, key_algorithm, key_purpose, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "27326f5c1224a26b96092b5333ddcf26f595e979049b12e20ff14eb921bde915"
+}

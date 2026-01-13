@@ -57,15 +57,36 @@ impl Credentials {
         // TODO bump to mozilla_modern_v5 if RHEL10 supports that
         let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
         let client_ca_cert = openssl::x509::X509::from_pem(
-            std::fs::read_to_string(&self.ca_certificate)?.as_bytes(),
+            std::fs::read_to_string(&self.ca_certificate)
+                .with_context(|| {
+                    format!(
+                        "Failed to load CA certificate from {}",
+                        &self.ca_certificate.display()
+                    )
+                })?
+                .as_bytes(),
         )?;
         acceptor.set_verify(SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT);
         acceptor.set_min_proto_version(Some(SslVersion::TLS1_3))?;
         acceptor.set_max_proto_version(Some(SslVersion::TLS1_3))?;
         acceptor.add_client_ca(&client_ca_cert)?;
         acceptor.set_ca_file(&self.ca_certificate)?;
-        acceptor.set_private_key_file(&self.private_key, SslFiletype::PEM)?;
-        acceptor.set_certificate_file(&self.certificate, SslFiletype::PEM)?;
+        acceptor
+            .set_private_key_file(&self.private_key, SslFiletype::PEM)
+            .with_context(|| {
+                format!(
+                    "Failed to load client private key from {}",
+                    &self.private_key.display()
+                )
+            })?;
+        acceptor
+            .set_certificate_file(&self.certificate, SslFiletype::PEM)
+            .with_context(|| {
+                format!(
+                    "Failed to load client certificate from {}",
+                    &self.certificate.display()
+                )
+            })?;
         acceptor.check_private_key()?;
 
         Ok(acceptor.build())

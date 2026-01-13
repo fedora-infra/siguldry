@@ -54,6 +54,10 @@ By default, the server, bridge, and client for Siguldry along with their CLIs is
 [1]: https://pagure.io/sigul
 */
 
+#[cfg(feature = "server")]
+use tokio::signal::unix::{SignalKind, signal};
+use tokio_util::sync::CancellationToken;
+
 #[cfg(feature = "sigul-client")]
 mod serdes;
 #[cfg(feature = "sigul-client")]
@@ -67,3 +71,34 @@ pub(crate) mod nestls;
 pub mod protocol;
 #[cfg(feature = "server")]
 pub mod server;
+
+/// Install and manage signal handlers for the process.
+///
+/// # SIGTERM and SIGINT
+///
+/// Sending SIGTERM or SIGINT to the process will cause it to stop accepting new
+/// signing requests. Existing signing requests will be allowed to complete
+/// before the process shuts down.
+#[doc(hidden)]
+#[cfg(feature = "server")]
+pub async fn signal_handler(halt_token: CancellationToken) -> Result<(), anyhow::Error> {
+    let mut sigterm_stream = signal(SignalKind::terminate()).inspect_err(|error| {
+        tracing::error!(?error, "Failed to register a SIGTERM signal handler");
+    })?;
+    let mut sigint_stream = signal(SignalKind::interrupt()).inspect_err(|error| {
+        tracing::error!(?error, "Failed to register a SIGINT signal handler");
+    })?;
+
+    loop {
+        tokio::select! {
+            _ = sigterm_stream.recv() => {
+                tracing::info!("SIGTERM received, beginning service shutdown");
+                halt_token.cancel();
+            }
+            _ = sigint_stream.recv() => {
+                tracing::info!("SIGINT received, beginning service shutdown");
+                halt_token.cancel();
+            }
+        }
+    }
+}

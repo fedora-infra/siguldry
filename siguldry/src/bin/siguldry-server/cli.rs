@@ -106,6 +106,10 @@ pub enum ManagementCommands {
     #[command(subcommand)]
     Key(KeyCommands),
 
+    /// Register and unregister PKCS#11 tokens to use for signing.
+    #[command(subcommand)]
+    Pkcs11(Pkcs11Commands),
+
     /// Manage remote users.
     ///
     /// Remote users can perform non-destructive actions such as creating keys and requesting
@@ -143,6 +147,45 @@ pub enum GpgCommands {
     },
     /// List available GPG keys.
     List {},
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum Pkcs11Commands {
+    /// Register a PKCS#11 token with the server.
+    ///
+    /// Siguldry expects you to manage the token externally via tools like pkcs11-tool.
+    /// Objects with the same ID are imported together; there should be a public, private,
+    /// and certificate object for each ID.
+    Register {
+        /// The absolute path to the PKCS#11 module to use when accessing this token,
+        #[arg(long, default_value = "/usr/lib64/pkcs11/opensc-pkcs11.so")]
+        module: PathBuf,
+        /// A file containing the user PIN needed to log into the token.
+        ///
+        /// The file should include the PIN on the first line and the file should include a newline.
+        /// If this option is not provided, input is read from stdin.
+        ///
+        /// This PIN will be encrypted using the user's key access password.
+        #[arg(short, long, default_value = None)]
+        user_pin: Option<PathBuf>,
+        /// A file containing the key access password needed to unlock and use the key.
+        ///
+        /// The file should include the password on the first line and the file should include a newline.
+        /// If this option is not provided, input is read from stdin.
+        ///
+        /// Additional users can be granted access to this key with different passwords.
+        #[arg(short, long, default_value = None)]
+        password_file: Option<PathBuf>,
+
+        /// The slot ID containing the token to import.
+        ///
+        /// Refer to, for example, pkcs11-tool --list-slots. If not provided, the first slot found is used.
+        #[arg(short, long, default_value = None)]
+        slot_id: Option<u64>,
+
+        /// The Siguldy username of the key administrator. This user can grant access to other users.
+        admin: String,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]

@@ -19,7 +19,7 @@
         "type_info": "Text"
       },
       {
-        "name": "key_location",
+        "name": "key_purpose",
         "ordinal": 3,
         "type_info": "Text"
       },
@@ -37,6 +37,16 @@
         "name": "public_key",
         "ordinal": 6,
         "type_info": "Text"
+      },
+      {
+        "name": "pkcs11_token_id",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "pkcs11_key_id",
+        "ordinal": 8,
+        "type_info": "Blob"
       }
     ],
     "parameters": {
@@ -49,7 +59,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
   "hash": "beec6ffd3dc1df07b3d02e0e56da63101c789fccd7f9bf2e5ca051aa8a2c4714"

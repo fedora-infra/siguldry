@@ -1,0 +1,57 @@
+[Unit]
+Description=Siguldry Signer Instance %i
+After=siguldry-signer.socket
+CollectMode=inactive-or-failed
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/siguldry-signer
+User=siguldry
+Group=siguldry
+Environment=SIGULDRY_SIGNER_LOG=INFO
+
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+
+# Isolate the signing process
+#
+# The signer needs to be able to:
+#   - access the siguldry database (read-only)
+#   - access any devices used to bind passwords (TPM, HSM via PKCS#11, etc)
+#
+# Admins must allow the necessary devices via a unit override file containing
+# the `DeviceAllow=` directive as by default, no devices are exposed to this
+# service.
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateNetwork=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+RemoveIPC=true
+
+# Filesystem restrictions
+ReadOnlyPaths=/
+NoExecPaths=/
+ExecPaths=/usr/libexec/siguldry-signer /usr/bin/openssl /usr/lib /usr/lib64
+
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# System call filtering
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM

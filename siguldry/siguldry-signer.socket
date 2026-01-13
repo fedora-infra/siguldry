@@ -1,0 +1,13 @@
+[Unit]
+Description=Siguldry Signer Socket
+
+[Socket]
+Accept=yes
+SocketUser=siguldry
+SocketGroup=siguldry
+SocketMode=0600
+ListenStream=%t/siguldry-signer/signer.socket
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

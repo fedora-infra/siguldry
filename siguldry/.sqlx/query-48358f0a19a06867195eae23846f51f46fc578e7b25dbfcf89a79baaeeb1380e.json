@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT * FROM keys WHERE name = $1;",
+  "query": "SELECT * FROM keys WHERE pkcs11_token_id = $1;",
   "describe": {
     "columns": [
       {
@@ -64,5 +64,5 @@
       true
     ]
   },
-  "hash": "a8a2709c4f53a9d63a6a7f1bc2483fefb9482b5ee058c74358d601bab2d77707"
+  "hash": "48358f0a19a06867195eae23846f51f46fc578e7b25dbfcf89a79baaeeb1380e"
 }

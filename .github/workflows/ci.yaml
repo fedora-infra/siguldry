@@ -83,6 +83,7 @@ jobs:
           dnf install -y \
             capnproto \
             clang \
+            kryoptic \
             sequoia-sq \
             sequoia-keystore-server \
             pesign \
@@ -92,7 +93,6 @@ jobs:
             opensc \
             openssl \
             openssl-devel \
-            softhsm \
             sqlite-devel
 
       - name: cargo clippy
@@ -129,6 +129,7 @@ jobs:
           dnf install -y \
             capnproto \
             clang \
+            kryoptic \
             sequoia-sq \
             sequoia-keystore-server \
             pesign \
@@ -138,7 +139,6 @@ jobs:
             opensc \
             openssl \
             openssl-devel \
-            softhsm \
             sqlite-devel
 
           # pesign-client doesn't let you configure the socket location, so make it available to the world

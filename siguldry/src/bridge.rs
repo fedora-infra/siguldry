@@ -5,7 +5,7 @@
 
 use std::{fmt::Debug, net::SocketAddr, pin::Pin, str::FromStr};
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use openssl::ssl::Ssl;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -124,7 +124,10 @@ async fn inner_listen(
     client_listener: TcpListener,
     server_listener: TcpListener,
 ) -> anyhow::Result<()> {
-    let tls_config = config.credentials.ssl_acceptor()?;
+    let tls_config = config
+        .credentials
+        .ssl_acceptor()
+        .context("failed to create TLS configuration from configured credentials")?;
     let request_tracker = TaskTracker::new();
 
     let (server_conns_tx, mut server_conns_rx) =
@@ -266,8 +269,12 @@ impl Listener {
 /// This function returns once the server and client TCP listeners have been established.
 #[instrument(skip_all, err)]
 pub async fn listen(config: Config) -> anyhow::Result<Listener> {
-    let client_listener = TcpListener::bind(config.client_listening_address).await?;
-    let server_listener = TcpListener::bind(config.server_listening_address).await?;
+    let client_listener = TcpListener::bind(config.client_listening_address)
+        .await
+        .context("Failed to bind to client port")?;
+    let server_listener = TcpListener::bind(config.server_listening_address)
+        .await
+        .context("Failed to bind to server port")?;
     let client_addr = client_listener.local_addr()?;
     let server_addr = server_listener.local_addr()?;
     let halt_token = CancellationToken::new();
