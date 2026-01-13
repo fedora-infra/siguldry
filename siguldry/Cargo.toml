@@ -17,7 +17,7 @@ workspace = true
 [features]
 default = ["server", "cli"]
 # Enable the server APIs
-server = ["sqlx", "sequoia-keystore", "rustix"]
+server = ["dep:cryptoki", "dep:sqlx", "dep:sequoia-keystore", "dep:rustix"]
 # Build command-line interfaces for enabled components
 cli = ["clap", "tracing-subscriber", "toml", "tokio/rt-multi-thread", "tokio/signal"]
 
@@ -35,6 +35,10 @@ version = "1"
 version = "4.0"
 default-features = false
 features = ["std", "derive", "env", "help", "usage", "error-context"]
+optional = true
+
+[dependencies.cryptoki]
+version = "0.11"
 optional = true
 
 [dependencies.hex]
