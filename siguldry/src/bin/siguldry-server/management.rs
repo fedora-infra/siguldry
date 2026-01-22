@@ -18,7 +18,7 @@ use sequoia_openpgp::{Profile, cert::CipherSuite, crypto::Password};
 use siguldry::{
     protocol::KeyAlgorithm,
     server::{
-        Config,
+        Config, Pkcs11Binding,
         crypto::{self, binding::decrypt_key_password},
         db,
     },
@@ -397,6 +397,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                 let cert = db::PublicKeyMaterial::create(
                     &mut conn,
                     &key,
+                    common_name,
                     db::PublicKeyMaterialType::X509,
                     certificate,
                 )
@@ -515,6 +516,30 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
             }
         },
         ManagementCommands::Migrate {} => db::migrate(&db_pool).await?,
+        ManagementCommands::ImportSigul {
+            sigul_data_directory,
+            binding_uri,
+        } => {
+            let sigul_binding = if let Some(binding_uri) = binding_uri {
+                let pin =
+                    PromptPassword::new(format!("Please enter the user PIN for {binding_uri}:"))?
+                        .prompt()?;
+                Some(Pkcs11Binding {
+                    certificate: PathBuf::new(),
+                    private_key: Some(binding_uri),
+                    pin: Some(pin),
+                })
+            } else {
+                None
+            };
+            crate::import_sigul::migrate_sigul(
+                &mut conn,
+                &config.pkcs11_bindings,
+                sigul_data_directory,
+                sigul_binding,
+            )
+            .await?;
+        }
     }
     conn.commit().await?;
 

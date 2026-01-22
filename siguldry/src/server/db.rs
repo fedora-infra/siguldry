@@ -37,6 +37,7 @@ pub async fn migrate(pool: &Pool<Sqlite>) -> anyhow::Result<()> {
 /// Get a database pool.
 ///
 /// If `read_only` is `true`, the database will be opened in read-only mode.
+#[instrument]
 pub async fn pool(db_uri: &str, read_only: bool) -> anyhow::Result<Pool<Sqlite>> {
     let opts = SqliteConnectOptions::from_str(db_uri)
         .context("The database URL couldn't be parsed.")?
@@ -190,6 +191,8 @@ pub struct PublicKeyMaterial {
     pub id: i64,
     /// The ID of the private [`Key`] this material relates to.
     pub key_id: i64,
+    /// The friendly name for this material; unique per key ID.
+    pub name: String,
     /// The type stored in the data field.
     pub data_type: PublicKeyMaterialType,
     /// The material of type [`PublicKeyMaterialType`].
@@ -202,19 +205,22 @@ impl PublicKeyMaterial {
     pub async fn create(
         conn: &mut SqliteConnection,
         key: &Key,
+        name: String,
         data_type: PublicKeyMaterialType,
         data: String,
     ) -> Result<PublicKeyMaterial, sqlx::Error> {
+        let name_ref = name.as_str();
         let data_type_ref = data_type.as_str();
         let data_ref = data.as_str();
         sqlx::query!(
-            "INSERT INTO public_key_material (key_id, data_type, data) VALUES (?, ?, ?) RETURNING id",
-            key.id, data_type_ref, data_ref)
+            "INSERT INTO public_key_material (key_id, name, data_type, data) VALUES (?, ?, ?, ?) RETURNING id",
+            key.id, name_ref, data_type_ref, data_ref)
             .fetch_one(&mut *conn)
             .await
             .map(|record| PublicKeyMaterial {
                 id: record.id,
                 key_id: key.id,
+                name,
                 data_type,
                 data,
             })

@@ -492,6 +492,10 @@ pub enum Certificate {
     },
     /// A key pair with an associated X509 certificate.
     X509 {
+        /// A user-friendly name that uniquely identifies the certificate
+        /// with respect to a key. Different keys may have certificates with
+        /// the same name.
+        name: String,
         /// The PEM-encoded certificate.
         certificate: String,
     },

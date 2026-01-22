@@ -28,8 +28,9 @@ CREATE TABLE IF NOT EXISTS "keys" (
     -- This uniquely identifies a key. For example, the GPG key fingerprint, or the SHA256 sum of
     -- the public key.
     "handle" TEXT NOT NULL UNIQUE,
-    -- The encrypted key material, or in the case of keys stored in hardware, information on how
-    -- to access the key (e.g. a PKCS11 URI).
+    -- The encrypted key material if this is not a PKCS#11-backed key. For PKCS#11-backed keys, this
+    -- is the hex-encoded ID attribute of the key within the associated token. That is, it is a human-
+    -- readable version of the blob stored in the `pkcs11_key_id` field.
     --
     -- The scheme is dependent on the type of key, but it will be a text representation (ASCII-armored, PEM-encoded, etc)
     "key_material" TEXT NOT NULL,
@@ -72,8 +73,11 @@ INSERT INTO public_key_material_types(type) VALUES ("revocation");
 CREATE TABLE IF NOT EXISTS "public_key_material" (
     "id" INTEGER NOT NULL PRIMARY KEY,
     "key_id" INTEGER NOT NULL,
+    -- A friendly identifier for the material; must be unique to the associated key.
+    "name" TEXT NOT NULL,
     "data_type" TEXT NOT NULL,
     "data" TEXT NOT NULL,
+    UNIQUE("key_id", "name"),
     -- If the parent key is deleted, remove all the associated public key material
     FOREIGN KEY(key_id) REFERENCES keys(id) ON DELETE CASCADE,
     FOREIGN KEY(data_type) REFERENCES public_key_material_types(type) ON DELETE RESTRICT

@@ -71,18 +71,6 @@ enum BoundPassword {
     },
 }
 
-// I think this is the JSON format used by sigul for pkcs11. It'll be a list for most entries,
-// but some old ones are dictionaries. Additionally, sigul theoretically supports recursive
-// binding but that does appear to actually be used. This structure will be useful for writing
-// the migration script later.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
-struct SigulPkcs11BoundPassword {
-    method: String,
-    value: String,
-    token: String,
-}
-
 /// Decrypt a key password to enable access to the key itself.
 pub async fn decrypt_key_password(
     bindings: &[Pkcs11Binding],
@@ -153,10 +141,15 @@ pub fn encrypt_key_password(
         bound_passwords.push(none_binding);
     }
 
+    tracing::debug!(
+        tokens_bound = bindings.len(),
+        "Key password has been successfully bound"
+    );
     symmetric_encrypt(
         user_password,
         serde_json::to_vec(&bound_passwords)?.as_slice(),
     )
+    .context("Failed to PGP-encrypt the bound password")
 }
 
 /// Implement a helper for unsigned, symmetrically encrypted data for Sequoia.
@@ -315,6 +308,153 @@ async fn binding_decrypt(binding: Pkcs11Binding, data: Vec<u8>) -> anyhow::Resul
     }
 
     Ok(output.stdout)
+}
+
+/// This module contains functions for working with Sigul-bound keys.
+///
+/// It should only be used when accessing a Sigul database for the purpose of
+/// migrating it to Siguldry.
+pub mod sigul {
+    use super::*;
+
+    /// The format, serialized as JSON, that Sigul uses to store secrets bound with PKCS11.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[allow(dead_code)]
+    struct SigulPkcs11BoundPassword {
+        method: String,
+        /// The encrypted password (or, if nesting is being used, the encrypted output of some other
+        /// binding).
+        ///
+        /// Sigul used openssl-smime to encrypt the password with the X509 certificate for a private
+        /// key accessible via PKCS#11.
+        value: String,
+        /// A string to identify the token; we don't bother using this and just try to decrypt with
+        /// any tokens we have.
+        token: String,
+    }
+
+    // Shell out to gpg to decrypt the key password.
+    //
+    // This is done rather than use Sequioa because the OpenPGP data structure written by
+    // sigul is considered malformed to Sequoia.
+    fn gpg_symmetric_decrypt(password: Password, data: &[u8]) -> anyhow::Result<Vec<u8>> {
+        let mut child = std::process::Command::new("gpg")
+            .args([
+                "--batch",
+                "--yes",
+                "--quiet",
+                "--decrypt",
+                "--passphrase-fd",
+                "0",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn gpg process")?;
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to open gpg stdin"))?;
+        password.map(|p| {
+            stdin.write_all(p)?;
+            stdin.write_all(b"\n")?;
+            stdin.write_all(data)
+        })?;
+        drop(stdin);
+
+        let output = child
+            .wait_with_output()
+            .context("Failed to wait for gpg process")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "gpg decryption failed (exit code {:?}): {}",
+                output.status.code(),
+                stderr
+            ));
+        }
+
+        Ok(output.stdout)
+    }
+
+    // This is based off the bind_passphrase/unbind_passphrase implementations in the utils.py module
+    // of Sigul.
+    //
+    // While Sigul supports several binding methods (such at TPM 1.2), we only handle the PKCS#11 case
+    // as that's what is used in Fedora's production deployment.
+    pub async fn unbind_key_password(
+        user_password: Password,
+        encrypted_passphrase: &[u8],
+        sigul_binding: &Option<Pkcs11Binding>,
+    ) -> anyhow::Result<Password> {
+        let bound_key_password = gpg_symmetric_decrypt(user_password, encrypted_passphrase)
+            .context("Decryption via the user password failed")?;
+        tracing::debug!("User password used to decrypt key access; unbinding...");
+        let mut bound_key_password = String::from_utf8(bound_key_password)
+            .map_err(|_| anyhow::anyhow!("Passwords are expected to be UTF-8"))?;
+
+        let key_password = loop {
+            match bound_key_password.as_str() {
+                bound_object if bound_key_password.starts_with("{") => {
+                    // Sigul changed its format from being a single object to a list of those objects.
+                    if let Some(sigul_binding) = sigul_binding.as_ref() {
+                        let pkcs11_binding: SigulPkcs11BoundPassword =
+                            serde_json::from_str(bound_object)
+                                .context("Key is bound with an unsupported method")?;
+                        let inner = super::binding_decrypt(
+                            sigul_binding.clone(),
+                            pkcs11_binding.value.as_bytes().to_vec(),
+                        )
+                        .await?;
+                        bound_key_password = String::from_utf8(inner)?;
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Sigul key is hardware-bound but no PKCS#11 unbinding key was provided"
+                        ));
+                    }
+                }
+                bound_list if bound_key_password.starts_with("[") => {
+                    if let Some(sigul_binding) = sigul_binding.as_ref() {
+                        let binding_entries: Vec<serde_json::Value> =
+                            serde_json::from_str(bound_list)?;
+                        for binding in binding_entries {
+                            if let Ok(pkcs11_binding) =
+                                serde_json::from_value::<SigulPkcs11BoundPassword>(binding)
+                            {
+                                let inner = super::binding_decrypt(
+                                    sigul_binding.clone(),
+                                    pkcs11_binding.value.as_bytes().to_vec(),
+                                )
+                                .await;
+                                if let Ok(inner) = inner {
+                                    bound_key_password = String::from_utf8(inner)?;
+                                    break;
+                                } else {
+                                    tracing::debug!(
+                                        binding_token = pkcs11_binding.token,
+                                        "Failed to decrypt the password"
+                                    );
+                                }
+                            } else {
+                                tracing::debug!("Unknown binding format found, skipping");
+                            }
+                        }
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Sigul key is hardware-bound but no PKCS#11 unbinding key was provided"
+                        ));
+                    }
+                }
+                unbound => break Ok::<_, anyhow::Error>(unbound),
+            };
+        }?;
+
+        tracing::debug!("Key password successfully unbound");
+        Ok(key_password.into())
+    }
 }
 
 #[cfg(test)]

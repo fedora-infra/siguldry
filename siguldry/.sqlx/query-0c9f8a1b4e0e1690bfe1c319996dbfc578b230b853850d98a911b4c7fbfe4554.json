@@ -14,13 +14,18 @@
         "type_info": "Integer"
       },
       {
-        "name": "data_type",
+        "name": "name",
         "ordinal": 2,
         "type_info": "Text"
       },
       {
-        "name": "data",
+        "name": "data_type",
         "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "data",
+        "ordinal": 4,
         "type_info": "Text"
       }
     ],
@@ -28,6 +33,7 @@
       "Right": 2
     },
     "nullable": [
+      false,
       false,
       false,
       false,

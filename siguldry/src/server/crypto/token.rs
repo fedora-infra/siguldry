@@ -6,7 +6,7 @@ use cryptoki::{
     object::{Attribute, AttributeType, ObjectClass},
     types::AuthPin,
 };
-use openssl::{hash::MessageDigest, nid::Nid, x509};
+use openssl::{nid::Nid, x509};
 use sqlx::SqliteConnection;
 
 use crate::{protocol::KeyAlgorithm, server::db};
@@ -93,7 +93,8 @@ async fn import_pkcs11_token_private(
         label: String,
         key_type: cryptoki::object::KeyType,
         public_key_der: Option<Vec<u8>>,
-        x509_certificate_pem: Option<String>,
+        // SN, PEM-encoded cert
+        x509_certificate_pem: Option<(String, String)>,
     }
     let mut token_keys: std::collections::HashMap<Vec<u8>, TokenKey> =
         std::collections::HashMap::new();
@@ -192,12 +193,21 @@ async fn import_pkcs11_token_private(
 
         if let (Some(id), Some(der)) = (key_id, cert_der)
             && let Some(entry) = token_keys.get_mut(&id)
+            && let Ok(cert) = x509::X509::from_der(&der)
         {
-            let pem = x509::X509::from_der(&der)
-                .and_then(|cert| cert.to_pem())
+            let serial_number = cert
+                .serial_number()
+                .to_bn()
+                .and_then(|bn| bn.to_hex_str())
+                .map(|s| s.to_uppercase())
+                .ok();
+            let pem = cert
+                .to_pem()
                 .ok()
                 .and_then(|pem_bytes| String::from_utf8(pem_bytes).ok());
-            entry.x509_certificate_pem = pem;
+            if let (Some(sn), Some(pem)) = (serial_number, pem) {
+                entry.x509_certificate_pem = Some((sn, pem));
+            }
         }
     }
 
@@ -248,11 +258,11 @@ async fn import_pkcs11_token_private(
             };
 
             let pubkey_pem = String::from_utf8(public_key.public_key_to_pem()?)?;
-            let handle = format!(
-                "{:X?}",
-                openssl::hash::hash(MessageDigest::sha256(), &public_key.public_key_to_der()?)?
-            );
-            let key_material = format!("{:X?}", key_id);
+            let handle = hex::encode_upper(openssl::hash::hash(
+                openssl::hash::MessageDigest::sha256(),
+                &public_key.public_key_to_der()?,
+            )?);
+            let key_material = hex::encode_upper(key_id);
             let key = db::Key::create(
                 conn,
                 &key_info.label,
@@ -265,9 +275,15 @@ async fn import_pkcs11_token_private(
                 Some(key_id.clone()),
             )
             .await?;
-            if let Some(data) = key_info.x509_certificate_pem.clone() {
-                db::PublicKeyMaterial::create(conn, &key, db::PublicKeyMaterialType::X509, data)
-                    .await?;
+            if let Some((serial_number, pem_cert)) = key_info.x509_certificate_pem.clone() {
+                db::PublicKeyMaterial::create(
+                    conn,
+                    &key,
+                    serial_number,
+                    db::PublicKeyMaterialType::X509,
+                    pem_cert,
+                )
+                .await?;
             }
         }
     }

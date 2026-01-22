@@ -23,6 +23,7 @@ use crate::management::PromptPassword;
 
 mod acquire_pin;
 mod cli;
+mod import_sigul;
 mod management;
 
 // The name of the default config file location. Since this is expected to run under systemd,

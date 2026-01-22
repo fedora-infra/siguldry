@@ -79,6 +79,7 @@ impl Handler {
                     .await?
                     .into_iter()
                     .map(|cert| crate::protocol::Certificate::X509 {
+                        name: cert.name,
                         certificate: cert.data,
                     })
                     .collect()
@@ -138,6 +139,7 @@ impl Handler {
                 .await?
                 .into_iter()
                 .map(|cert| crate::protocol::Certificate::X509 {
+                    name: cert.name,
                     certificate: cert.data,
                 })
                 .collect()

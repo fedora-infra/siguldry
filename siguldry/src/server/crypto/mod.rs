@@ -8,9 +8,8 @@
 
 use openssl::{
     ec::{EcGroup, EcKey},
-    hash::MessageDigest,
     nid::Nid,
-    pkey::PKey,
+    pkey::{PKey, Private},
     rsa::Rsa,
     symm::Cipher,
 };
@@ -29,10 +28,23 @@ pub mod binding;
 pub mod signing;
 pub mod token;
 
-pub(crate) fn generate_password() -> anyhow::Result<Password> {
+fn generate_password() -> anyhow::Result<Password> {
     let mut buf = [0; 128];
     openssl::rand::rand_bytes(buf.as_mut_slice())?;
     Ok(Password::from(openssl::base64::encode_block(&buf)))
+}
+
+/// This encrypts an OpenSSL private key.
+///
+/// This takes an existing, unencrypted private key and encrypts it to a PEM-encoded
+/// PKCS#8 structure. It does _not_ bind the password.
+fn encrypt_key(key_password: Password, private_key: PKey<Private>) -> anyhow::Result<String> {
+    let encrypted_pem = key_password
+        .map(|key_password| {
+            private_key.private_key_to_pem_pkcs8_passphrase(Cipher::aes_256_cbc(), key_password)
+        })
+        .map(String::from_utf8)??;
+    Ok(encrypted_pem)
 }
 
 pub fn create_encrypted_key(
@@ -49,16 +61,12 @@ pub fn create_encrypted_key(
         )?)?,
     };
     let public_key_pem = String::from_utf8(key.public_key_to_pem()?)?;
-    let private_key_pem = key_password.map(|key_password| {
-        key.private_key_to_pem_pkcs8_passphrase(Cipher::aes_256_cbc(), key_password)
-    })?;
-    let private_key_pem = String::from_utf8(private_key_pem)?;
+    let handle = hex::encode_upper(openssl::hash::hash(
+        openssl::hash::MessageDigest::sha256(),
+        &key.public_key_to_der()?,
+    )?);
+    let private_key_pem = encrypt_key(key_password.clone(), key)?;
     let encrypted_password = binding::encrypt_key_password(bindings, user_password, key_password)?;
-    let handle = format!(
-        "{:X?}",
-        openssl::hash::hash(MessageDigest::sha256(), &key.public_key_to_der()?)?
-    );
-
     Ok((handle, encrypted_password, private_key_pem, public_key_pem))
 }
 
@@ -117,6 +125,86 @@ impl GpgKey {
 
     pub fn encrypted_password(&self) -> &[u8] {
         &self.encrypted_password
+    }
+}
+
+/// This module contains functions for working with Sigul-bound keys.
+///
+/// It should only be used when accessing a Sigul database for the purpose of
+/// migrating it to Siguldry.
+pub mod sigul {
+    use anyhow::Context;
+    use openssl::pkey::{PKey, Private};
+    use sequoia_openpgp::{crypto::Password, parse::Parse};
+
+    use crate::protocol::KeyAlgorithm;
+
+    /// This encrypts an OpenSSL private key.
+    ///
+    /// This takes an existing, unencrypted private key and encrypts it to a PEM-encoded
+    /// PKCS#8 structure. It does _not_ bind the password.
+    ///
+    /// NOTE: This is only useful externally to the sigul import command; do not use it
+    /// for any other purpose; see [`siguldry::server::crypto::create_encrypted_key`].
+    pub fn encrypt_key(
+        key_password: Password,
+        private_key: PKey<Private>,
+    ) -> anyhow::Result<String> {
+        super::encrypt_key(key_password, private_key)
+    }
+
+    pub fn check_gpg_key(
+        bytes: &[u8],
+        key_password: Password,
+    ) -> anyhow::Result<(sequoia_openpgp::Cert, KeyAlgorithm)> {
+        let cert = sequoia_openpgp::Cert::from_bytes(bytes)
+            .context("Failed to parse the exported GPG secret key with Sequoia")?;
+
+        // Check that there's a secret key we can decrypt that's marked for signing to ensure
+        // we've unbound the key properly. We may need to tweak this policy if we import very
+        // old keys from sigul.
+        let policy = sequoia_openpgp::policy::StandardPolicy::new();
+        cert.keys()
+            .secret()
+            .with_policy(&policy, None)
+            .supported()
+            .for_signing()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("No signing-capable secret key found in certificate"))?
+            .key()
+            .clone()
+            .decrypt_secret(&key_password)?;
+
+        // Be certain all secret keys are encrypted
+        if cert
+            .keys()
+            .secret()
+            .any(|key| key.key().has_unencrypted_secret())
+        {
+            return Err(anyhow::anyhow!(
+                "The certificate contains an unencrypted secret key"
+            ));
+        }
+
+        let key_algorithm = match cert.primary_key().key().pk_algo() {
+            sequoia_openpgp::types::PublicKeyAlgorithm::RSAEncryptSign => {
+                let bits = cert.primary_key().key().mpis().bits().unwrap_or(0);
+                match bits {
+                    4096 => KeyAlgorithm::Rsa4K,
+                    2048 => KeyAlgorithm::Rsa2K,
+                    other => {
+                        tracing::warn!("RSA key found, but key size ({}) is unsupported", other);
+                        return Err(anyhow::anyhow!("Unsupported RSA key size: {}", other));
+                    }
+                }
+            }
+            other => {
+                tracing::warn!(algorithm = ?other, "GPG key uses unsupported algorithm");
+                return Err(anyhow::anyhow!("Unsupported key algorithm {:?}", other));
+            }
+        };
+
+        Ok((cert, key_algorithm))
     }
 }
 

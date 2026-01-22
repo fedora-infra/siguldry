@@ -18,8 +18,16 @@ version = "0.2"
 [dependencies.clap]
 version = "4"
 
+[dependencies.openssl]
+version = "0.10"
+
+[dependencies.tokio]
+version = "1"
+features = ["rt", "macros", "time"]
+
 [dependencies.sigul-pesign-bridge]
 path = "../sigul-pesign-bridge"
 
 [dependencies.siguldry]
 path = "../siguldry"
+features = ["sigul-client"]

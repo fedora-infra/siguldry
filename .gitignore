@@ -4,5 +4,8 @@ Cargo.lock
 **/*.rs.bk
 proptest-regressions/
 
+# generated via cargo xtask generate-sigul-data
+devel/sigul-data/
+
 # Avoid checking in test artifacts
 **/*.efi

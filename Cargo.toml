@@ -58,7 +58,7 @@ single_match_else = "warn"
 unnested_or_patterns = "warn"
 
 # The following rules are NOT machine-applicable.
-empty_enum = "warn"
+empty_enums = "warn"
 expl_impl_clone_on_copy = "warn"
 fn_params_excessive_bools = "warn"
 from_iter_instead_of_collect = "warn"
