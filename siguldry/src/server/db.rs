@@ -37,6 +37,7 @@ pub async fn migrate(pool: &Pool<Sqlite>) -> anyhow::Result<()> {
 /// Get a database pool.
 ///
 /// If `read_only` is `true`, the database will be opened in read-only mode.
+#[instrument]
 pub async fn pool(db_uri: &str, read_only: bool) -> anyhow::Result<Pool<Sqlite>> {
     let opts = SqliteConnectOptions::from_str(db_uri)
         .context("The database URL couldn't be parsed.")?

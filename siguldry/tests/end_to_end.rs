@@ -120,6 +120,13 @@ pub mod keys {
 
     /// ID used for the PKCS#11 binding key
     pub const HSM_BINDING_KEY_ID: u8 = 99;
+
+    /// GPG key imported from sigul
+    pub const SIGUL_GPG_KEY_NAME: &str = "test-sigul-gpg-key";
+    pub const SIGUL_GPG_KEY_PASSWORD: &str = "siguldry-gpg-key-passphrase";
+
+    /// SoftHSM token PIN for the binding key.
+    pub const SIGUL_SOFTHSM_PIN: &str = "abc123def";
 }
 
 /// Builder for creating test instances with specific key configurations.
@@ -134,6 +141,7 @@ struct InstanceBuilder {
     with_hsm_rsa_key: bool,
     with_hsm: bool,
     with_pkcs11_binding: bool,
+    with_sigul_import: bool,
 }
 
 impl InstanceBuilder {
@@ -182,6 +190,14 @@ impl InstanceBuilder {
     fn with_pkcs11_binding(mut self) -> Self {
         self.with_hsm = true;
         self.with_pkcs11_binding = true;
+        self
+    }
+
+    /// Import keys from a pre-existing sigul database instead of creating new ones.
+    ///
+    /// Tests that use this rely on `cargo xtask generate-sigul-data` to be run.
+    fn with_sigul_import(mut self) -> Self {
+        self.with_sigul_import = true;
         self
     }
 
@@ -306,52 +322,57 @@ impl InstanceBuilder {
         std::fs::write(&server_config_file, toml::to_string_pretty(&server_config)?)?;
 
         Self::run_server_command(&server_config_file, &["manage", "migrate"], None)?;
-        Self::run_server_command(
-            &server_config_file,
-            &["manage", "users", "create", "siguldry-client"],
-            None,
-        )?;
 
-        if self.with_gpg_key {
-            Self::create_gpg_key(&server_config_file)?;
-        }
-
-        if self.with_ca_key {
-            Self::create_ca_key(self.with_pkcs11_binding, &server_config_file)?;
-        }
-
-        if let Some((pkcs11, slot, user_pin)) = pkcs11 {
-            if self.with_hsm_rsa_key {
-                Self::create_hsm_rsa_key(&pkcs11, slot, &user_pin)?;
-            }
-            if self.with_hsm_ec_key {
-                Self::create_hsm_ec_key(&pkcs11, slot, &user_pin)?;
-            }
-
+        if self.with_sigul_import {
+            Self::import_sigul_data(tempdir.path(), &server_config_file)?;
+        } else {
             Self::run_server_command(
                 &server_config_file,
-                &[
-                    "manage",
-                    "pkcs11",
-                    "register",
-                    "--module",
-                    "/usr/lib64/pkcs11/libkryoptic_pkcs11.so",
-                    "siguldry-client",
-                ],
-                Some(&format!(
-                    "{}\n{}\n",
-                    keys::HSM_PIN,
-                    keys::HSM_ACCESS_PASSWORD
-                )),
+                &["manage", "users", "create", "siguldry-client"],
+                None,
             )?;
-        }
 
-        if self.with_codesigning_key {
-            Self::create_codesigning_key(&server_config_file)?;
-        }
+            if self.with_gpg_key {
+                Self::create_gpg_key(&server_config_file)?;
+            }
 
-        if self.with_ec_key {
-            Self::create_ec_key(&server_config_file)?;
+            if self.with_ca_key {
+                Self::create_ca_key(self.with_pkcs11_binding, &server_config_file)?;
+            }
+
+            if let Some((pkcs11, slot, user_pin)) = pkcs11 {
+                if self.with_hsm_rsa_key {
+                    Self::create_hsm_rsa_key(&pkcs11, slot, &user_pin)?;
+                }
+                if self.with_hsm_ec_key {
+                    Self::create_hsm_ec_key(&pkcs11, slot, &user_pin)?;
+                }
+
+                Self::run_server_command(
+                    &server_config_file,
+                    &[
+                        "manage",
+                        "pkcs11",
+                        "register",
+                        "--module",
+                        "/usr/lib64/pkcs11/libkryoptic_pkcs11.so",
+                        "siguldry-client",
+                    ],
+                    Some(&format!(
+                        "{}\n{}\n",
+                        keys::HSM_PIN,
+                        keys::HSM_ACCESS_PASSWORD
+                    )),
+                )?;
+            }
+
+            if self.with_codesigning_key {
+                Self::create_codesigning_key(&server_config_file)?;
+            }
+
+            if self.with_ec_key {
+                Self::create_ec_key(&server_config_file)?;
+            }
         }
 
         let server = server::service::Server::new(server_config).await?;
@@ -690,6 +711,70 @@ impl InstanceBuilder {
             ],
             Some(&format!("{}\n", keys::CA_KEY_PASSWORD)),
         )
+    }
+
+    fn import_sigul_data(state_dir: &Path, server_config_file: &Path) -> anyhow::Result<PathBuf> {
+        let sigul_data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("devel/sigul-data");
+        let sigul_dir = sigul_data_dir.join("sigul");
+        let softhsm_dir = sigul_data_dir.join("softhsm");
+        let import_answers_path = sigul_data_dir.join("import-dialog-answers");
+        for path in [&sigul_dir, &softhsm_dir, &import_answers_path] {
+            if !path.exists() {
+                panic!("Run 'cargo xtask generate-sigul-data' to populate sigul test data");
+            }
+        }
+
+        let softhsm_conf = state_dir.join("softhsm2.conf");
+        std::fs::write(
+            &softhsm_conf,
+            format!(
+                "directories.tokendir = {}",
+                softhsm_dir.join("tokens").display()
+            ),
+        )?;
+        let binding_uri = "pkcs11:token=Sigul%20Token%200;object=binding-key;type=private";
+
+        let answers = std::fs::read_to_string(&import_answers_path)?;
+        let stdin_input = format!("{}\n{}", keys::SIGUL_SOFTHSM_PIN, answers);
+        let mut child =
+            std::process::Command::new(assert_cmd::cargo::cargo_bin!("siguldry-server"))
+                .env("SIGULDRY_SERVER_LOG", "TRACE")
+                .env("SIGULDRY_SERVER_CONFIG", server_config_file)
+                .env("SOFTHSM2_CONF", &softhsm_conf)
+                .arg("manage")
+                .arg("import-sigul")
+                .arg("--binding-uri")
+                .arg(binding_uri)
+                .arg(sigul_dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("Failed to spawn siguldry-server import-sigul")?;
+
+        {
+            let mut stdin = child.stdin.take().expect("stdin was piped");
+            stdin
+                .write_all(stdin_input.as_bytes())
+                .context("Failed to write to stdin")?;
+        }
+
+        let output = child
+            .wait_with_output()
+            .context("Failed to wait for import-sigul")?;
+
+        if !output.status.success() {
+            bail!(
+                "import-sigul command failed:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Ok(softhsm_conf)
     }
 }
 
@@ -1514,6 +1599,83 @@ async fn hsm_rsa_prehashed_signature_with_pkcs11_binding() -> anyhow::Result<()>
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout)?;
     assert_eq!("Verified OK\n", stdout);
+
+    instance.halt().await?;
+    Ok(())
+}
+
+/// Import data from a sigul database and verify PGP signing works with the imported key.
+///
+/// This test requires you to run `cargo xtask generate-sigul-data` and have softhsm2
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn import_sigul_and_sign() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_sigul_import().build().await?;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+
+    instance
+        .client
+        .unlock(
+            keys::SIGUL_GPG_KEY_NAME.to_string(),
+            keys::SIGUL_GPG_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+
+    let mut key = instance
+        .client
+        .get_key(keys::SIGUL_GPG_KEY_NAME.to_string())
+        .await?;
+    assert!(
+        !key.certificates.is_empty(),
+        "Imported key should have a certificate"
+    );
+    let certificate = key.certificates.pop().unwrap();
+
+    let signature = instance
+        .client
+        .gpg_sign(
+            keys::SIGUL_GPG_KEY_NAME.to_string(),
+            GpgSignatureType::Detached,
+            bytes::Bytes::from(data),
+        )
+        .await?;
+    match certificate {
+        siguldry::protocol::Certificate::Gpg {
+            version: _version,
+            certificate,
+            fingerprint,
+        } => {
+            let keyring_path = instance.state_dir.path().join("import_gpg_keyring.asc");
+            std::fs::write(&keyring_path, certificate)?;
+
+            let data_path = instance.state_dir.path().join("import_gpg_data");
+            std::fs::write(&data_path, data)?;
+
+            let sig_path = instance.state_dir.path().join("import_gpg_data.sig");
+            std::fs::write(&sig_path, &signature)?;
+
+            let mut command = tokio::process::Command::new("sq");
+            let output = command
+                .arg("verify")
+                .arg(format!("--trust-root={}", &fingerprint))
+                .arg(format!("--keyring={}", keyring_path.display()))
+                .arg(format!("--signature-file={}", sig_path.display()))
+                .arg(&data_path)
+                .output()
+                .await?;
+            let stderr = String::from_utf8(output.stderr)?;
+            assert!(
+                output.status.success(),
+                "Signature verification failed: {}",
+                stderr
+            );
+            assert!(
+                stderr.contains(&fingerprint),
+                "Signature should be from the imported key"
+            );
+        }
+        _ => panic!("Expected a GPG certificate from the imported key"),
+    }
 
     instance.halt().await?;
     Ok(())

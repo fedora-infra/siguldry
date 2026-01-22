@@ -119,6 +119,20 @@ pub enum ManagementCommands {
     #[command(subcommand)]
     Users(UserCommands),
 
+    /// Import data from a Sigul server.
+    ImportSigul {
+        /// The PKCS#11 URI for a private key capable of unbinding the Sigul keys if you
+        /// use binding on the Sigul server.
+        ///
+        /// This should be the value provided in your Sigul server's [binding] section.
+        /// For example, "pkcs11:serial=abc123;id=%01;type=private".
+        #[arg(short, long)]
+        binding_uri: Option<String>,
+
+        /// The location of Sigul's data directory.
+        sigul_data_directory: PathBuf,
+    },
+
     /// Apply any database migrations.
     ///
     /// This should be run on first use to create an empty database. This should also be run after
