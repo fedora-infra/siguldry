@@ -308,7 +308,10 @@ pub(crate) enum Command {
     // The following commands are not yet implemented in the client:
     //
     // SignText {},
-    // SignData {},
+    SignData {
+        user: String,
+        key: String,
+    },
     // Decrypt {},
     // SignGitTag {},
     // SignContainer {},
@@ -1393,6 +1396,41 @@ impl Client {
             .context("response payload could not be read")??;
         assert!(payload.is_empty());
 
+        Ok(())
+    }
+
+    /// PGP-sign data with a detached signature
+    #[instrument(skip_all)]
+    pub async fn sign_data<I, O>(
+        &self,
+        input: I,
+        output: O,
+        key_passphrase: Password,
+        key_name: String,
+    ) -> Result<(), Error>
+    where
+        I: AsyncRead + AsyncSeek + Unpin,
+        O: AsyncWrite + Unpin,
+    {
+        let connection = self.connect().await?;
+
+        let op = Command::SignData {
+            user: self.user_name.clone(),
+            key: key_name,
+        };
+
+        let mut inner_request = HashMap::new();
+        inner_request.insert("passphrase", key_passphrase.as_bytes());
+
+        let response = connection
+            .outer_request(op, Some(input))
+            .await?
+            .inner_request(self.tls_config.ssl(&self.server_hostname)?, inner_request)
+            .await?
+            .response(output)
+            .await?;
+
+        tracing::info!(?response.fields, response.status_code, "Got response fields");
         Ok(())
     }
 
