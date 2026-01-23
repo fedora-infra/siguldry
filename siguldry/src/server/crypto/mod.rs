@@ -310,7 +310,7 @@ pub(crate) mod test_utils {
         }
 
         let binding = Pkcs11Binding {
-            public_key: cert_file,
+            certificate: cert_file,
             private_key: Some(rsa_key_uri.to_string()),
             pin: Some(Password::from("secret-password")),
         };
@@ -338,7 +338,7 @@ pub(crate) mod test_utils {
             }
 
             bindings.push(Pkcs11Binding {
-                public_key: pubkey_path,
+                certificate: pubkey_path,
                 ..Default::default()
             });
         }

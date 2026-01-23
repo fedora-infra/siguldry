@@ -111,12 +111,12 @@ impl Default for X509SubjectName {
 /// then encrypts _that_ with one or more secrets accessible only to the server.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Pkcs11Binding {
-    /// The PEM-encoded public key to use to encrypt secrets.
-    pub public_key: PathBuf,
+    /// The PEM-encoded X509 certificate to use to encrypt secrets.
+    pub certificate: PathBuf,
     /// The PKCS#11 URI of the private key.
     ///
     /// This is optional, and if it is not set, the server will not attempt to decrypt secrets with
-    /// this entry. It will, however, encrypt any key passphrases created with the public key. This
+    /// this entry. It will, however, encrypt any key passphrases created with the certificate. This
     /// is useful when there are multiple servers where each server has its own secret, and the
     /// database is migrated from one to the other.
     ///
@@ -161,7 +161,7 @@ impl Default for Config {
                 ca_certificate: PathBuf::from("siguldry.ca_certificate.pem"),
             },
             pkcs11_bindings: vec![Pkcs11Binding {
-                public_key: PathBuf::from("/etc/siguldry/public_key.pem"),
+                certificate: PathBuf::from("/etc/siguldry/public_key.pem"),
                 private_key: Some("pkcs11:serial=abc123;id=%01;type=private".to_string()),
                 pin: None,
             }],

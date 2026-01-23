@@ -49,7 +49,7 @@ struct BindingWithPin {
 impl From<BindingWithPin> for Pkcs11Binding {
     fn from(value: BindingWithPin) -> Self {
         Pkcs11Binding {
-            public_key: value.public_key,
+            certificate: value.public_key,
             private_key: Some(value.private_key),
             pin: Some(Password::from(value.pin)),
         }
@@ -132,7 +132,7 @@ impl Client {
             if let (Some(private_key), Some(pin)) = (&binding.private_key, &binding.pin) {
                 let pin = pin.map(|p| String::from_utf8(p.to_vec()))?;
                 bindings.push(BindingWithPin {
-                    public_key: binding.public_key.clone(),
+                    public_key: binding.certificate.clone(),
                     private_key: private_key.clone(),
                     pin,
                 });

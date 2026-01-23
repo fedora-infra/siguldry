@@ -63,10 +63,10 @@ enum BoundPassword {
     /// Yubikeys via the libykcs11 library, and Trusted Platform Modules (TPMs) via the
     /// libtpm2_pkcs11 library. Creating and managing the key pairs is up to the administrator.
     Pkcs11WithCMS {
-        /// The SHA256 digest of the key used in this binding.
+        /// The SHA256 digest of the DER-encoded X509 certificate used in this binding.
         key_fingerprint: String,
-        /// The key password that's been encrypted by the public key identified in `key_fingerprint`.
-        /// The string contains a PEM-encoded CMS structure.
+        /// The key password that's been encrypted by the X509 certificate identified in
+        /// `key_fingerprint`. The string contains a PEM-encoded CMS structure.
         password: String,
     },
 }
@@ -110,7 +110,7 @@ pub async fn decrypt_key_password(
                         return Ok(password);
                     } else {
                         tracing::debug!(
-                            public_key = key_fingerprint,
+                            certificate = key_fingerprint,
                             key_uri = binding.private_key,
                             "Failed to unbind key password"
                         );
@@ -132,12 +132,12 @@ pub fn encrypt_key_password(
     let mut bound_passwords = bindings
         .iter()
         .map(|binding| {
-            tracing::info!(public_key=?binding.public_key, "Binding key password");
+            tracing::info!(certificate=?binding.certificate, "Binding key password");
             key_password.map(|key| {
                 binding_encrypt(binding, key).with_context(|| {
                     format!(
                         "Failed to bind key password with {}",
-                        &binding.public_key.display()
+                        &binding.certificate.display()
                     )
                 })
             })
@@ -239,16 +239,19 @@ fn symmetric_decrypt(password: Password, data: &[u8]) -> anyhow::Result<Vec<u8>>
 
 /// Encrypt some data using a [`Binding`] configuration.
 ///
-/// The options here are primarily chosen because they match Sigul.
+/// The data is typically the password used to encrypt a private key.
+///
+/// The data is encrypted with the X509 certificate in the provided binding to a CMS (RFC 5652)
+/// structure which is PEM-encoded. AES-256-GCM is used for the symmetric cipher.
 fn binding_encrypt(binding: &Pkcs11Binding, data: &[u8]) -> anyhow::Result<BoundPassword> {
-    let certificate = std::fs::read_to_string(&binding.public_key)?;
+    let certificate = std::fs::read_to_string(&binding.certificate)?;
     let certificate = X509::from_pem(certificate.as_bytes())?;
     let mut cert_stack = Stack::new()?;
     cert_stack.push(certificate)?;
     let encrypted = CmsContentInfo::encrypt(
         &cert_stack,
         data,
-        Cipher::aes_256_cbc(),
+        Cipher::aes_256_gcm(),
         CMSOptions::empty(),
     )?;
     let pem = encrypted.to_pem()?;

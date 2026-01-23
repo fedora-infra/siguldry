@@ -541,7 +541,7 @@ impl InstanceBuilder {
             );
         }
         Ok(Pkcs11Binding {
-            public_key: cert_file,
+            certificate: cert_file,
             private_key: Some(key_uri),
             pin: Some(Password::from(keys::HSM_PIN)),
         })
