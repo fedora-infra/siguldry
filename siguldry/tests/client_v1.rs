@@ -8,6 +8,7 @@
 #![cfg(feature = "sigul-client")]
 
 use std::{
+    io::Write,
     path::PathBuf,
     time::{Duration, SystemTime},
 };
@@ -650,6 +651,96 @@ async fn key_gpg_create_and_delete() -> anyhow::Result<()> {
         sequoia_openpgp::types::PublicKeyAlgorithm::RSAEncryptSign
     );
 
+    client
+        .delete_key("my-admin-password".into(), key_name)
+        .await?;
+
+    Ok(())
+}
+
+/// Test producing a detached signature
+#[tokio::test]
+async fn gpg_sign_detached() -> anyhow::Result<()> {
+    let client = get_client();
+    let key_name = "gpg-key-sign-data".to_string();
+    let _guard = SIGUL_CLIENT.read().await;
+    let cleanup = client
+        .delete_key("my-admin-password".into(), key_name.clone())
+        .await;
+    if cleanup.is_err() && !matches!(cleanup, Err(ClientError::Sigul(Sigul::KeyNotFound))) {
+        panic!("unexpected Sigul error while cleaning up, got {cleanup:?}")
+    }
+
+    let key = client
+        .new_key(
+            "my-admin-password".into(),
+            "my-key-passphrase".into(),
+            key_name.clone(),
+            KeyType::GnuPG {
+                real_name: Some("my real name".to_string()),
+                comment: Some("a comment".to_string()),
+                email: Some("gpg@example.com".to_string()),
+                expire_date: None,
+            },
+            None,
+        )
+        .await?;
+    let cert = sequoia_openpgp::Cert::from_reader(armor::Reader::from_bytes(
+        key.data(),
+        armor::ReaderMode::Tolerant(Some(armor::Kind::PublicKey)),
+    ))?;
+    let fingerprint = cert.fingerprint().to_string();
+
+    for file_size in [64 * 1024, 1024 * 1024, 100 * 1024 * 1024] {
+        let chunk_size = 64 * 1024_u64;
+        let temp_dir = tempfile::tempdir()?;
+        let input_path = temp_dir.path().join("input");
+        let sig_path = temp_dir.path().join("input.sig");
+        let keyring_path = temp_dir.path().join("keyring.asc");
+        std::fs::write(&keyring_path, key.data())?;
+        {
+            let mut file = std::fs::File::create(&input_path)?;
+            let chunk: Vec<u8> = (0..chunk_size).map(|i| (i % 256) as u8).collect();
+            let mut written: u64 = 0;
+            while written < file_size {
+                file.write_all(&chunk)?;
+                written += chunk_size;
+            }
+            file.sync_all()?;
+        }
+
+        let input_file = tokio::fs::File::open(&input_path).await?;
+        let output_file = tokio::fs::File::create(&sig_path).await?;
+        client
+            .sign_data(
+                input_file,
+                output_file,
+                "my-key-passphrase".into(),
+                key_name.clone(),
+            )
+            .await?;
+        let output = tokio::process::Command::new("sq")
+            .arg("verify")
+            .arg(format!("--trust-root={}", fingerprint))
+            .arg(format!("--keyring={}", keyring_path.display()))
+            .arg(format!("--signature-file={}", sig_path.display()))
+            .arg(&input_path)
+            .output()
+            .await?;
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            output.status.success(),
+            "Signature verification failed: {}",
+            stderr
+        );
+        assert!(
+            stderr.contains(&format!("Authenticated signature made by {}", fingerprint)),
+            "Expected fingerprint in verification output: {}",
+            stderr
+        );
+    }
+
+    // Clean up the key
     client
         .delete_key("my-admin-password".into(), key_name)
         .await?;

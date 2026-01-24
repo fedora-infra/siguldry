@@ -127,6 +127,10 @@ assert_cmd = "2"
 criterion = "0.8"
 proptest = "1.6"
 
+[dev-dependencies.tokio]
+version = "1.27"
+features = ["fs"]
+
 [dev-dependencies.tracing-test]
 version = "0.2"
 # env filtering breaks usage in integration tests
