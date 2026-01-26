@@ -67,7 +67,7 @@ pub fn sign_with_softkey(
     digests: Vec<(DigestAlgorithm, String)>,
 ) -> anyhow::Result<Vec<protocol::json::Signature>> {
     let pkey = match key.key_algorithm {
-        KeyAlgorithm::Rsa4K => password
+        KeyAlgorithm::Rsa4K | KeyAlgorithm::Rsa2K => password
             .map(|password| {
                 Rsa::private_key_from_pem_passphrase(key.key_material.as_bytes(), password)
             })
@@ -132,7 +132,7 @@ pub fn sign_with_pkcs11(
         // the input/output from PKCS#11 signing mechanisms don't match OpenSSL, so we
         // need to handle the differences here
         let (mechanism, data_to_sign) = match key.key_algorithm {
-            KeyAlgorithm::Rsa4K => {
+            KeyAlgorithm::Rsa4K | KeyAlgorithm::Rsa2K => {
                 // For RSA PKCS#1 v1.5 with CKM_RSA_PKCS, we need to provide DigestInfo
                 // structure (DER-encoded hash algorithm OID + hash value)
                 let digest_info = encode_digest_info(algorithm, &hash)?;
@@ -149,7 +149,7 @@ pub fn sign_with_pkcs11(
             .context("PKCS#11 signing operation failed")?;
 
         let signature = match key.key_algorithm {
-            KeyAlgorithm::Rsa4K => signature,
+            KeyAlgorithm::Rsa4K | KeyAlgorithm::Rsa2K => signature,
             KeyAlgorithm::P256 => {
                 // Softkey signatures use OpenSSL, which return a DER-encoded signature, while PKCS #11
                 // returns the raw r and s values (refer to https://www.ietf.org/rfc/rfc6979.html#appendix-A.1.3).

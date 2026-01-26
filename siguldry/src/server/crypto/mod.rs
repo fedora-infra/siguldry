@@ -42,6 +42,7 @@ pub fn create_encrypted_key(
 ) -> anyhow::Result<(String, Vec<u8>, String, String)> {
     let key_password = generate_password()?;
     let key = match algorithm {
+        KeyAlgorithm::Rsa2K => PKey::from_rsa(Rsa::generate(2048)?)?,
         KeyAlgorithm::Rsa4K => PKey::from_rsa(Rsa::generate(4096)?)?,
         KeyAlgorithm::P256 => PKey::from_ec_key(EcKey::generate(
             EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?.as_ref(),

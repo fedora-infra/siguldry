@@ -542,6 +542,8 @@ pub enum GpgSignatureType {
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[non_exhaustive]
 pub enum KeyAlgorithm {
+    /// 2048 bit RSA keys.
+    Rsa2K,
     /// 4096 bit RSA keys.
     #[default]
     Rsa4K,
@@ -552,6 +554,7 @@ pub enum KeyAlgorithm {
 impl KeyAlgorithm {
     pub fn as_str(&self) -> &str {
         match self {
+            KeyAlgorithm::Rsa2K => "rsa2k",
             KeyAlgorithm::Rsa4K => "rsa4k",
             KeyAlgorithm::P256 => "P256",
         }
@@ -563,6 +566,7 @@ impl TryFrom<&str> for KeyAlgorithm {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
+            "rsa2k" => Ok(Self::Rsa2K),
             "rsa4k" => Ok(Self::Rsa4K),
             "P256" => Ok(Self::P256),
             _ => Err(anyhow::anyhow!("Unknown key type '{value}'!")),

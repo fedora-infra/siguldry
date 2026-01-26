@@ -226,6 +226,7 @@ async fn import_pkcs11_token_private(
                     let _ = public_key.rsa()?;
                     match public_key.bits() {
                         4096 => KeyAlgorithm::Rsa4K,
+                        2048 => KeyAlgorithm::Rsa2K,
                         other => {
                             tracing::warn!(
                                 label = key_info.label,

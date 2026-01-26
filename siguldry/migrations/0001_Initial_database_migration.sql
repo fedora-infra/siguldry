@@ -4,6 +4,8 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS "key_algorithms" (
     "type" TEXT NOT NULL PRIMARY KEY
 );
+-- 2048 bit RSA keys
+INSERT INTO key_algorithms(type) VALUES ("rsa2k");
 -- 4096 bit RSA keys
 INSERT INTO key_algorithms(type) VALUES ("rsa4k");
 -- NIST-P256 ECC keys

@@ -666,7 +666,8 @@ mod tests {
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
-        assert_eq!(2, key_algorithms.len());
+        assert_eq!(3, key_algorithms.len());
+        assert!(key_algorithms.contains(&KeyAlgorithm::Rsa2K));
         assert!(key_algorithms.contains(&KeyAlgorithm::Rsa4K));
         assert!(key_algorithms.contains(&KeyAlgorithm::P256));
 
