@@ -40,8 +40,15 @@ pkcs11-tool --module "$HSM_MODULE" \
 	--keypairgen --label="Secure Boot Code Signing" \
 	--key-type rsa:2048 --usage-sig --id 2
 
+# Make a keypair for binding keys to the server
+pkcs11-tool --module "$HSM_MODULE" \
+	--login --pin "$HSM_PIN" \
+	--keypairgen --label="binding-key" \
+	--key-type rsa:2048 --usage-sig --usage-decrypt --id 3
+
 SLOT_URI=$(p11-kit list-modules | grep "^\s*uri:.*token=Sigul" | awk '{ print $2 }')
 SIGNING_KEY_URI="${SLOT_URI};object=Secure%20Boot%20Code%20Signing;type=private"
+BINDING_KEY_URI="${SLOT_URI};object=binding-key;type=private"
 
 # Generate certificates for the above key pairs
 cat > openssl.cnf << EOF
@@ -78,6 +85,17 @@ pkcs11-tool --module "$HSM_MODULE" \
 	--login --pin "$HSM_PIN" \
 	--write-object secure-boot-code-signing-cert.pem \
 	--type cert --label "Secure Boot Code Signing Certificate" --id 2
+
+# Produce an X509 certificate used by Sigul to encrypt key passwords
+openssl req -passin file:./hsm_pin -new -x509 -days 3650 -sha256 \
+	-subj "/CN=binding-key" -engine pkcs11 -keyform engine \
+	-key "${BINDING_KEY_URI}" \
+	-out binding-key-cert.pem
+pkcs11-tool --module "$HSM_MODULE" \
+	--login --pin "$HSM_PIN" \
+	--write-object binding-key-cert.pem \
+	--type cert --label "binding-key" --id 3
+cp binding-key-cert.pem /etc/sigul/
 
 # The sigul user needs to be able to own the token
 chown -R sigul:sigul /var/lib/softhsm/

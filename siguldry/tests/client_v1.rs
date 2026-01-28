@@ -1224,7 +1224,7 @@ pub async fn change_key_passphrase() -> anyhow::Result<()> {
 pub async fn server_binding_methods() -> anyhow::Result<()> {
     let client = get_client();
     let _guard = SIGUL_CLIENT.read().await;
-    let expected_methods: Vec<String> = vec![];
+    let expected_methods = vec!["pkcs11".to_string()];
 
     let methods = client
         .server_binding_methods("my-admin-password".into())
