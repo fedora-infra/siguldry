@@ -41,7 +41,7 @@ features = ["std", "derive", "env", "help", "usage", "error-context"]
 optional = true
 
 [dependencies.cryptoki]
-version = "0.11"
+version = "0.12"
 optional = true
 
 [dependencies.hex]
@@ -66,6 +66,8 @@ version = "2"
 default-features = false
 features = ["crypto-openssl"]
 
+# When updated, audit to see if RUSTSEC-2025-0143 and RUSTSEC-2024-0436
+# have been addressed by dropping them from the deny.toml ignorelist
 [dependencies.sequoia-keystore]
 version = "0.7"
 default-features = false
