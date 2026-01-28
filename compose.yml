@@ -1,13 +1,13 @@
 services:
   sigul-bridge:
-    image: quay.io/jeremycline/sigul-pesign-bridge-ci:2025-12-05
+    image: quay.io/jeremycline/sigul-pesign-bridge-ci:2026-01-28
     environment:
       RUN_SIGUL_BRIDGE: true
     network_mode: host
     volumes:
       - ./devel/local:/etc/sigul:z
   sigul-server:
-    image: quay.io/jeremycline/sigul-pesign-bridge-ci:2025-12-05
+    image: quay.io/jeremycline/sigul-pesign-bridge-ci:2026-01-28
     environment:
       RUN_SIGUL_SERVER: true
     network_mode: host
