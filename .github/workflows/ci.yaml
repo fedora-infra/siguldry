@@ -98,8 +98,47 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets --all-features -- --deny warnings
 
+  generate-sigul-data:
+    name: Generate a Sigul data directory for migration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
+        id: rust-toolchain
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            capnproto \
+            clang \
+            libsqlite3-dev \
+            libssl-dev \
+            openssl \
+            pkg-config \
+            podman
+          pip3 install podman-compose
+
+      - name: Generate sigul data
+        run: cargo xtask generate-sigul-data
+
+      - name: Upload sigul data artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: sigul-data
+          path: devel/sigul-data/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
   test:
     name: Unit tests
+    needs: generate-sigul-data
     runs-on: ubuntu-latest
     container:
       image: quay.io/fedora/fedora:43
@@ -112,6 +151,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      - name: Download sigul data artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: sigul-data
+          path: devel/sigul-data/
+
       - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
         id: rust-toolchain
         with:
@@ -139,6 +185,7 @@ jobs:
             opensc \
             openssl \
             openssl-devel \
+            softhsm \
             sqlite-devel
 
           # pesign-client doesn't let you configure the socket location, so make it available to the world
