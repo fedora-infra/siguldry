@@ -243,6 +243,11 @@ jobs:
         run: |
           set -xeuo pipefail
 
+          # Gross hack; delete the siguldry-test crate since it depends on the server
+          # which has non-RHEL9 dependencies. We don't use the crate for legacy sigul
+          # tests.
+          sed -i '/^\[dev-dependencies\.siguldry-test\]$/,+2d' siguldry/Cargo.toml
+
           # The sample UEFI application is baked into the image.
           cp -r /srv/siguldry/target .
           mkdir -p /run/pesign/

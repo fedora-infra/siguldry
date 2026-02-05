@@ -4,6 +4,7 @@ members = [
     "sample-uefi",
     "sigul-pesign-bridge",
     "siguldry",
+    "siguldry-test",
     "xtask",
 ]
 

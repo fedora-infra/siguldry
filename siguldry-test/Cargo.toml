@@ -1,0 +1,33 @@
+[package]
+name = "siguldry-test"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+asn1 = "0.23"
+criterion = "0.8"
+cryptoki = "0.12"
+proptest = "1.6"
+tempfile = "3"
+toml = "0.9"
+tracing = "0.1.36"
+
+[dependencies.sequoia-openpgp]
+version = "2"
+default-features = false
+features = ["crypto-openssl"]
+
+[dependencies.siguldry]
+path = "../siguldry"
+version = "0.5"
+
+[dependencies.tokio]
+version = "1.27"
+features = ["macros", "net", "process", "rt", "io-util", "time"]
+
+[lints]
+workspace = true
