@@ -29,5 +29,9 @@ version = "0.5"
 version = "1.27"
 features = ["macros", "net", "process", "rt", "io-util", "time"]
 
+[dependencies.tokio-util]
+version = "0.7"
+features = ["io", "rt"]
+
 [lints]
 workspace = true

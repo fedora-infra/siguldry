@@ -67,6 +67,7 @@ pub mod bridge;
 pub mod client;
 pub mod config;
 pub mod error;
+mod ipc_common;
 pub(crate) mod nestls;
 pub mod protocol;
 #[cfg(feature = "server")]

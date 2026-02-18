@@ -61,13 +61,6 @@ pub struct Config {
     /// The rest of the certificate's subject is specified here.
     pub certificate_subject: X509SubjectName,
 
-    /// Path to the helper executable used by the server to isolate the signing
-    /// operation from the process serving client requests. This option exists primarily for
-    /// testing purposes and should not be used in production. See `signer_socket_path` instead.
-    #[doc(hidden)]
-    #[serde(default)]
-    pub signer_executable: Option<PathBuf>,
-
     /// The set of certificates to encrypt passwords with.
     ///
     /// At least one entry should include a PKCS#11 URI for a private key. Passwords are encrypted
@@ -154,7 +147,6 @@ impl Default for Config {
             bridge_port: 44333,
             connection_pool_size: 32,
             user_password_length: NonZeroU16::new(32).unwrap(),
-            signer_executable: None,
             credentials: Credentials {
                 private_key: PathBuf::from("siguldry.server.private_key.pem"),
                 certificate: PathBuf::from("siguldry.server.certificate.pem"),

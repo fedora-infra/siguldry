@@ -2,8 +2,6 @@
 // Copyright (c) Microsoft Corporation.
 
 use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
 use std::{collections::HashMap, io::Write};
 
 use bytes::Bytes;
@@ -17,19 +15,15 @@ use sequoia_openpgp::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::SqliteConnection;
-use tokio::io::{
-    AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines, ReadHalf, WriteHalf,
-};
-use tokio::net::UnixStream;
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::ServerError;
+use crate::ipc_common::IpcClient;
 use crate::protocol::{self, GpgSignatureType};
 use crate::server::config::Pkcs11Binding;
-use crate::signal_handler;
 use crate::{
     protocol::{DigestAlgorithm, json::Signature},
     server::{Config, crypto, db},
@@ -92,22 +86,7 @@ enum Response {
 }
 
 pub(crate) struct Client {
-    inner: ClientInner,
-}
-
-/// The inner state depends on whether we're using socket activation or direct spawning.
-enum ClientInner {
-    /// Socket-activated mode: we connect to a Unix socket managed by systemd.
-    Socket {
-        writer: WriteHalf<UnixStream>,
-        reader: Option<Lines<BufReader<ReadHalf<UnixStream>>>>,
-    },
-    /// Direct spawn mode: we spawn the signer process directly.
-    Process {
-        child: Box<Child>,
-        writer: ChildStdin,
-        reader: Option<Lines<BufReader<ChildStdout>>>,
-    },
+    inner: IpcClient,
 }
 
 impl Client {
@@ -116,14 +95,7 @@ impl Client {
         config: Config,
         session_id: Uuid,
     ) -> anyhow::Result<Self> {
-        let inner = if let Some(executable) = config.signer_executable.as_ref() {
-            // Direct spawn mode for testing
-            Self::spawn_directly(executable, &session_id).await?
-        } else {
-            // Socket activation mode for production
-            Self::connect_socket(&config.signer_socket_path, &session_id).await?
-        };
-
+        let inner = IpcClient::new(&config.signer_socket_path).await?;
         let mut client = Self { inner };
 
         tracing::trace!("requesting signing helper config");
@@ -145,98 +117,20 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("Database path isn't valid UTF8"))?
             .to_string();
         client
-            .request(&Request::Config {
-                user,
-                database_path,
-                session_id,
-                pkcs11_bindings: bindings,
-            })
+            .inner
+            .request(
+                &Request::Config {
+                    user,
+                    database_path,
+                    session_id,
+                    pkcs11_bindings: bindings,
+                },
+                None,
+            )
             .await?;
         tracing::trace!("requested signing helper config");
 
         Ok(client)
-    }
-
-    async fn connect_socket(
-        socket_path: &std::path::Path,
-        session_id: &Uuid,
-    ) -> anyhow::Result<ClientInner> {
-        tracing::debug!(
-            ?socket_path,
-            %session_id,
-            "Connecting to socket-activated signer"
-        );
-
-        let stream = UnixStream::connect(&socket_path).await.map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to connect to signer socket at {}: {}. \
-                 Ensure siguldry-signer.socket is enabled and started.",
-                socket_path.display(),
-                e
-            )
-        })?;
-
-        let (reader, writer) = tokio::io::split(stream);
-        let reader = Some(BufReader::new(reader).lines());
-
-        Ok(ClientInner::Socket { writer, reader })
-    }
-
-    async fn spawn_directly(
-        executable: &std::path::Path,
-        session_id: &Uuid,
-    ) -> anyhow::Result<ClientInner> {
-        tracing::debug!(
-            ?executable,
-            %session_id,
-            "Spawning signer process directly"
-        );
-
-        let mut command = tokio::process::Command::new(executable);
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-
-        let mut child = command.spawn().map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to spawn signer executable at {}: {}",
-                executable.display(),
-                e
-            )
-        })?;
-
-        let writer = child.stdin.take().expect("stdin was piped");
-        let stdout = child.stdout.take().expect("stdout was piped");
-        let reader = Some(BufReader::new(stdout).lines());
-
-        Ok(ClientInner::Process {
-            child: Box::new(child),
-            writer,
-            reader,
-        })
-    }
-
-    /// Write a request and read the response line.
-    async fn request(&mut self, request: &Request) -> anyhow::Result<Response> {
-        let mut request_str = serde_json::to_string(request)?;
-        request_str.push('\n');
-
-        let response = match &mut self.inner {
-            ClientInner::Socket { writer, reader } => {
-                writer.write_all(request_str.as_bytes()).await?;
-                reader.as_mut().unwrap().next_line().await?
-            }
-            ClientInner::Process { writer, reader, .. } => {
-                writer.write_all(request_str.as_bytes()).await?;
-                reader.as_mut().unwrap().next_line().await?
-            }
-        };
-
-        match response {
-            Some(response) => Ok(serde_json::from_str(&response)?),
-            None => Err(anyhow::anyhow!("IPC server returned EOF unexpectedly!")),
-        }
     }
 
     #[instrument(skip_all, err, fields(key))]
@@ -245,7 +139,14 @@ impl Client {
         key: String,
         password: String,
     ) -> Result<protocol::Response, ServerError> {
-        let response = self.request(&Request::Unlock { key, password }).await?;
+        let response = self
+            .inner
+            .request(&Request::Unlock { key, password }, None)
+            .await?;
+        let response = serde_json::from_value(response).map_err(|error| {
+            tracing::error!(?error, "helper returned invalid response");
+            ServerError::Internal
+        })?;
 
         match response {
             Response::Failure { reason } => {
@@ -266,7 +167,14 @@ impl Client {
         key: String,
         digests: Vec<(DigestAlgorithm, String)>,
     ) -> Result<Vec<Signature>, ServerError> {
-        let response = self.request(&Request::Sign { key, digests }).await?;
+        let response = self
+            .inner
+            .request(&Request::Sign { key, digests }, None)
+            .await?;
+        let response = serde_json::from_value(response).map_err(|error| {
+            tracing::error!(?error, "helper returned invalid response");
+            ServerError::Internal
+        })?;
 
         match response {
             Response::Signatures { signatures } => Ok(signatures),
@@ -289,68 +197,30 @@ impl Client {
         blob: Bytes,
     ) -> anyhow::Result<protocol::Response> {
         let payload_size = blob.len();
-        let mut request = serde_json::to_string(&Request::PgpSign {
-            key,
-            signature_type,
-            payload_size,
-        })?;
-        request.push('\n');
-
-        // Write request and binary payload
-        match &mut self.inner {
-            ClientInner::Socket { writer, .. } => {
-                writer.write_all(request.as_bytes()).await?;
-                writer.write_all(&blob).await?;
-                writer.flush().await?;
-            }
-            ClientInner::Process { writer, .. } => {
-                writer.write_all(request.as_bytes()).await?;
-                writer.write_all(&blob).await?;
-                writer.flush().await?;
-            }
-        }
-
-        let response_line = match &mut self.inner {
-            ClientInner::Socket { reader, .. } => reader.as_mut().unwrap().next_line().await,
-            ClientInner::Process { reader, .. } => reader.as_mut().unwrap().next_line().await,
-        }?;
-        let payload_size = match response_line {
-            Some(response) => {
-                let response: Response = serde_json::from_str(&response)?;
-                match response {
-                    Response::PgpSign { payload_size } => Ok(payload_size),
-                    Response::Failure { reason } => {
-                        Err(anyhow::anyhow!("failed to unlock key: {reason}"))
-                    }
-                    _ => Err(anyhow::anyhow!("helper returned invalid response")),
-                }
-            }
-            None => Err(anyhow::anyhow!(
-                "siguldry-signer returned EOF unexpectedly!"
-            )),
+        let response = self
+            .inner
+            .request(
+                &Request::PgpSign {
+                    key,
+                    signature_type,
+                    payload_size,
+                },
+                Some(&blob),
+            )
+            .await
+            .map_err(|_| ServerError::Internal)?;
+        let response: Response = serde_json::from_value(response)?;
+        let payload_size = match response {
+            Response::PgpSign { payload_size } => Ok(payload_size),
+            Response::Failure { reason } => Err(anyhow::anyhow!("failed to unlock key: {reason}")),
+            _ => Err(anyhow::anyhow!("helper returned invalid response")),
         }?;
         tracing::trace!(payload_size, "helper response received");
-
-        let mut buffer = vec![0; payload_size];
-        tracing::trace!(len = buffer.len(), "trying to read into buf");
-
-        match &mut self.inner {
-            ClientInner::Socket { reader, .. } => {
-                let mut inner = reader.take().unwrap().into_inner();
-                inner.read_exact(&mut buffer).await?;
-                *reader = Some(inner.lines());
-            }
-            ClientInner::Process { reader, .. } => {
-                let mut inner = reader.take().unwrap().into_inner();
-                inner.read_exact(&mut buffer).await?;
-                *reader = Some(inner.lines());
-            }
-        }
-        tracing::trace!(payload_size, "signature read");
+        let binary = self.inner.read_bytes(payload_size).await?;
 
         let response = protocol::Response {
             json: protocol::json::Response::GpgSign {},
-            binary: Some(Bytes::from(buffer)),
+            binary: Some(binary),
         };
 
         Ok(response)
@@ -358,32 +228,23 @@ impl Client {
 
     /// Shut down the IPC client.
     pub(crate) async fn shutdown(self) -> anyhow::Result<()> {
-        match self.inner {
-            ClientInner::Socket { mut writer, .. } => {
-                writer.shutdown().await?;
-            }
-            ClientInner::Process {
-                mut child, writer, ..
-            } => {
-                drop(writer);
-                // Wait for the process to exit gracefully
-                let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
-            }
-        }
-
+        self.inner.shutdown().await?;
         Ok(())
     }
 }
 
 /// Start a siguldry-signer helper server.
-#[instrument(name = "siguldry-signer", fields(session_id = tracing::field::Empty))]
-pub async fn serve() -> anyhow::Result<()> {
+#[instrument(name = "siguldry-signer", skip_all, fields(session_id = tracing::field::Empty))]
+pub async fn serve<
+    R: AsyncRead + Unpin + std::fmt::Debug,
+    W: AsyncWrite + Unpin + std::fmt::Debug,
+>(
+    halt_token: CancellationToken,
+    requests: R,
+    mut responses: W,
+) -> anyhow::Result<()> {
     tracing::info!("Handling requests");
-    let mut requests = BufReader::new(tokio::io::stdin()).lines();
-    let mut stdout = tokio::io::stdout();
-
-    let halt_token = CancellationToken::new();
-    tokio::spawn(signal_handler(halt_token.clone()));
+    let mut requests = BufReader::new(requests).lines();
 
     // Keys that the client has unlocked are stored in this map of key names to key passwords.
     // A performance optimization might be to decrypt the key once; we should benchmark and
@@ -403,7 +264,7 @@ pub async fn serve() -> anyhow::Result<()> {
                             tracing::Span::current().record("session_id", session_id.to_string());
                             let mut response = serde_json::to_string(&Response::Success {  })?;
                             response.push('\n');
-                            stdout.write_all(response.as_bytes()).await?;
+                            responses.write_all(response.as_bytes()).await?;
                             let bindings = pkcs11_bindings.into_iter().map(|b| b.into()).collect::<Vec<Pkcs11Binding>>();
                             (user, database_path, bindings)},
                         _ => return Err(anyhow::anyhow!("The first message must configure this helper"))
@@ -490,10 +351,10 @@ pub async fn serve() -> anyhow::Result<()> {
 
                 let mut response = serde_json::to_string(&response)?;
                 response.push('\n');
-                stdout.write_all(response.as_bytes()).await?;
+                responses.write_all(response.as_bytes()).await?;
                 tracing::trace!("Finished writing pgp_sign json response");
-                stdout.write_all(&signature).await?;
-                stdout.flush().await?;
+                responses.write_all(&signature).await?;
+                responses.flush().await?;
                 tracing::trace!(
                     payload_len = signature.len(),
                     "Finished writing pgp_sign signature"
@@ -504,7 +365,7 @@ pub async fn serve() -> anyhow::Result<()> {
         tracing::trace!("About to write response");
         let mut response = serde_json::to_string(&response)?;
         response.push('\n');
-        stdout.write_all(response.as_bytes()).await?;
+        responses.write_all(response.as_bytes()).await?;
         tracing::trace!("Successfully wrote response");
     }
 

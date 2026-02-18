@@ -28,7 +28,8 @@ use siguldry::{
     config::Credentials,
     server::{self, Pkcs11Binding},
 };
-use tokio::process::Command;
+use tokio::{net::UnixListener, process::Command, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 #[derive(Clone)]
@@ -85,11 +86,17 @@ pub struct Instance {
     pub client: client::Client,
     pub creds: Creds,
     pub state_dir: tempfile::TempDir,
+    pub signer_helper: (CancellationToken, JoinHandle<anyhow::Result<()>>),
 }
 
 impl Instance {
     pub async fn halt(self) -> anyhow::Result<()> {
         drop(self.client);
+
+        let (halt_token, signer_helper) = self.signer_helper;
+        halt_token.cancel();
+        signer_helper.await??;
+
         self.server.halt().await?;
         self.bridge.halt().await?;
         Ok(())
@@ -280,10 +287,6 @@ impl InstanceBuilder {
 
     pub async fn build(self) -> anyhow::Result<Instance> {
         // TODO come up with a better way to handle this; perhaps don't use the binaries at all?
-        let signer_bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("target/debug/siguldry-signer");
         let server_bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -337,7 +340,7 @@ impl InstanceBuilder {
             bridge_hostname: bridge_hostname.to_string(),
             bridge_port: bridge.server_port(),
             credentials: creds.server.clone(),
-            signer_executable: Some(signer_bin),
+            signer_socket_path: tempdir.path().join("signer-helper.socket"),
             user_password_length: NonZeroU16::new(keys::GPG_KEY_PASSWORD.len() as u16)
                 .expect("it's three geese"),
             pkcs11_bindings,
@@ -409,6 +412,7 @@ impl InstanceBuilder {
                         keys::HSM_ACCESS_PASSWORD
                     )),
                 )?;
+                pkcs11.finalize()?;
             }
 
             if self.with_codesigning_key {
@@ -419,6 +423,30 @@ impl InstanceBuilder {
                 Self::create_ec_key(&server_bin, &server_config_file)?;
             }
         }
+
+        let signer_helper = {
+            let halt_token = CancellationToken::new();
+            let listener = UnixListener::bind(&server_config.signer_socket_path)?;
+
+            let signer_halt = halt_token.clone();
+
+            let signer = tokio::spawn(async move {
+                let stream = tokio::select! {
+                    _ = signer_halt.cancelled() => {
+                        return Ok(());
+                    }
+                    result = listener.accept() => {
+                        let (unix_stream, _) = result?;
+                        unix_stream
+                    }
+                };
+                tracing::info!("signing helper accepted connection");
+                let (reader, writer) = tokio::io::split(stream);
+                siguldry::server::ipc::serve(signer_halt, reader, writer).await?;
+                Ok::<_, anyhow::Error>(())
+            });
+            (halt_token, signer)
+        };
 
         let server = server::service::Server::new(server_config).await?;
         let server = server.run();
@@ -440,6 +468,7 @@ impl InstanceBuilder {
             client,
             creds,
             state_dir: tempdir,
+            signer_helper,
         })
     }
 
