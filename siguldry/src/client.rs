@@ -463,7 +463,7 @@ impl Client {
         key: String,
         digest: DigestAlgorithm,
         data: Bytes,
-    ) -> Result<Bytes, ClientError> {
+    ) -> Result<Signature, ClientError> {
         let request = Request {
             message: protocol::json::Request::Sign { key, digest },
             binary: Some(data),
@@ -471,9 +471,7 @@ impl Client {
 
         let response = self.reconnecting_send(request).await?;
         match response.json {
-            Response::Sign {} => response.binary.ok_or_else(|| {
-                anyhow::anyhow!("Server response didn't include a signature").into()
-            }),
+            Response::Sign { signature } => Ok(signature),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }

@@ -69,6 +69,7 @@
 //! |---------------------------|
 
 use openssl::nid::Nid;
+use sequoia_openpgp::cert::CipherSuite;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
@@ -432,7 +433,9 @@ pub mod json {
             key: super::Key,
         },
         GpgSign {},
-        Sign {},
+        Sign {
+            signature: Signature,
+        },
         SignPrehashed {
             signatures: Vec<Signature>,
         },
@@ -448,16 +451,78 @@ pub mod json {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Signature {
         /// The signature. This is base64-encoded in the JSON objects.
-        ///
-        /// The structure of the signature is dependent on the key used in the signature.
-        /// For RSA keys, the signature is an RSA PKCS#1 v1.5 structure. For P-256 keys,
-        /// it is the DER-encoded R and S values in a format OpenSSL would emit.
-        #[serde(with = "base64")]
-        pub signature: Vec<u8>,
+        pub signature: SignaturePayload,
         /// The digest algorithm used on the payload.
         pub digest: super::DigestAlgorithm,
         /// The hex-encoded digest value that was signed.
         pub hash: String,
+    }
+
+    impl Signature {
+        /// The signature value.
+        ///
+        /// What's contained depends on the key used to sign.
+        pub fn value(&self) -> &[u8] {
+            self.signature.as_ref()
+        }
+
+        /// Get the signature value in the format expected for PKCS #11 signing operations.
+        pub fn pkcs11_value(&self) -> Option<Vec<u8>> {
+            match &self.signature {
+                SignaturePayload::RSA(pkcs1_15_sig) => Some(pkcs1_15_sig.clone()),
+                SignaturePayload::P256(ecdsa_sig) => {
+                    // The expected value is the raw r and s values
+                    let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_der(ecdsa_sig)
+                        .inspect_err(|error| {
+                            tracing::error!(?error, "Failed to parse DER-encoded ECDSASignature");
+                        })
+                        .ok()?;
+                    let r = ecdsa_sig
+                        .r()
+                        .to_vec_padded(32)
+                        .inspect_err(|error| {
+                            tracing::error!(?error, "Failed to pad ECDSA r value");
+                        })
+                        .ok()?;
+                    let s = ecdsa_sig
+                        .s()
+                        .to_vec_padded(32)
+                        .inspect_err(|error| {
+                            tracing::error!(?error, "Failed to pad ECDSA s value");
+                        })
+                        .ok()?;
+
+                    let mut r_and_s = Vec::with_capacity(64);
+                    r_and_s.extend_from_slice(&r);
+                    r_and_s.extend_from_slice(&s);
+                    Some(r_and_s)
+                }
+            }
+        }
+    }
+
+    /// Contains the actual signature.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[non_exhaustive]
+    pub enum SignaturePayload {
+        /// RSA signatures are DER-encoded PKCS#1 v1.5 structures as described in
+        /// RFC 8017 Section 9.2.
+        #[serde(with = "base64")]
+        RSA(Vec<u8>),
+        /// Signatures with P256 keys are DER-encoded ECDSASignature structures as
+        /// described in RFC 3279 Section 2.2.3.
+        #[serde(with = "base64")]
+        P256(Vec<u8>),
+    }
+
+    impl std::ops::Deref for SignaturePayload {
+        type Target = [u8];
+
+        fn deref(&self) -> &Self::Target {
+            match self {
+                SignaturePayload::RSA(value) | SignaturePayload::P256(value) => value,
+            }
+        }
     }
 
     mod base64 {
@@ -561,6 +626,16 @@ impl KeyAlgorithm {
             KeyAlgorithm::Rsa2K => "rsa2k",
             KeyAlgorithm::Rsa4K => "rsa4k",
             KeyAlgorithm::P256 => "P256",
+        }
+    }
+}
+
+impl From<KeyAlgorithm> for CipherSuite {
+    fn from(value: KeyAlgorithm) -> Self {
+        match value {
+            KeyAlgorithm::Rsa2K => CipherSuite::RSA2k,
+            KeyAlgorithm::Rsa4K => CipherSuite::RSA4k,
+            KeyAlgorithm::P256 => CipherSuite::P256,
         }
     }
 }

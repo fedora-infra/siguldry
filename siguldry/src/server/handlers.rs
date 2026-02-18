@@ -174,8 +174,10 @@ impl Handler {
             .await?;
 
         Ok(Response {
-            json: json::Response::Sign {},
-            binary: Some(Bytes::from(response.pop().unwrap().signature)),
+            json: json::Response::Sign {
+                signature: response.pop().unwrap(),
+            },
+            binary: None,
         })
     }
 

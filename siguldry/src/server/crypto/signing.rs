@@ -13,7 +13,7 @@ use openssl::{ec::EcKey, pkey::PKey, pkey_ctx::PkeyCtx, rsa::Rsa};
 use sequoia_openpgp::crypto::Password;
 
 use crate::{
-    protocol::{self, DigestAlgorithm, KeyAlgorithm},
+    protocol::{self, DigestAlgorithm, KeyAlgorithm, json::SignaturePayload},
     server::db,
 };
 
@@ -99,6 +99,12 @@ pub fn sign_with_softkey(
         }
         let mut signature = vec![];
         ctx.sign_to_vec(&hash, &mut signature)?;
+        let signature = match key.key_algorithm {
+            KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => {
+                protocol::json::SignaturePayload::RSA(signature)
+            }
+            KeyAlgorithm::P256 => protocol::json::SignaturePayload::P256(signature),
+        };
         signatures.push(protocol::json::Signature {
             signature,
             digest: algorithm,
@@ -149,7 +155,7 @@ pub fn sign_with_pkcs11(
             .context("PKCS#11 signing operation failed")?;
 
         let signature = match key.key_algorithm {
-            KeyAlgorithm::Rsa4K | KeyAlgorithm::Rsa2K => signature,
+            KeyAlgorithm::Rsa4K | KeyAlgorithm::Rsa2K => SignaturePayload::RSA(signature),
             KeyAlgorithm::P256 => {
                 // Softkey signatures use OpenSSL, which return a DER-encoded signature, while PKCS #11
                 // returns the raw r and s values (refer to https://www.ietf.org/rfc/rfc6979.html#appendix-A.1.3).
@@ -163,7 +169,7 @@ pub fn sign_with_pkcs11(
                     .map(openssl::bn::BigNum::from_slice)
                     .expect("A P256 signature should be 64 bytes")?;
                 let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_private_components(r, s)?;
-                ecdsa_sig.to_der()?
+                SignaturePayload::P256(ecdsa_sig.to_der()?)
             }
         };
 
@@ -234,7 +240,8 @@ mod tests {
         ctx.verify_init()?;
         ctx.set_signature_md(openssl::md::Md::sha256())?;
         ctx.set_rsa_padding(openssl::rsa::Padding::PKCS1)?;
-        let result = ctx.verify(&digest, &signatures.first().unwrap().signature)?;
+        let signature = signatures.first().unwrap().signature.as_ref();
+        let result = ctx.verify(&digest, signature)?;
         assert!(result, "Signature should be valid (OpenSSL bindings)");
 
         // Also verify using the OpenSSL CLI in case I'm using the bindings wrong
@@ -242,7 +249,7 @@ mod tests {
         let signature_path = hsm.directory.path().join("signature.bin");
         let pubkey_path = hsm.directory.path().join("pubkey.pem");
         std::fs::write(&data_path, data)?;
-        std::fs::write(&signature_path, &signatures.first().unwrap().signature)?;
+        std::fs::write(&signature_path, signature)?;
         std::fs::write(&pubkey_path, rsa_key.public_key.as_bytes())?;
         let output = Command::new("openssl")
             .args(["dgst", "-sha256", "-verify"])
@@ -302,7 +309,8 @@ mod tests {
 
         let public_key = openssl::pkey::PKey::public_key_from_pem(ecc_key.public_key.as_bytes())?;
         let ec_key = public_key.ec_key()?;
-        let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_der(&signatures.first().unwrap().signature)?;
+        let signature = signatures.first().unwrap().signature.as_ref();
+        let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_der(signature)?;
         assert!(
             ecdsa_sig.verify(&digest, &ec_key)?,
             "ECDSA signature should be valid (OpenSSL bindings)"
@@ -313,7 +321,7 @@ mod tests {
         let signature_path = hsm.directory.path().join("signature.bin");
         let pubkey_path = hsm.directory.path().join("pubkey.pem");
         std::fs::write(&data_path, data)?;
-        std::fs::write(&signature_path, &signatures.first().unwrap().signature)?;
+        std::fs::write(&signature_path, signature)?;
         std::fs::write(&pubkey_path, ecc_key.public_key.as_bytes())?;
         let output = Command::new("openssl")
             .args(["dgst", "-sha256", "-verify"])
@@ -375,7 +383,8 @@ mod tests {
         ctx.verify_init()?;
         ctx.set_signature_md(openssl::md::Md::sha256())?;
         ctx.set_rsa_padding(openssl::rsa::Padding::PKCS1)?;
-        let result = ctx.verify(&digest, &signatures.first().unwrap().signature)?;
+        let signature = signatures.first().unwrap().signature.as_ref();
+        let result = ctx.verify(&digest, signature)?;
         assert!(result, "Signature should be valid (OpenSSL bindings)");
 
         // Also verify using the OpenSSL CLI in case I'm using the bindings wrong
@@ -383,7 +392,7 @@ mod tests {
         let signature_path = temp_dir.path().join("signature.bin");
         let pubkey_path = temp_dir.path().join("pubkey.pem");
         std::fs::write(&data_path, data)?;
-        std::fs::write(&signature_path, &signatures.first().unwrap().signature)?;
+        std::fs::write(&signature_path, signature)?;
         std::fs::write(&pubkey_path, key.public_key.as_bytes())?;
         let output = Command::new("openssl")
             .args(["dgst", "-sha256", "-verify"])
@@ -441,7 +450,8 @@ mod tests {
 
         let public_key = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
         let ec_key = public_key.ec_key()?;
-        let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_der(&signatures.first().unwrap().signature)?;
+        let signature = signatures.first().unwrap().signature.as_ref();
+        let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_der(signature)?;
         assert!(
             ecdsa_sig.verify(&digest, &ec_key)?,
             "ECDSA signature should be valid (OpenSSL bindings)"
@@ -452,7 +462,7 @@ mod tests {
         let signature_path = temp_dir.path().join("signature.bin");
         let pubkey_path = temp_dir.path().join("pubkey.pem");
         std::fs::write(&data_path, data)?;
-        std::fs::write(&signature_path, &signatures.first().unwrap().signature)?;
+        std::fs::write(&signature_path, signature)?;
         std::fs::write(&pubkey_path, key.public_key.as_bytes())?;
         let output = Command::new("openssl")
             .args(["dgst", "-sha256", "-verify"])

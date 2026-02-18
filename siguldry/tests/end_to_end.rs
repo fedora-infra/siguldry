@@ -500,7 +500,7 @@ async fn digest_signature() -> anyhow::Result<()> {
     let pubkey_path = instance.state_dir.path().join("codesigning-pubkey.pem");
     std::fs::write(&pubkey_path, &key.public_key)?;
     let sig_path = instance.state_dir.path().join("data.sig");
-    std::fs::write(&sig_path, &signature)?;
+    std::fs::write(&sig_path, signature.value())?;
     let data_path = instance.state_dir.path().join("data");
     std::fs::write(&data_path, data)?;
     let mut command = tokio::process::Command::new("openssl");
@@ -554,7 +554,7 @@ async fn ec_prehashed_signature() -> anyhow::Result<()> {
     let pubkey_path = instance.state_dir.path().join("ec-pubkey.pem");
     std::fs::write(&pubkey_path, &key.public_key)?;
     let sig_path = instance.state_dir.path().join("data.sig");
-    std::fs::write(&sig_path, &signature.signature)?;
+    std::fs::write(&sig_path, signature.value())?;
     let data_path = instance.state_dir.path().join("data");
     std::fs::write(&data_path, data)?;
     // Check the key is the expected format
@@ -622,7 +622,7 @@ async fn hsm_ec_prehashed_signature() -> anyhow::Result<()> {
     let pubkey_path = instance.state_dir.path().join("ec-pubkey.pem");
     std::fs::write(&pubkey_path, &key.public_key)?;
     let sig_path = instance.state_dir.path().join("data.sig");
-    std::fs::write(&sig_path, &signature.signature)?;
+    std::fs::write(&sig_path, signature.value())?;
     let data_path = instance.state_dir.path().join("data");
     std::fs::write(&data_path, data)?;
     // Check the key is the expected format
@@ -694,7 +694,7 @@ async fn prehashed_signature() -> anyhow::Result<()> {
     let pubkey_path = instance.state_dir.path().join("codesigning-pubkey.pem");
     std::fs::write(&pubkey_path, &key.public_key)?;
     let sig_path = instance.state_dir.path().join("data.sig");
-    std::fs::write(&sig_path, &signature.signature)?;
+    std::fs::write(&sig_path, signature.value())?;
     let data_path = instance.state_dir.path().join("data");
     std::fs::write(&data_path, data)?;
     let mut command = tokio::process::Command::new("openssl");
@@ -748,7 +748,7 @@ async fn hsm_rsa_prehashed_signature() -> anyhow::Result<()> {
     let pubkey_path = instance.state_dir.path().join("hsm-rsa-pubkey.pem");
     std::fs::write(&pubkey_path, &key.public_key)?;
     let sig_path = instance.state_dir.path().join("data.sig");
-    std::fs::write(&sig_path, &signature.signature)?;
+    std::fs::write(&sig_path, signature.value())?;
     let data_path = instance.state_dir.path().join("data");
     std::fs::write(&data_path, data)?;
     let mut command = tokio::process::Command::new("openssl");
@@ -804,7 +804,7 @@ async fn hsm_rsa_prehashed_signature_with_pkcs11_binding() -> anyhow::Result<()>
     let pubkey_path = instance.state_dir.path().join("hsm-rsa-pubkey.pem");
     std::fs::write(&pubkey_path, &key.public_key)?;
     let sig_path = instance.state_dir.path().join("data.sig");
-    std::fs::write(&sig_path, &signature)?;
+    std::fs::write(&sig_path, signature.value())?;
     let data_path = instance.state_dir.path().join("data");
     std::fs::write(&data_path, data)?;
     let mut command = tokio::process::Command::new("openssl");
