@@ -108,6 +108,10 @@ pub mod keys {
     pub const GPG_KEY_PASSWORD: &str = "🪿🪿🪿";
     pub const GPG_KEY_EMAIL: &str = "admin@example.com";
 
+    pub const GPG_EC_KEY_NAME: &str = "test-gpg-ec-key";
+    pub const GPG_EC_KEY_PASSWORD: &str = "🐉🐉🐉🐉🐉";
+    pub const GPG_EC_KEY_EMAIL: &str = "admin@example.com";
+
     pub const CA_KEY_NAME: &str = "test-ca-key";
     pub const CA_KEY_PASSWORD: &str = "🦀🦀🦀🦀";
 
@@ -146,7 +150,10 @@ pub mod keys {
 #[derive(Default)]
 pub struct InstanceBuilder {
     creds: Option<Creds>,
+    // If enabled, the gpg keys will use v6 keys.
+    with_gpg_rfc9580_keys: bool,
     with_gpg_key: bool,
+    with_gpg_ec_key: bool,
     with_ca_key: bool,
     with_codesigning_key: bool,
     with_ec_key: bool,
@@ -168,8 +175,18 @@ impl InstanceBuilder {
         self
     }
 
+    pub fn use_rfc9580_for_gpg(mut self) -> Self {
+        self.with_gpg_rfc9580_keys = true;
+        self
+    }
+
     pub fn with_gpg_key(mut self) -> Self {
         self.with_gpg_key = true;
+        self
+    }
+
+    pub fn with_gpg_ec_key(mut self) -> Self {
+        self.with_gpg_ec_key = true;
         self
     }
 
@@ -367,6 +384,12 @@ impl InstanceBuilder {
                 None,
             )?;
 
+            let profile = if self.with_gpg_rfc9580_keys {
+                "rfc9580"
+            } else {
+                "rfc4880"
+            };
+
             if self.with_gpg_key {
                 Self::run_server_command(
                     &server_bin,
@@ -375,11 +398,33 @@ impl InstanceBuilder {
                         "manage",
                         "gpg",
                         "create",
+                        "--profile",
+                        profile,
                         "siguldry-client",
                         keys::GPG_KEY_NAME,
                         keys::GPG_KEY_EMAIL,
                     ],
                     Some(&format!("{}\n", keys::GPG_KEY_PASSWORD)),
+                )?;
+            }
+
+            if self.with_gpg_ec_key {
+                Self::run_server_command(
+                    &server_bin,
+                    &server_config_file,
+                    &[
+                        "manage",
+                        "gpg",
+                        "create",
+                        "--profile",
+                        profile,
+                        "--algorithm",
+                        "p256",
+                        "siguldry-client",
+                        keys::GPG_EC_KEY_NAME,
+                        keys::GPG_EC_KEY_EMAIL,
+                    ],
+                    Some(&format!("{}\n", keys::GPG_EC_KEY_PASSWORD)),
                 )?;
             }
 

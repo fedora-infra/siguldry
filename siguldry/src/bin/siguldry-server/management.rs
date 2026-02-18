@@ -14,14 +14,11 @@ use openssl::{
     x509,
 };
 use rustix::termios::Termios;
-use sequoia_openpgp::{Profile, cert::CipherSuite, crypto::Password};
-use siguldry::{
-    protocol::KeyAlgorithm,
-    server::{
-        Config, Pkcs11Binding,
-        crypto::{self, binding::decrypt_key_password},
-        db,
-    },
+use sequoia_openpgp::crypto::Password;
+use siguldry::server::{
+    Config, Pkcs11Binding,
+    crypto::{self, binding::decrypt_key_password},
+    db,
 };
 use tracing::instrument;
 
@@ -120,6 +117,8 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
     match command {
         ManagementCommands::Gpg(gpg_commands) => match gpg_commands {
             GpgCommands::Create {
+                algorithm,
+                profile,
                 password_file,
                 admin,
                 name,
@@ -154,8 +153,8 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     &config.pkcs11_bindings,
                     format!("{name} <{email}>"),
                     user_password,
-                    Profile::RFC4880,
-                    CipherSuite::RSA4k,
+                    profile.into(),
+                    algorithm.into(),
                 )?;
                 let armored_private_key = bound_key.armored_key()?;
                 let armored_private_key = String::from_utf8(armored_private_key)?;
@@ -165,7 +164,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     &mut conn,
                     &name,
                     &bound_key.fingerprint(),
-                    KeyAlgorithm::Rsa4K,
+                    algorithm,
                     db::KeyPurpose::PGP,
                     &armored_private_key,
                     &public_key,
@@ -568,7 +567,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::cli::{
-        GpgCommands, KeyCommands, KeyUsage, ManagementCommands, Pkcs11Commands, UserCommands,
+        GpgCommands, KeyCommands, KeyUsage, ManagementCommands, OpenPgpProfile, Pkcs11Commands,
+        UserCommands,
     };
 
     use super::manage;
@@ -1089,6 +1089,58 @@ mod tests {
 
         manage(
             ManagementCommands::Gpg(GpgCommands::Create {
+                algorithm: KeyAlgorithm::Rsa4K,
+                profile: OpenPgpProfile::RFC4880,
+                password_file: Some(password_file),
+                admin: "gpg-admin".to_string(),
+                name: "test-gpg-key".to_string(),
+                email: "test@example.com".to_string(),
+            }),
+            test.config().clone(),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn gpg_create_p256() -> Result<()> {
+        let test = TestConfig::new(false).await?;
+        test.migrate().await?;
+        test.create_user("gpg-admin").await?;
+
+        let password_file = test.temp_dir.path().join("password");
+        std::fs::write(&password_file, "gpg-password\n")?;
+
+        manage(
+            ManagementCommands::Gpg(GpgCommands::Create {
+                algorithm: KeyAlgorithm::P256,
+                profile: OpenPgpProfile::RFC4880,
+                password_file: Some(password_file),
+                admin: "gpg-admin".to_string(),
+                name: "test-gpg-key".to_string(),
+                email: "test@example.com".to_string(),
+            }),
+            test.config().clone(),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn gpg_create_rfc9580() -> Result<()> {
+        let test = TestConfig::new(false).await?;
+        test.migrate().await?;
+        test.create_user("gpg-admin").await?;
+
+        let password_file = test.temp_dir.path().join("password");
+        std::fs::write(&password_file, "gpg-password\n")?;
+
+        manage(
+            ManagementCommands::Gpg(GpgCommands::Create {
+                algorithm: KeyAlgorithm::P256,
+                profile: OpenPgpProfile::RFC9580,
                 password_file: Some(password_file),
                 admin: "gpg-admin".to_string(),
                 name: "test-gpg-key".to_string(),
@@ -1112,6 +1164,8 @@ mod tests {
 
         let result = manage(
             ManagementCommands::Gpg(GpgCommands::Create {
+                algorithm: KeyAlgorithm::Rsa4K,
+                profile: OpenPgpProfile::RFC4880,
                 password_file: Some(password_file),
                 admin: "gpg-admin".to_string(),
                 name: "test-gpg-key".to_string(),
@@ -1135,6 +1189,8 @@ mod tests {
 
         let result = manage(
             ManagementCommands::Gpg(GpgCommands::Create {
+                algorithm: KeyAlgorithm::Rsa4K,
+                profile: OpenPgpProfile::RFC4880,
                 password_file: Some(password_file),
                 admin: "nonexistent-admin".to_string(),
                 name: "test-gpg-key".to_string(),
@@ -1297,6 +1353,8 @@ mod tests {
                 name: "test-rsa-key".to_string(),
             }),
             ManagementCommands::Gpg(GpgCommands::Create {
+                algorithm: KeyAlgorithm::Rsa4K,
+                profile: OpenPgpProfile::RFC4880,
                 password_file: Some("/path/does/not/exist".into()),
                 admin: "admin".to_string(),
                 name: "test-gpg-key".to_string(),
@@ -1342,6 +1400,8 @@ mod tests {
                 name: "test-rsa-key".to_string(),
             }),
             ManagementCommands::Gpg(GpgCommands::Create {
+                profile: OpenPgpProfile::RFC4880,
+                algorithm: KeyAlgorithm::Rsa4K,
                 password_file: Some("/path/does/not/exist".into()),
                 admin: "admin".to_string(),
                 name: "test-gpg-key".to_string(),
@@ -1391,6 +1451,8 @@ mod tests {
                 name: "test-rsa-key".to_string(),
             }),
             ManagementCommands::Gpg(GpgCommands::Create {
+                algorithm: KeyAlgorithm::Rsa4K,
+                profile: OpenPgpProfile::RFC4880,
                 password_file: Some(password_file),
                 admin: "admin".to_string(),
                 name: "test-gpg-key".to_string(),

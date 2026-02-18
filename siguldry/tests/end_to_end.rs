@@ -6,7 +6,7 @@
 use siguldry::{
     client,
     error::{ClientError, ConnectionError, ProtocolError, ServerError},
-    protocol::{DigestAlgorithm, GpgSignatureType},
+    protocol::{DigestAlgorithm, GpgSignatureType, KeyAlgorithm},
 };
 
 use siguldry_test::{InstanceBuilder, create_credentials, keys};
@@ -268,6 +268,11 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
         .client
         .get_key(keys::GPG_KEY_NAME.to_string())
         .await?;
+    assert!(
+        matches!(key.key_algorithm, KeyAlgorithm::Rsa4K),
+        "Expected key algorithm to be RSA-4096, but it was {:?}",
+        key.key_algorithm
+    );
     assert_eq!(1, key.certificates.len());
     let certificate = key.certificates.pop().unwrap();
     let signature = instance
@@ -310,6 +315,168 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
                 keys::GPG_KEY_NAME,
                 keys::GPG_KEY_EMAIL
             )));
+        }
+        _ => panic!("unexpected key type"),
+    }
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .use_rfc9580_for_gpg()
+        .with_gpg_ec_key()
+        .build()
+        .await?;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+
+    instance
+        .client
+        .unlock(
+            keys::GPG_EC_KEY_NAME.to_string(),
+            keys::GPG_EC_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+    let mut key = instance
+        .client
+        .get_key(keys::GPG_EC_KEY_NAME.to_string())
+        .await?;
+    assert!(
+        matches!(key.key_algorithm, KeyAlgorithm::P256),
+        "Expected key algorithm to be P256, but it was {:?}",
+        key.key_algorithm
+    );
+    assert_eq!(1, key.certificates.len());
+    let certificate = key.certificates.pop().unwrap();
+    let signature = instance
+        .client
+        .gpg_sign(
+            keys::GPG_EC_KEY_NAME.to_string(),
+            GpgSignatureType::Detached,
+            bytes::Bytes::from(data),
+        )
+        .await?;
+
+    match certificate {
+        siguldry::protocol::Certificate::Gpg {
+            version,
+            certificate,
+            fingerprint,
+        } => {
+            assert_eq!(6, version, "Expected a v6 OpenPGP key");
+            let keyring_path = instance.state_dir.path().join("gpg_sign_keyring.asc");
+            std::fs::write(&keyring_path, certificate)?;
+
+            let data_path = instance.state_dir.path().join("gpg_sign_data");
+            std::fs::write(&data_path, data)?;
+
+            let sig_path = instance.state_dir.path().join("gpg_sign_data.sig");
+            std::fs::write(&sig_path, &signature)?;
+            let mut command = tokio::process::Command::new("sq");
+            let output = command
+                .arg("verify")
+                .arg(format!("--trust-root={}", &fingerprint))
+                .arg(format!("--keyring={}", keyring_path.display()))
+                .arg(format!("--signature-file={}", sig_path.display()))
+                .arg(data_path)
+                .output()
+                .await?;
+            let stderr = String::from_utf8(output.stderr)?;
+            assert!(output.status.success());
+            assert!(stderr.contains(&format!(
+                "Authenticated signature made by {} ({} <{}>)",
+                fingerprint,
+                keys::GPG_EC_KEY_NAME,
+                keys::GPG_EC_KEY_EMAIL
+            )));
+            let mut command = tokio::process::Command::new("sq");
+            let output = command.arg("inspect").arg(keyring_path).output().await?;
+            let stdout = String::from_utf8(output.stdout)?;
+            assert!(output.status.success());
+            assert!(stdout.contains("Public-key algo: ECDSA"));
+            assert!(stdout.contains("Public-key size: 256 bits"));
+        }
+        _ => panic!("unexpected key type"),
+    }
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn gpg_sign_detached_p256() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_gpg_ec_key().build().await?;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+
+    instance
+        .client
+        .unlock(
+            keys::GPG_EC_KEY_NAME.to_string(),
+            keys::GPG_EC_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+    let mut key = instance
+        .client
+        .get_key(keys::GPG_EC_KEY_NAME.to_string())
+        .await?;
+    assert!(
+        matches!(key.key_algorithm, KeyAlgorithm::P256),
+        "Expected key algorithm to be P256, but it was {:?}",
+        key.key_algorithm
+    );
+    assert_eq!(1, key.certificates.len());
+    let certificate = key.certificates.pop().unwrap();
+    let signature = instance
+        .client
+        .gpg_sign(
+            keys::GPG_EC_KEY_NAME.to_string(),
+            GpgSignatureType::Detached,
+            bytes::Bytes::from(data),
+        )
+        .await?;
+
+    match certificate {
+        siguldry::protocol::Certificate::Gpg {
+            version,
+            certificate,
+            fingerprint,
+        } => {
+            assert_eq!(4, version, "Expected a v4 OpenPGP key");
+            let keyring_path = instance.state_dir.path().join("gpg_sign_keyring.asc");
+            std::fs::write(&keyring_path, certificate)?;
+
+            let data_path = instance.state_dir.path().join("gpg_sign_data");
+            std::fs::write(&data_path, data)?;
+
+            let sig_path = instance.state_dir.path().join("gpg_sign_data.sig");
+            std::fs::write(&sig_path, &signature)?;
+            let mut command = tokio::process::Command::new("sq");
+            let output = command
+                .arg("verify")
+                .arg(format!("--trust-root={}", &fingerprint))
+                .arg(format!("--keyring={}", keyring_path.display()))
+                .arg(format!("--signature-file={}", sig_path.display()))
+                .arg(data_path)
+                .output()
+                .await?;
+            let stderr = String::from_utf8(output.stderr)?;
+            assert!(output.status.success());
+            assert!(stderr.contains(&format!(
+                "Authenticated signature made by {} ({} <{}>)",
+                fingerprint,
+                keys::GPG_EC_KEY_NAME,
+                keys::GPG_EC_KEY_EMAIL
+            )));
+            let mut command = tokio::process::Command::new("sq");
+            let output = command.arg("inspect").arg(keyring_path).output().await?;
+            let stdout = String::from_utf8(output.stdout)?;
+            assert!(output.status.success());
+            assert!(stdout.contains("Public-key algo: ECDSA"));
+            assert!(stdout.contains("Public-key size: 256 bits"));
         }
         _ => panic!("unexpected key type"),
     }

@@ -96,6 +96,26 @@ pub enum Command {
     Manage(ManagementCommands),
 }
 
+/// The OpenPGP profile of the key
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, clap::ValueEnum)]
+pub enum OpenPgpProfile {
+    /// RFC9580, published in 2024, defines "v6" OpenPGP.
+    RFC9580,
+
+    /// RFC4880, published in 2007, defines "v4" OpenPGP.
+    #[default]
+    RFC4880,
+}
+
+impl From<OpenPgpProfile> for sequoia_openpgp::Profile {
+    fn from(value: OpenPgpProfile) -> Self {
+        match value {
+            OpenPgpProfile::RFC9580 => sequoia_openpgp::Profile::RFC9580,
+            OpenPgpProfile::RFC4880 => sequoia_openpgp::Profile::RFC4880,
+        }
+    }
+}
+
 #[derive(clap::Subcommand, Debug)]
 pub enum ManagementCommands {
     /// Manage GPG signing keys.
@@ -144,13 +164,20 @@ pub enum ManagementCommands {
 pub enum GpgCommands {
     /// Generate a new signing key.
     Create {
+        /// The key algorithm to use.
+        #[arg(short, long, value_enum, default_value_t)]
+        algorithm: KeyAlgorithm,
+        /// The OpenPGP standard to use; until you're certain all clients support the modern
+        /// RFC9580 profile, it's best to stick with the default RFC4880 profile.
+        #[arg(short, long, value_enum, default_value_t)]
+        profile: OpenPgpProfile,
         /// A file containing the password needed to unlock and use the key.
         ///
         /// The file should include the password on the first line and the file should include a newline.
         /// If this option is not provided, input is read from stdin.
         ///
         /// Additional users can be granted access to this key with different passwords.
-        #[arg(short, long, default_value = None)]
+        #[arg(long, default_value = None)]
         password_file: Option<PathBuf>,
         /// The Siguldy username of the key administrator. This user can grant access to other users.
         admin: String,
@@ -180,7 +207,7 @@ pub enum Pkcs11Commands {
         /// If this option is not provided, input is read from stdin.
         ///
         /// This PIN will be encrypted using the user's key access password.
-        #[arg(short, long, default_value = None)]
+        #[arg(long, default_value = None)]
         user_pin: Option<PathBuf>,
         /// A file containing the key access password needed to unlock and use the key.
         ///
@@ -188,7 +215,7 @@ pub enum Pkcs11Commands {
         /// If this option is not provided, input is read from stdin.
         ///
         /// Additional users can be granted access to this key with different passwords.
-        #[arg(short, long, default_value = None)]
+        #[arg(long, default_value = None)]
         password_file: Option<PathBuf>,
 
         /// The slot ID containing the token to import.
@@ -215,7 +242,7 @@ pub enum KeyCommands {
         /// If this option is not provided, input is read from stdin.
         ///
         /// Additional users can be granted access to this key with different passwords.
-        #[arg(short, long, default_value = None)]
+        #[arg(long, default_value = None)]
         password_file: Option<PathBuf>,
         /// The Siguldy username of the key administrator. This user can grant access to other users.
         admin: String,
