@@ -6,9 +6,13 @@ use std::path::PathBuf;
 use anyhow::Context;
 use clap::Parser;
 use siguldry::{
-    client::{Client, Config},
+    client::{Client, Config, proxy},
     config::load_config,
+    signal_handler,
 };
+use tokio::net::UnixListener;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::Instrument;
 use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt};
 
 // The path, relative to $XDG_CONFIG_HOME, of the default config file location.
@@ -80,6 +84,19 @@ enum Command {
     ListUsers,
     /// See the current configuration, or the defaults if no configuration file is supplied.
     Config,
+    /// Proxy commands from a local process to the server.
+    ///
+    /// By default, commands and responses are sent over stdin and stdout respectively.
+    Proxy {
+        /// If provided, bind a Unix socket to the given location and proxy clients
+        /// that connect to it rather than using stdin/stdout.
+        ///
+        /// NOTE: Any user that has permission to read/write to this socket is able to
+        /// connect to the Siguldry server and, if keys are configured to be unlocked,
+        /// sign with those keys. Be *VERY* careful about the socket permissions.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -101,6 +118,8 @@ async fn main() -> anyhow::Result<()> {
         .with(log_filter);
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
+    let halt_token = CancellationToken::new();
+    tokio::spawn(signal_handler(halt_token.clone()));
 
     let mut config = load_config::<Config>(opts.config, PathBuf::from(DEFAULT_CONFIG).as_path())?;
 
@@ -120,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     opts.credentials_directory
         .as_ref()
         .map(|path| config.credentials.with_credentials_dir(path));
-    let client = Client::new(config)?;
+    let client = Client::new(config.clone())?;
     match opts.command {
         Command::Whoami => {
             let user = client.who_am_i().await?;
@@ -132,6 +151,48 @@ async fn main() -> anyhow::Result<()> {
             println!("{users}");
         }
         Command::Config => unreachable!("Command handled prior to this match"),
+        Command::Proxy { socket } => {
+            if let Some(socket) = socket {
+                let listener = UnixListener::bind(&socket)
+                    .with_context(|| format!("Failed to bind to {}", &socket.display()))?;
+                let request_tracker = TaskTracker::new();
+                loop {
+                    let stream = tokio::select! {
+                        _ = halt_token.cancelled() => {
+                            tracing::info!("proxy halted; shutting down");
+                            return Ok(());
+                        }
+                        result = listener.accept() => {
+                            match result {
+                                Ok((unix_stream, _)) => {
+                                    unix_stream
+                                },
+                                Err(error) => {
+                                    tracing::error!(?socket, ?error, "Failed to accept request");
+                                    break;
+                                },
+                            }
+                        }
+                    };
+                    let (reader, writer) = tokio::io::split(stream);
+                    request_tracker.spawn(
+                        proxy(
+                            Client::new(config.clone())?,
+                            halt_token.clone(),
+                            reader,
+                            writer,
+                        )
+                        .instrument(tracing::info_span!("proxy")),
+                    );
+                }
+                request_tracker.close();
+                request_tracker.wait().await;
+            } else {
+                let requests = tokio::io::stdin();
+                let responses = tokio::io::stdout();
+                proxy(client, halt_token.clone(), requests, responses).await?;
+            }
+        }
     }
 
     Ok(())

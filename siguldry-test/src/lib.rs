@@ -87,11 +87,16 @@ pub struct Instance {
     pub creds: Creds,
     pub state_dir: tempfile::TempDir,
     pub signer_helper: (CancellationToken, JoinHandle<anyhow::Result<()>>),
+    client_proxy: Option<(CancellationToken, JoinHandle<anyhow::Result<()>>)>,
 }
 
 impl Instance {
     pub async fn halt(self) -> anyhow::Result<()> {
         drop(self.client);
+        if let Some((halt_token, client_proxy)) = self.client_proxy {
+            halt_token.cancel();
+            client_proxy.await??;
+        }
 
         let (halt_token, signer_helper) = self.signer_helper;
         halt_token.cancel();
@@ -100,6 +105,10 @@ impl Instance {
         self.server.halt().await?;
         self.bridge.halt().await?;
         Ok(())
+    }
+
+    pub fn client_proxy_socket(&self) -> PathBuf {
+        self.state_dir.path().join("client-proxy.socket")
     }
 }
 
@@ -161,6 +170,7 @@ pub struct InstanceBuilder {
     with_hsm_rsa_key: bool,
     with_hsm: bool,
     with_pkcs11_binding: bool,
+    with_client_proxy: bool,
     with_sigul_import: Option<String>,
 }
 
@@ -220,6 +230,12 @@ impl InstanceBuilder {
     pub fn with_pkcs11_binding(mut self) -> Self {
         self.with_hsm = true;
         self.with_pkcs11_binding = true;
+        self
+    }
+
+    /// Create a Unix socket to proxy client requests (useful for PKCS #11 testing).
+    pub fn with_client_proxy(mut self) -> Self {
+        self.with_client_proxy = true;
         self
     }
 
@@ -507,6 +523,15 @@ impl InstanceBuilder {
         std::fs::write(&client_config_file, toml::to_string_pretty(&client_config)?)?;
         let client = client::Client::new(client_config)?;
 
+        let client_proxy = if self.with_client_proxy {
+            let halt_token = CancellationToken::new();
+            let client_proxy =
+                Self::create_client_proxy(tempdir.path(), client.clone(), halt_token.clone())?;
+            Some((halt_token, client_proxy))
+        } else {
+            None
+        };
+
         Ok(Instance {
             server,
             bridge,
@@ -514,7 +539,34 @@ impl InstanceBuilder {
             creds,
             state_dir: tempdir,
             signer_helper,
+            client_proxy,
         })
+    }
+
+    fn create_client_proxy(
+        state_dir: &Path,
+        client: client::Client,
+        halt_token: CancellationToken,
+    ) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
+        let socket_path = state_dir.join("client-proxy.socket");
+        // Safety:
+        // This is only safe when the set runner is nextest _or_ cargo-test is using a single
+        // thread. Expect random test failures in other scenarios.
+        unsafe {
+            std::env::set_var("SIGULDRY_PKCS11_PROXY_PATH", &socket_path);
+        }
+
+        let proxy_halt = halt_token.clone();
+        let listener = UnixListener::bind(&socket_path)?;
+
+        let proxy = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            let (reader, writer) = tokio::io::split(stream);
+            siguldry::client::proxy(client, proxy_halt, reader, writer).await?;
+            Ok::<_, anyhow::Error>(())
+        });
+
+        Ok(proxy)
     }
 
     /// Run a siguldry-server command with optional stdin input.

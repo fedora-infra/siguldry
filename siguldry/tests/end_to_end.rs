@@ -4,7 +4,7 @@
 #![cfg(feature = "server")]
 
 use siguldry::{
-    client,
+    client::{self, ProxyClient},
     error::{ClientError, ConnectionError, ProtocolError, ServerError},
     protocol::{DigestAlgorithm, GpgSignatureType, KeyAlgorithm},
 };
@@ -139,6 +139,28 @@ async fn unlock_gpg_key() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[tracing_test::traced_test]
+async fn client_proxy_unlock_gpg_key() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_gpg_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let mut client_proxy = ProxyClient::new(instance.client_proxy_socket())?;
+
+    tokio::task::spawn_blocking(move || {
+        client_proxy.unlock(
+            keys::GPG_KEY_NAME.to_string(),
+            keys::GPG_KEY_PASSWORD.to_string(),
+        )
+    })
+    .await??;
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
 async fn wrong_gpg_password() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new().with_gpg_key().build().await?;
 
@@ -179,6 +201,25 @@ async fn list_keys() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new().with_all_keys().build().await?;
 
     let keys = instance.client.list_keys().await?;
+    // GPG key + CA key + codesigning key + EC key
+    assert_eq!(4, keys.len());
+
+    instance.halt().await?;
+    Ok(())
+}
+
+/// List keys through the client proxy
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn client_proxy_list_keys() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_all_keys()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let mut client_proxy = ProxyClient::new(instance.client_proxy_socket())?;
+
+    let keys = tokio::task::spawn_blocking(move || client_proxy.list_keys()).await??;
     // GPG key + CA key + codesigning key + EC key
     assert_eq!(4, keys.len());
 
@@ -717,6 +758,78 @@ async fn ec_prehashed_signature() -> anyhow::Result<()> {
         .await?
         .pop()
         .unwrap();
+
+    let pubkey_path = instance.state_dir.path().join("ec-pubkey.pem");
+    std::fs::write(&pubkey_path, &key.public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, signature.value())?;
+    let data_path = instance.state_dir.path().join("data");
+    std::fs::write(&data_path, data)?;
+    // Check the key is the expected format
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("ec")
+        .arg("-pubin")
+        .arg("-in")
+        .arg(&pubkey_path)
+        .arg("-text")
+        .arg("-noout")
+        .output()
+        .await?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("NIST CURVE: P-256"));
+
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("dgst")
+        .arg("-verify")
+        .arg(pubkey_path)
+        .arg("-signature")
+        .arg(sig_path)
+        .arg(data_path)
+        .output()
+        .await?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!("Verified OK\n", stdout);
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn client_proxy_prehashed_signature() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_ec_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let mut client_proxy = ProxyClient::new(instance.client_proxy_socket())?;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let data_sum = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), data)?.to_vec();
+    let data_hex = hex::encode(&data_sum);
+    let key = instance
+        .client
+        .get_key(keys::EC_KEY_NAME.to_string())
+        .await?;
+
+    let signature = tokio::task::spawn_blocking(move || {
+        client_proxy.unlock(
+            keys::EC_KEY_NAME.to_string(),
+            keys::EC_KEY_PASSWORD.to_string(),
+        )?;
+        let signature = client_proxy
+            .sign_prehashed(
+                keys::EC_KEY_NAME.to_string(),
+                vec![(DigestAlgorithm::Sha256, data_hex)],
+            )?
+            .pop()
+            .unwrap();
+        Ok::<_, anyhow::Error>(signature)
+    })
+    .await??;
 
     let pubkey_path = instance.state_dir.path().join("ec-pubkey.pem");
     std::fs::write(&pubkey_path, &key.public_key)?;

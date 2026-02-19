@@ -1,0 +1,13 @@
+[Unit]
+Description=Siguldry client proxy
+
+[Socket]
+Accept=yes
+SocketUser=siguldry
+SocketGroup=siguldry
+SocketMode=0660
+ListenStream=%t/siguldry-client-proxy/siguldry-client-proxy.socket
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

@@ -33,6 +33,10 @@ use crate::{
     },
 };
 
+mod proxy;
+
+pub use proxy::{ProxyClient, proxy};
+
 /// Configuration for the siguldry client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {

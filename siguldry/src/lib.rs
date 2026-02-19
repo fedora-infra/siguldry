@@ -54,7 +54,6 @@ By default, the server, bridge, and client for Siguldry along with their CLIs is
 [1]: https://pagure.io/sigul
 */
 
-#[cfg(feature = "server")]
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
@@ -81,7 +80,6 @@ pub mod server;
 /// signing requests. Existing signing requests will be allowed to complete
 /// before the process shuts down.
 #[doc(hidden)]
-#[cfg(feature = "server")]
 pub async fn signal_handler(halt_token: CancellationToken) -> Result<(), anyhow::Error> {
     let mut sigterm_stream = signal(SignalKind::terminate()).inspect_err(|error| {
         tracing::error!(?error, "Failed to register a SIGTERM signal handler");

@@ -1,0 +1,72 @@
+[Unit]
+Description=Siguldry client proxy instance %i
+After=siguldry-client-proxy.socket
+CollectMode=inactive-or-failed
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/siguldry-client proxy
+User=siguldry
+Group=siguldry
+Environment=SIGULDRY_CLIENT_LOG=INFO
+
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+
+ConfigurationDirectory=siguldry
+
+# Isolate the client proxy process
+#
+# The proxy needs to be able to:
+#   - connect to the siguldry bridge over TCP
+#   - read the client configuration
+#
+# Admins must allow the necessary devices via a unit override file containing
+# the `DeviceAllow=` directive as by default, no devices are exposed to this
+# service.
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+PrivateDevices=true
+# Credentials may require the TPM to decrypt.
+#
+# For systemd 257 and older you'll need to explicitly allow access to the TPM
+# Refer to https://github.com/systemd/systemd/issues/35959.
+# DeviceAllow=/dev/tpmrm0
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+RemoveIPC=true
+
+# Filesystem restrictions
+ReadOnlyPaths=/
+NoExecPaths=/
+ExecPaths=/usr/bin/siguldry-client /usr/lib /usr/lib64
+
+# The service needs to connect to the Siguldry bridge
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# System call filtering
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+
+# The service used TLS to authenticate with the Siguldry bridge and with the Siguldry server
+#
+# You can use the systemd-creds utility to encrypt the private key.
+#
+# For example:
+# $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/siguldry.client.private_key
+ImportCredential=siguldry.*

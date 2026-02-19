@@ -19,7 +19,7 @@ default = ["server", "cli"]
 # Enable the server APIs
 server = ["dep:cryptoki", "dep:sqlx", "dep:sequoia-keystore", "dep:rustix"]
 # Build command-line interfaces for enabled components
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:toml", "tokio/rt-multi-thread", "tokio/signal"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:toml", "tokio/rt-multi-thread"]
 
 # Build the Sigul 1.2 client
 sigul-client = []
@@ -90,7 +90,7 @@ version = "2"
 
 [dependencies.tokio]
 version = "1.27"
-features = ["macros", "net", "process", "rt", "io-util", "time"]
+features = ["macros", "net", "process", "rt", "io-util", "signal", "time"]
 
 [dependencies.tokio-util]
 version = "0.7"
