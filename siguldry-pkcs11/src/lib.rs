@@ -38,9 +38,10 @@ use cryptoki_sys::{
     CKM_ECDSA_SHA3_256, CKM_ECDSA_SHA3_512, CKM_ECDSA_SHA256, CKM_ECDSA_SHA512,
     CKM_SHA3_256_RSA_PKCS, CKM_SHA3_512_RSA_PKCS, CKM_SHA256_RSA_PKCS, CKM_SHA512_RSA_PKCS,
     CKR_ARGUMENTS_BAD, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID, CKR_BUFFER_TOO_SMALL,
-    CKR_CANT_LOCK, CKR_MECHANISM_INVALID, CKR_NEED_TO_CREATE_THREADS, CKR_OBJECT_HANDLE_INVALID,
-    CKR_OK, CKR_OPERATION_ACTIVE, CKR_OPERATION_NOT_INITIALIZED, CKR_PIN_INCORRECT,
-    CKR_SESSION_HANDLE_INVALID, CKR_SLOT_ID_INVALID, CKR_USER_ALREADY_LOGGED_IN,
+    CKR_CANT_LOCK, CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_CRYPTOKI_NOT_INITIALIZED,
+    CKR_FUNCTION_FAILED, CKR_MECHANISM_INVALID, CKR_NEED_TO_CREATE_THREADS,
+    CKR_OBJECT_HANDLE_INVALID, CKR_OK, CKR_OPERATION_ACTIVE, CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PIN_INCORRECT, CKR_SESSION_HANDLE_INVALID, CKR_SLOT_ID_INVALID, CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN, CKR_USER_TYPE_INVALID, CKU_USER,
 };
 
@@ -57,7 +58,7 @@ use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt};
 
 use siguldry::client::ProxyClient;
 
-const DEFAULT_PROXY_SOCKET: &str = "/run/siguldry-client/proxy.socket";
+const DEFAULT_PROXY_SOCKET: &str = "/run/siguldry-client-proxy/siguldry-client-proxy.socket";
 
 // The spec indicates this should be blank character padded and _not_ null-terminated
 const MANUFACTURER_ID: [u8; 32] = *b"Fedora Infrastructure           ";
@@ -82,32 +83,6 @@ const ECDSA_MECHANISMS: [CK_MECHANISM_TYPE; 5] = [
     CKM_ECDSA_SHA3_512,
 ];
 
-/// The set of sessions that have been created by the application
-static SESSIONS: LazyLock<Arc<Mutex<HashMap<u64, Session>>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
-
-/// The set of available tokens.
-///
-/// Each key in the Siguldry server is mapped to a token. This list
-/// is not updated after being initialized so there's a stable set of
-/// slots.
-static TOKENS: LazyLock<Arc<Vec<protocol::Key>>> = LazyLock::new(|| {
-    let server_keys = CLIENT
-        .lock()
-        .as_mut()
-        .expect("Client lock poisoned")
-        .list_keys()
-        .expect("Failed to list server keys");
-
-    let tokens_available = server_keys.len();
-    tracing::info!(
-        tokens_available,
-        "Successfully read available keys from Siguldry"
-    );
-
-    Arc::new(server_keys)
-});
-
 static LOGGING: LazyLock<()> = LazyLock::new(|| {
     let log_filter = EnvFilter::builder()
         .with_env_var("LIBSIGULDRY_PKCS11_LOG")
@@ -128,14 +103,20 @@ static LOGGING: LazyLock<()> = LazyLock::new(|| {
 ///
 /// This is gross, but because the client uses OpenSSL and users of
 /// this library _also_ it via OpenSSL, it can cause some unpleasantness.
-static CLIENT: LazyLock<Arc<Mutex<ProxyClient>>> = LazyLock::new(|| {
-    let path = std::env::var("SIGULDRY_PKCS11_PROXY_PATH")
-        .unwrap_or_else(|_| DEFAULT_PROXY_SOCKET.to_string());
-    let path = PathBuf::from(path);
-    let proxy_client = ProxyClient::new(path).expect("proxy unix socket could not be found");
+static CLIENT: LazyLock<Arc<Mutex<Option<ProxyClient>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(None)));
 
-    Arc::new(Mutex::new(proxy_client))
-});
+/// The set of available tokens.
+///
+/// Each key in the Siguldry server is mapped to a token. This list
+/// is not updated after being initialized so there's a stable set of
+/// slots.
+static TOKENS: LazyLock<Arc<Mutex<Option<Vec<protocol::Key>>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(None)));
+
+/// The set of sessions that have been created by the application
+static SESSIONS: LazyLock<Arc<Mutex<HashMap<u64, Session>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 // Implemented as decribed in Section 5.4.1 of the PKCS #11 specification, version 3.2.
 #[instrument(ret)]
@@ -178,8 +159,52 @@ extern "C" fn C_Initialize(pInitArgs: *mut ::std::os::raw::c_void) -> CK_RV {
             return CKR_ARGUMENTS_BAD;
         }
     }
-    tracing::info!("Initialized siguldry-pkcs11 successfully");
 
+    let path = std::env::var("SIGULDRY_PKCS11_PROXY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_PROXY_SOCKET));
+    tracing::debug!(socket_path=?path, "Attempting to connect to the siguldry client proxy");
+    let mut proxy_client = match ProxyClient::new(path.clone()) {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::error!(?error, socket=?path, "Failed to connect to the siguldry client proxy");
+            return CKR_FUNCTION_FAILED;
+        }
+    };
+
+    let keys = match proxy_client.list_keys() {
+        Ok(keys) => {
+            tracing::info!(
+                tokens_available = keys.len(),
+                "Successfully read available keys from Siguldry"
+            );
+            keys
+        }
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                "Failed to retrieve a list of keys from the server via the proxy"
+            );
+            return CKR_FUNCTION_FAILED;
+        }
+    };
+
+    let mut client = CLIENT.lock().expect("client lock is poisoned");
+    if client.is_some() {
+        tracing::error!("The module was already initialized");
+        return CKR_CRYPTOKI_ALREADY_INITIALIZED;
+    } else {
+        *client = Some(proxy_client);
+    }
+    let mut tokens = TOKENS.lock().expect("tokens lock is poisoned");
+    if tokens.is_some() {
+        tracing::error!("The module tokens were already initialized but the client was not!");
+        return CKR_CRYPTOKI_ALREADY_INITIALIZED;
+    } else {
+        *tokens = Some(keys);
+    }
+
+    tracing::info!("Initialized siguldry-pkcs11 successfully");
     CKR_OK
 }
 
@@ -188,6 +213,8 @@ extern "C" fn C_Initialize(pInitArgs: *mut ::std::os::raw::c_void) -> CK_RV {
 extern "C" fn C_Finalize(pReserved: *mut ::std::os::raw::c_void) -> CK_RV {
     if pReserved.is_null() {
         SESSIONS.lock().expect("session lock was poisoned").clear();
+        CLIENT.lock().expect("client lock is poisoned").take();
+        TOKENS.lock().expect("tokens lock is poisoned").take();
         CKR_OK
     } else {
         CKR_ARGUMENTS_BAD
@@ -383,7 +410,16 @@ extern "C" fn C_GetSlotList(
         return CKR_ARGUMENTS_BAD;
     }
 
-    let number_of_slots = TOKENS.len() as u64;
+    let number_of_slots = if let Some(slots) = TOKENS
+        .lock()
+        .expect("tokens lock is poisoned")
+        .as_ref()
+        .map(|t| t.len() as u64)
+    {
+        slots
+    } else {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    };
 
     if pSlotList.is_null() {
         // Safety:
@@ -420,40 +456,48 @@ extern "C" fn C_GetSlotInfo(slotID: CK_SLOT_ID, pInfo: CK_SLOT_INFO_PTR) -> CK_R
         return CKR_ARGUMENTS_BAD;
     }
 
-    if let Some(token) = TOKENS.get(slotID as usize) {
-        tracing::debug!(token.name, "Populating slot info for token");
-        let mut slot_description = token.name.clone();
-        if slot_description.len() > 64 {
-            // Ensure we don't split on a character boundry; once MSRV is 1.91+ we can use floor_char_boundry()
-            let mut index = 63;
-            while !slot_description.is_char_boundary(index) {
-                index -= 1;
-            }
-            let _ = slot_description.split_off(index);
+    let token = match TOKENS
+        .lock()
+        .expect("tokens lock is poisoned")
+        .as_ref()
+        .map(|tokens| tokens.get(slotID as usize).cloned())
+    {
+        Some(Some(token)) => token,
+        Some(None) => {
+            tracing::error!(slotID, "Caller provided invalid slot ID");
+            return CKR_SLOT_ID_INVALID;
         }
-        while slot_description.len() < 64 {
-            slot_description.push(' ');
+        None => {
+            tracing::error!("Cryptoki not initialized");
+            return CKR_CRYPTOKI_NOT_INITIALIZED;
         }
+    };
 
-        unsafe {
-            (*pInfo).flags = CKF_TOKEN_PRESENT;
-            (*pInfo).firmwareVersion = CK_VERSION { major: 1, minor: 0 };
-            (*pInfo).hardwareVersion = CK_VERSION { major: 1, minor: 0 };
-            (*pInfo).manufacturerID = *b"Fedora Infrastructure           ";
-            (*pInfo).slotDescription.copy_from_slice(
-                slot_description
-                    .as_bytes()
-                    .get(..64)
-                    .expect("Description MUST pad to 64 bytes"),
-            );
+    tracing::debug!(token.name, "Populating slot info for token");
+    let mut slot_description = token.name;
+    if slot_description.len() > 64 {
+        // Ensure we don't split on a character boundry; once MSRV is 1.91+ we can use floor_char_boundry()
+        let mut index = 63;
+        while !slot_description.is_char_boundary(index) {
+            index -= 1;
         }
-    } else {
-        tracing::error!(
-            slotID,
-            slots_available = TOKENS.len(),
-            "Caller provided invalid slot ID"
+        let _ = slot_description.split_off(index);
+    }
+    while slot_description.len() < 64 {
+        slot_description.push(' ');
+    }
+
+    unsafe {
+        (*pInfo).flags = CKF_TOKEN_PRESENT;
+        (*pInfo).firmwareVersion = CK_VERSION { major: 1, minor: 0 };
+        (*pInfo).hardwareVersion = CK_VERSION { major: 1, minor: 0 };
+        (*pInfo).manufacturerID = *b"Fedora Infrastructure           ";
+        (*pInfo).slotDescription.copy_from_slice(
+            slot_description
+                .as_bytes()
+                .get(..64)
+                .expect("Description MUST pad to 64 bytes"),
         );
-        return CKR_SLOT_ID_INVALID;
     }
 
     CKR_OK
@@ -465,40 +509,53 @@ extern "C" fn C_GetTokenInfo(slotID: CK_SLOT_ID, pInfo: CK_TOKEN_INFO_PTR) -> CK
         return CKR_ARGUMENTS_BAD;
     }
 
-    if let Some(token) = TOKENS.get(slotID as usize) {
-        let mut label = token.name.clone();
-        if label.len() > 32 {
-            // Ensure we don't split on a character boundry; once MSRV is 1.91+ we can use floor_char_boundry()
-            let mut index = 31;
-            while !label.is_char_boundary(index) {
-                index -= 1;
-            }
-            let _ = label.split_off(index);
+    let token = match TOKENS
+        .lock()
+        .expect("tokens lock is poisoned")
+        .as_ref()
+        .map(|tokens| tokens.get(slotID as usize).cloned())
+    {
+        Some(Some(token)) => token,
+        Some(None) => {
+            tracing::error!(slotID, "Caller provided invalid slot ID");
+            return CKR_SLOT_ID_INVALID;
         }
-        while label.len() < 32 {
-            label.push(' ');
+        None => {
+            tracing::error!("Cryptoki not initialized");
+            return CKR_CRYPTOKI_NOT_INITIALIZED;
         }
-        unsafe {
-            // Tokens are always initialized and have a PIN set up. Login unlocks the key in Siguldry.
-            (*pInfo).flags = CKF_TOKEN_INITIALIZED | CKF_LOGIN_REQUIRED | CKF_USER_PIN_INITIALIZED;
-            (*pInfo).firmwareVersion = CK_VERSION { major: 1, minor: 0 };
-            (*pInfo).hardwareVersion = CK_VERSION { major: 1, minor: 0 };
-            (*pInfo).manufacturerID = *b"Fedora                          ";
-            (*pInfo).label.copy_from_slice(
-                label
-                    .as_bytes()
-                    .get(..32)
-                    .expect("Label MUST pad to 32 bytes"),
-            );
-            (*pInfo).model = *b"Siguldry        ";
-            (*pInfo).serialNumber = *b"0               ";
-            (*pInfo).ulMaxPinLen = 128;
-            (*pInfo).ulMinPinLen = 64;
+    };
+
+    let mut label = token.name.clone();
+    if label.len() > 32 {
+        // Ensure we don't split on a character boundry; once MSRV is 1.91+ we can use floor_char_boundry()
+        let mut index = 31;
+        while !label.is_char_boundary(index) {
+            index -= 1;
         }
-        CKR_OK
-    } else {
-        CKR_SLOT_ID_INVALID
+        let _ = label.split_off(index);
     }
+    while label.len() < 32 {
+        label.push(' ');
+    }
+    unsafe {
+        // Tokens are always initialized and have a PIN set up. Login unlocks the key in Siguldry.
+        (*pInfo).flags = CKF_TOKEN_INITIALIZED | CKF_LOGIN_REQUIRED | CKF_USER_PIN_INITIALIZED;
+        (*pInfo).firmwareVersion = CK_VERSION { major: 1, minor: 0 };
+        (*pInfo).hardwareVersion = CK_VERSION { major: 1, minor: 0 };
+        (*pInfo).manufacturerID = *b"Fedora                          ";
+        (*pInfo).label.copy_from_slice(
+            label
+                .as_bytes()
+                .get(..32)
+                .expect("Label MUST pad to 32 bytes"),
+        );
+        (*pInfo).model = *b"Siguldry        ";
+        (*pInfo).serialNumber = *b"0               ";
+        (*pInfo).ulMaxPinLen = 128;
+        (*pInfo).ulMinPinLen = 64;
+    }
+    CKR_OK
 }
 
 /// Login corresponds to unlocking the key in Siguldry.
@@ -543,13 +600,15 @@ extern "C" fn C_Login(
         } else {
             return CKR_ARGUMENTS_BAD;
         };
-        let result = CLIENT
+        match CLIENT
             .lock()
+            .expect("client lock poisoned")
             .as_mut()
-            .expect("Client lock poisoned")
-            .unlock(session.key.name.clone(), pin_string);
-        if result.is_err() {
-            return CKR_PIN_INCORRECT;
+            .map(|client| client.unlock(session.key.name.clone(), pin_string))
+        {
+            Some(Ok(_)) => tracing::debug!(key = session.key.name, "Unlocked key"),
+            Some(Err(_)) => return CKR_PIN_INCORRECT,
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED,
         }
     } else {
         // Passing a null pointer for pPin indicates the protected authentication path is being used.
@@ -605,10 +664,21 @@ extern "C" fn C_GetMechanismList(
     if pulCount.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    let key = if let Some(key) = TOKENS.get(slotID as usize) {
-        key
-    } else {
-        return CKR_SLOT_ID_INVALID;
+    let key = match TOKENS
+        .lock()
+        .expect("tokens lock is poisoned")
+        .as_ref()
+        .map(|tokens| tokens.get(slotID as usize).cloned())
+    {
+        Some(Some(token)) => token,
+        Some(None) => {
+            tracing::error!(slotID, "Caller provided invalid slot ID");
+            return CKR_SLOT_ID_INVALID;
+        }
+        None => {
+            tracing::error!("Cryptoki not initialized");
+            return CKR_CRYPTOKI_NOT_INITIALIZED;
+        }
     };
 
     let supported_mechanisms = match key.key_algorithm {
@@ -655,11 +725,23 @@ extern "C" fn C_GetMechanismInfo(
     if pInfo.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    let key = if let Some(key) = TOKENS.get(slotID as usize) {
-        key
-    } else {
-        return CKR_SLOT_ID_INVALID;
+    let key = match TOKENS
+        .lock()
+        .expect("tokens lock is poisoned")
+        .as_ref()
+        .map(|tokens| tokens.get(slotID as usize).cloned())
+    {
+        Some(Some(token)) => token,
+        Some(None) => {
+            tracing::error!(slotID, "Caller provided invalid slot ID");
+            return CKR_SLOT_ID_INVALID;
+        }
+        None => {
+            tracing::error!("Cryptoki not initialized");
+            return CKR_CRYPTOKI_NOT_INITIALIZED;
+        }
     };
+
     let (min, max) = match key.key_algorithm {
         protocol::KeyAlgorithm::Rsa2K | protocol::KeyAlgorithm::Rsa4K => {
             if !RSA_PKCS_MECHANISMS.contains(&type_) {

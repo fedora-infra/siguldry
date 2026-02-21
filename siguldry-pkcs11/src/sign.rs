@@ -8,8 +8,8 @@ use cryptoki_sys::{
     CK_BYTE_PTR, CK_MECHANISM, CK_OBJECT_HANDLE, CK_RV, CK_SESSION_HANDLE, CK_ULONG, CKM_ECDSA,
     CKM_ECDSA_SHA3_256, CKM_ECDSA_SHA3_512, CKM_ECDSA_SHA256, CKM_ECDSA_SHA512,
     CKM_SHA3_256_RSA_PKCS, CKM_SHA3_512_RSA_PKCS, CKM_SHA256_RSA_PKCS, CKM_SHA512_RSA_PKCS,
-    CKR_ARGUMENTS_BAD, CKR_BUFFER_TOO_SMALL, CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR,
-    CKR_KEY_HANDLE_INVALID, CKR_MECHANISM_INVALID, CKR_OK, CKR_OPERATION_ACTIVE,
+    CKR_ARGUMENTS_BAD, CKR_BUFFER_TOO_SMALL, CKR_CRYPTOKI_NOT_INITIALIZED, CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR, CKR_KEY_HANDLE_INVALID, CKR_MECHANISM_INVALID, CKR_OK, CKR_OPERATION_ACTIVE,
     CKR_OPERATION_NOT_INITIALIZED, CKR_SESSION_HANDLE_INVALID,
 };
 
@@ -194,22 +194,22 @@ pub extern "C" fn C_SignFinal(
     };
 
     let digests = vec![(digest, data_hex)];
-    let signature = CLIENT
+    match CLIENT
         .lock()
+        .expect("client lock poisoned")
         .as_mut()
-        .expect("Client lock poisoned")
-        .sign_prehashed(session.key.name.clone(), digests);
-
-    match signature {
-        Ok(mut signature) => {
-            session.signature = signature.pop().and_then(|s| s.pkcs11_value());
+        .map(|client| client.sign_prehashed(session.key.name.clone(), digests))
+    {
+        Some(Ok(mut signatures)) => {
+            session.signature = signatures.pop().and_then(|s| s.pkcs11_value());
         }
-        Err(error) => {
+        Some(Err(error)) => {
             session.reset_signing_state();
             tracing::error!(?error, "Failed to sign data");
             return CKR_FUNCTION_FAILED;
         }
-    }
+        None => return CKR_CRYPTOKI_NOT_INITIALIZED,
+    };
 
     return_signature(session, pSignature, pulSignaturelen)
 }
@@ -293,21 +293,22 @@ pub extern "C" fn C_Sign(
         };
 
         let digests = vec![(digest, data_hex)];
-        let signature = CLIENT
+        match CLIENT
             .lock()
+            .expect("client lock poisoned")
             .as_mut()
-            .expect("Client lock poisoned")
-            .sign_prehashed(session.key.name.clone(), digests);
-        match signature {
-            Ok(mut signature) => {
-                session.signature = signature.pop().and_then(|s| s.pkcs11_value());
+            .map(|client| client.sign_prehashed(session.key.name.clone(), digests))
+        {
+            Some(Ok(mut signatures)) => {
+                session.signature = signatures.pop().and_then(|s| s.pkcs11_value());
             }
-            Err(error) => {
+            Some(Err(error)) => {
                 session.reset_signing_state();
                 tracing::error!(?error, "Failed to sign data");
                 return CKR_FUNCTION_FAILED;
             }
-        }
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED,
+        };
     }
 
     return_signature(session, pSignature, pulSignaturelen)

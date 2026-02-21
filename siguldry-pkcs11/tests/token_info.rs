@@ -27,12 +27,24 @@ fn initialize_module() -> anyhow::Result<Pkcs11> {
     Ok(pkcs11)
 }
 
-#[test]
-fn initialize_module_locking_ok() -> anyhow::Result<()> {
-    let pkcs11 = Pkcs11::new(module_path())?;
-    let args = CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK);
-    pkcs11.initialize(args)?;
-    pkcs11.finalize()?;
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn initialize_module_locking_ok() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    tokio::task::spawn_blocking(|| {
+        let pkcs11 = Pkcs11::new(module_path())?;
+        let args = CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK);
+        pkcs11.initialize(args)?;
+        pkcs11.finalize()?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+
+    instance.halt().await?;
 
     Ok(())
 }
@@ -64,36 +76,59 @@ fn initialize_module_all_flags() -> anyhow::Result<()> {
 // The module should initialize with empty flags as long as locking functions aren't provided.
 // cryptoki doesn't appear to support providing locking functions so we can't really test that,
 // unfortunately.
-#[test]
-fn initialize_module_empty_flags() -> anyhow::Result<()> {
-    let pkcs11 = Pkcs11::new(module_path())?;
-    let args = CInitializeArgs::new(CInitializeFlags::empty());
-    pkcs11.initialize(args)?;
-    pkcs11.finalize()?;
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn initialize_module_empty_flags() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    tokio::task::spawn_blocking(|| {
+        let pkcs11 = Pkcs11::new(module_path())?;
+        let args = CInitializeArgs::new(CInitializeFlags::empty());
+        pkcs11.initialize(args)?;
+        pkcs11.finalize()?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
 
+    instance.halt().await?;
     Ok(())
 }
 
-#[test]
-fn get_info() -> anyhow::Result<()> {
-    let pkcs11 = initialize_module()?;
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn get_info() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    tokio::task::spawn_blocking(|| {
+        let pkcs11 = initialize_module()?;
 
-    let info = pkcs11.get_library_info()?;
-    assert_eq!(
-        info.cryptoki_version().major(),
-        3,
-        "Major version 3 expected to be the default version"
-    );
-    assert_eq!(
-        info.cryptoki_version().minor(),
-        2,
-        "Minor version 2 expected to be the default version"
-    );
-    assert_eq!(info.manufacturer_id(), "Fedora Infrastructure");
-    assert_eq!(info.library_description(), "Siguldry PKCS#11 Library");
-    assert_eq!(info.library_version().major(), 1);
-    assert_eq!(info.library_version().minor(), 0);
+        let info = pkcs11.get_library_info()?;
+        assert_eq!(
+            info.cryptoki_version().major(),
+            3,
+            "Major version 3 expected to be the default version"
+        );
+        assert_eq!(
+            info.cryptoki_version().minor(),
+            2,
+            "Minor version 2 expected to be the default version"
+        );
+        assert_eq!(info.manufacturer_id(), "Fedora Infrastructure");
+        assert_eq!(info.library_description(), "Siguldry PKCS#11 Library");
+        assert_eq!(info.library_version().major(), 1);
+        assert_eq!(info.library_version().minor(), 0);
 
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+
+    instance.halt().await?;
     Ok(())
 }
 

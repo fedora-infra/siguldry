@@ -13,9 +13,9 @@ use crate::{SESSIONS, TOKENS};
 use cryptoki_sys::{
     CK_FLAGS, CK_NOTIFY, CK_OBJECT_HANDLE, CK_RV, CK_SESSION_HANDLE, CK_SESSION_HANDLE_PTR,
     CK_SESSION_INFO_PTR, CK_SLOT_ID, CKF_ASYNC_SESSION, CKF_SERIAL_SESSION, CKR_ARGUMENTS_BAD,
-    CKR_OK, CKR_SESSION_ASYNC_NOT_SUPPORTED, CKR_SESSION_COUNT, CKR_SESSION_HANDLE_INVALID,
-    CKR_SESSION_PARALLEL_NOT_SUPPORTED, CKR_SLOT_ID_INVALID, CKS_RO_PUBLIC_SESSION,
-    CKS_RO_USER_FUNCTIONS,
+    CKR_CRYPTOKI_NOT_INITIALIZED, CKR_OK, CKR_SESSION_ASYNC_NOT_SUPPORTED, CKR_SESSION_COUNT,
+    CKR_SESSION_HANDLE_INVALID, CKR_SESSION_PARALLEL_NOT_SUPPORTED, CKR_SLOT_ID_INVALID,
+    CKS_RO_PUBLIC_SESSION, CKS_RO_USER_FUNCTIONS,
 };
 
 #[derive(Debug)]
@@ -69,10 +69,21 @@ pub(crate) extern "C" fn C_OpenSession(
         return CKR_ARGUMENTS_BAD;
     }
 
-    let key = if let Some(key) = TOKENS.get(slotID as usize) {
-        key.clone()
-    } else {
-        return CKR_SLOT_ID_INVALID;
+    let key = match TOKENS
+        .lock()
+        .expect("tokens lock is poisoned")
+        .as_ref()
+        .map(|tokens| tokens.get(slotID as usize).cloned())
+    {
+        Some(Some(token)) => token,
+        Some(None) => {
+            tracing::error!(slotID, "Caller provided invalid slot ID");
+            return CKR_SLOT_ID_INVALID;
+        }
+        None => {
+            tracing::error!("Cryptoki not initialized");
+            return CKR_CRYPTOKI_NOT_INITIALIZED;
+        }
     };
 
     // For legacy reasons, the CKF_SERIAL_SESSION bit MUST always be set
@@ -94,7 +105,7 @@ pub(crate) extern "C" fn C_OpenSession(
                     slot_id: slotID,
                     objects: Object::from_key(key.clone()),
                     found_objects: None,
-                    key,
+                    key: key.clone(),
                     // TODO: need to track if a token is unlocked to set this correctly.
                     logged_in: false,
                     signing_state: None,
@@ -127,9 +138,23 @@ pub(crate) extern "C" fn C_CloseSession(hSession: CK_SESSION_HANDLE) -> CK_RV {
 
 #[instrument(ret)]
 pub(crate) extern "C" fn C_CloseAllSessions(slotID: CK_SLOT_ID) -> CK_RV {
-    if TOKENS.get(slotID as usize).is_none() {
-        return CKR_SLOT_ID_INVALID;
-    }
+    let key = match TOKENS
+        .lock()
+        .expect("tokens lock is poisoned")
+        .as_ref()
+        .map(|tokens| tokens.get(slotID as usize).cloned())
+    {
+        Some(Some(token)) => token,
+        Some(None) => {
+            tracing::error!(slotID, "Caller provided invalid slot ID");
+            return CKR_SLOT_ID_INVALID;
+        }
+        None => {
+            tracing::error!("Cryptoki not initialized");
+            return CKR_CRYPTOKI_NOT_INITIALIZED;
+        }
+    };
+    tracing::info!(key.name, "Closing all sessions for token");
 
     let sessions_handle = SESSIONS.clone();
     let mut sessions = sessions_handle.lock().expect("Session lock is poisoned");
