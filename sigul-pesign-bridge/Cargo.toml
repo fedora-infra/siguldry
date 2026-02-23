@@ -64,7 +64,7 @@ features = ["std", "registry", "fmt", "env-filter"]
 
 # Used for deserializing the configuration file
 [dependencies.toml]
-version = "0.9"
+version = "1.0"
 
 [dependencies.serde]
 version = "1.0.145"
