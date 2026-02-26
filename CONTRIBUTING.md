@@ -1,50 +1,53 @@
 # Contribution Guide
 
-Thanks for considering contributing to sigul-pesign-bridge, we really appreciate it!
+Thanks for considering contributing to Siguldry, we really appreciate it!
 
 ## Development Setup
 
 ### Rust
+
 To build and test this project, you will need a relatively recent version of
-[Rust](https://www.rust-lang.org/). The current required version is documented
-in the `Cargo.toml` file for each crate.
+[Rust](https://www.rust-lang.org/). The current required version is documented in the `Cargo.toml`
+
+The minimum supported Rust version tracks the latest toolchain available in Enterprise Linux
+releases. For example, when RHEL 10.1 was released, the MSRV was bumped from 1.84 to 1.88.
 
 ### System Dependencies
 
-A few dependencies from your distribution are also required. This is expected to run on Fedora or RHEL,
-although it may work elsewhere:
+A few dependencies from your distribution are also required to build all the crates and run the
+test suite. This is expected to run on Fedora or RHEL, although it should work elsewhere.
 
 ```bash
-sudo dnf install pesign sbsigntools openssl-devel
+dnf install -y \
+  capnproto \
+  clang \
+  kryoptic \
+  opensc \
+  openssl \
+  openssl-devel \
+  pesign \
+  pkcs11-provider \
+  pkg-config \
+  python3-devel \
+  sequoia-keystore-server \
+  sequoia-sq \
+  sqlite-devel
 ```
 
-Additionally, the CI is easiest to run with containers for the Sigul bridge and server:
+If you want to run the full test suite including the tests for migrating a Sigul database
+to Siguldry, you will also need podman and podman-compose to generate the test data:
 
 ```bash
-sudo dnf install podman podman-compose
+dnf install podman podman-compose
+cargo xtask generate-sigul-data
 ```
 
-### Integration Tests
-
-The integration tests use the Sigul server and Sigul bridge which can be tricky to set up. Fortunately,
-there's a container image (built from `devel/Containerfile.sigul`) to make things easier. TLS certificates
-for authenticating with the service as well as signing PE files are baked into the image. For convenience,
-these are also checked into the repository at `devel/creds/` by running `cargo xtask extract-keys` whenever
-a new image is built.
-
-#### Running tests
-
-Start the Sigul server and bridge by running the following from the repository root:
+Finally, the test suite runs via [nextest](https://nexte.st). While running with `cargo test`
+may work with a single test thread, this is not recommended or checked regularly:
 
 ```bash
-# Start the services
-podman compose up -d
-```
-
-Now we can run the tests:
-
-```bash
-cargo test
+cargo install --locked cargo-nextest
+cargo nextest run
 ```
 
 ## Licensing
