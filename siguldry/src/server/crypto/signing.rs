@@ -27,13 +27,13 @@ const OID_SHA3_512: ObjectIdentifier = oid!(2, 16, 840, 1, 101, 3, 4, 2, 10);
 
 /// Used for RSA PKCS1 v1.5 signatures.
 /// Reference: https://www.ietf.org/rfc/rfc8017.html#section-9.2
-#[derive(asn1::Asn1Write)]
+#[derive(asn1::Asn1Write, asn1::Asn1Read)]
 struct DigestInfo<'a> {
     digest_algorithm: AlgorithmIdentifier,
     digest: &'a [u8],
 }
 
-#[derive(asn1::Asn1Write)]
+#[derive(asn1::Asn1Write, asn1::Asn1Read)]
 struct AlgorithmIdentifier {
     algorithm: ObjectIdentifier,
     parameters: (),
@@ -58,6 +58,20 @@ fn encode_digest_info(algorithm: DigestAlgorithm, hash: &[u8]) -> anyhow::Result
 
     asn1::write_single(&digest_info)
         .map_err(|e| anyhow::anyhow!("Failed to encode DigestInfo: {e}"))
+}
+
+/// Decode a DER-encoded DigestInfo structure into the digest algorithm and digest itself.
+pub fn decode_digest_info(digest_info: &[u8]) -> anyhow::Result<(DigestAlgorithm, Vec<u8>)> {
+    let digest_info = asn1::parse_single::<DigestInfo<'_>>(digest_info)?;
+    let algorithm = match digest_info.digest_algorithm.algorithm {
+        OID_SHA256 => DigestAlgorithm::Sha256,
+        OID_SHA3_256 => DigestAlgorithm::Sha3_256,
+        OID_SHA512 => DigestAlgorithm::Sha512,
+        OID_SHA3_512 => DigestAlgorithm::Sha3_512,
+        _ => return Err(anyhow::anyhow!("Unknown digest algorithm in DigestInfo")),
+    };
+    let hash = digest_info.digest.to_vec();
+    Ok((algorithm, hash))
 }
 
 /// Sign a set of digests with a key stored in the database protected by a password.
@@ -190,12 +204,29 @@ mod tests {
 
     use anyhow::Result;
     use tempfile::TempDir;
+    use zerocopy::IntoBytes;
 
     use super::*;
     use crate::protocol::DigestAlgorithm;
     use crate::server::crypto;
     use crate::server::crypto::test_utils::setup_hsm;
     use crate::server::crypto::token::import_pkcs11_token;
+
+    #[test]
+    fn encode_decode_digest_info() -> Result<()> {
+        let algorithm = DigestAlgorithm::Sha256;
+        let hash = openssl::hash::hash(algorithm.into(), b"data")?;
+        let encoded = encode_digest_info(algorithm, &hash)?;
+        let (decoded_algorithm, decoded_hash) = decode_digest_info(&encoded)?;
+
+        assert_eq!(
+            algorithm, decoded_algorithm,
+            "Digest algorithm should match"
+        );
+        assert_eq!(hash.as_bytes(), &decoded_hash, "Digest should match");
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn sign_with_pkcs11_rsa_key() -> Result<()> {
