@@ -4,8 +4,13 @@
 use std::path::PathBuf;
 use std::{collections::HashMap, io::Write};
 
+use anyhow::Context;
 use bytes::Bytes;
+use cryptoki::context::Pkcs11;
+use cryptoki::session::UserType;
+use cryptoki::slot::Slot;
 use cryptoki::types::AuthPin;
+use openssl::pkey::PKey;
 use sequoia_openpgp::{
     KeyHandle,
     crypto::Password,
@@ -28,6 +33,22 @@ use crate::{
     protocol::{DigestAlgorithm, json::Signature},
     server::{Config, crypto, db},
 };
+
+type KeyMap = HashMap<String, UnlockedKey>;
+
+enum UnlockedKey {
+    Private {
+        key: PKey<openssl::pkey::Private>,
+        password: Password,
+    },
+    Pkcs11 {
+        // Used to track if we've already loaded the module
+        module: PathBuf,
+        pkcs11: Pkcs11,
+        slot: Slot,
+        pin: AuthPin,
+    },
+}
 
 /// The PKCS#11 bindings required to access keys, along with the PINs provided at service startup.
 /// This is redefined from [`Pkcs11Binding`] because it does need to serialize/deserialize the PIN.
@@ -249,7 +270,7 @@ pub async fn serve<
     // Keys that the client has unlocked are stored in this map of key names to key passwords.
     // A performance optimization might be to decrypt the key once; we should benchmark and
     // decide on that.
-    let mut key_passwords: HashMap<String, Password> = HashMap::new();
+    let mut key_passwords: KeyMap = HashMap::new();
     let (user, database_path, pkcs11_bindings) = tokio::select! {
         _ = halt_token.cancelled() => {
             tracing::info!("siguldry-helper received shut down signal");
@@ -376,7 +397,7 @@ pub async fn serve<
 #[instrument(skip_all, err, fields(key = key_name))]
 async fn unlock(
     conn: &mut SqliteConnection,
-    key_passwords: &mut HashMap<String, Password>,
+    key_passwords: &mut KeyMap,
     pkcs11_bindings: &[Pkcs11Binding],
     user: &db::User,
     key_name: String,
@@ -386,41 +407,107 @@ async fn unlock(
     let key_access = db::KeyAccess::get(conn, &key, user).await?;
     let password = crypto::binding::decrypt_key_password(
         pkcs11_bindings,
-        user_password,
+        user_password.clone(),
         &key_access.encrypted_passphrase,
     )
     .await?;
-    key_passwords.insert(key.name, password);
+    if let Some(token_id) = key.pkcs11_token_id {
+        let db_token = db::Pkcs11Token::get(conn, token_id).await?;
+        let pin = password
+            .map(|p| String::from_utf8(p.to_vec()))
+            .map(AuthPin::from)?;
+
+        let unlocked_key = if let Some(UnlockedKey::Pkcs11 {
+            module: _,
+            pkcs11,
+            slot: _,
+            pin: _,
+        }) = key_passwords.values().find(|k| match k {
+            UnlockedKey::Pkcs11 {
+                module,
+                pkcs11: _,
+                slot: _,
+                pin: _,
+            } => &db_token.module_path == module,
+            UnlockedKey::Private { .. } => false,
+        }) {
+            // This module has previously been loaded so we shouldn't re-initialize it
+            let slot = db_token.slot(pkcs11)?;
+            let session = pkcs11.open_ro_session(slot)?;
+            session
+                .login(cryptoki::session::UserType::User, Some(&pin))
+                .context("Failed to login to the PKCS#11 token")?;
+
+            UnlockedKey::Pkcs11 {
+                module: db_token.module_path,
+                pkcs11: pkcs11.clone(),
+                slot,
+                pin,
+            }
+        } else {
+            let pkcs11 = db_token.intialize()?;
+            let slot = db_token.slot(&pkcs11)?;
+            let session = pkcs11.open_ro_session(slot)?;
+            session
+                .login(cryptoki::session::UserType::User, Some(&pin))
+                .context("Failed to login to the PKCS#11 token")?;
+
+            UnlockedKey::Pkcs11 {
+                module: db_token.module_path,
+                pkcs11,
+                slot,
+                pin,
+            }
+        };
+
+        key_passwords.insert(key.name, unlocked_key);
+    } else {
+        let private_key = crypto::signing::openssl_private_key(
+            &key,
+            pkcs11_bindings,
+            user_password,
+            &key_access.encrypted_passphrase,
+        )
+        .await?;
+        key_passwords.insert(
+            key.name,
+            UnlockedKey::Private {
+                key: private_key,
+                password,
+            },
+        );
+    }
     return Ok(());
 }
 
 #[instrument(skip_all, err, fields(key = key_name))]
 async fn sign(
     conn: &mut SqliteConnection,
-    key_passwords: &mut HashMap<String, Password>,
+    key_passwords: &mut KeyMap,
     key_name: &str,
     digests: Vec<(DigestAlgorithm, String)>,
 ) -> anyhow::Result<Vec<Signature>> {
     let key = db::Key::get(conn, key_name).await?;
-    let password = key_passwords
+    let unlocked_key = key_passwords
         .get(key_name)
         .ok_or_else(|| anyhow::anyhow!("You need to unlock the key"))?;
 
-    let signatures = if let Some(token_id) = key.pkcs11_token_id {
-        // For PKCS#11 keys, fetch the token information and use the configured PIN
-        // TODO: don't initialize/uninitialize over and over, keep a session going
-        let token = db::Pkcs11Token::get(conn, token_id).await?;
-        let pkcs11 = token.intialize()?;
-        let pin = password
-            .map(|p| String::from_utf8(p.to_vec()))
-            .map(AuthPin::from)?;
-        let session = token.pkcs11_session(&pkcs11, &pin)?;
-        let result = crypto::signing::sign_with_pkcs11(&key, &session, digests);
-        pkcs11.finalize()?;
-        result?
-    } else {
-        crypto::signing::sign_with_softkey(&key, password, digests)?
-    };
+    let signatures = match unlocked_key {
+        UnlockedKey::Private {
+            key: private_key,
+            password: _,
+        } => crypto::signing::sign_with_softkey(&key, private_key, digests),
+        UnlockedKey::Pkcs11 {
+            module: _,
+            pkcs11,
+            slot,
+            pin,
+        } => {
+            let session = pkcs11.open_ro_session(*slot)?;
+            session.login(UserType::User, Some(pin))?;
+            crypto::signing::sign_with_pkcs11(&key, &session, digests)
+        }
+    }?;
 
     Ok(signatures)
 }
@@ -428,15 +515,24 @@ async fn sign(
 #[instrument(skip_all, err, fields(key = key_name))]
 async fn pgp_sign(
     conn: &mut SqliteConnection,
-    keystore: &HashMap<String, Password>,
+    keystore: &HashMap<String, UnlockedKey>,
     key_name: &str,
     signature_type: GpgSignatureType,
     blob: Vec<u8>,
 ) -> anyhow::Result<(Response, Vec<u8>)> {
     let key = db::Key::get(conn, key_name).await?;
-    let password = keystore
+    let unlocked_key = keystore
         .get(key_name)
         .ok_or_else(|| anyhow::anyhow!("Key must be unlocked before signing"))?;
+    let password = match unlocked_key {
+        UnlockedKey::Private { key: _, password } => Ok(password),
+        UnlockedKey::Pkcs11 {
+            module: _,
+            pkcs11: _,
+            slot: _,
+            pin: _,
+        } => Err(anyhow::anyhow!("Wrong key type for this call")),
+    }?;
     let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material)?;
     let policy = &StandardPolicy::new();
     let signing_key = cert

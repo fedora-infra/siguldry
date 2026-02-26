@@ -8,7 +8,7 @@ use cryptoki::{
     context::{CInitializeArgs, CInitializeFlags, Pkcs11},
     object::{Attribute, ObjectClass, ObjectHandle},
     session::Session,
-    types::AuthPin,
+    slot::Slot,
 };
 use sqlx::{Pool, Sqlite, SqliteConnection, SqlitePool, sqlite::SqliteConnectOptions};
 use tracing::instrument;
@@ -314,13 +314,9 @@ impl Pkcs11Token {
         Ok(pkcs11)
     }
 
-    /// Open a read-only session with the token.
-    ///
-    /// The caller must have initialized the provided `pkcs11` module.
-    #[instrument(skip_all)]
-    pub fn pkcs11_session(&self, pkcs11: &Pkcs11, token_pin: &AuthPin) -> anyhow::Result<Session> {
-        // Find the slot with our token by matching serial number
-        let slot = pkcs11
+    /// Find the Slot that contains the token.
+    pub fn slot(&self, pkcs11: &Pkcs11) -> anyhow::Result<Slot> {
+        pkcs11
             .get_slots_with_token()?
             .into_iter()
             .find(|slot| {
@@ -334,15 +330,7 @@ impl Pkcs11Token {
                     "Could not find PKCS#11 token with serial number {}",
                     self.serial_number
                 )
-            })?;
-
-        let session = pkcs11
-            .open_ro_session(slot)
-            .context("Failed to open read-only session with token")?;
-        session
-            .login(cryptoki::session::UserType::User, Some(token_pin))
-            .context("Failed to login to the PKCS#11 token")?;
-        Ok(session)
+            })
     }
 }
 
