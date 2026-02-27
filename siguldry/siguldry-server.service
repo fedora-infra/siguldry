@@ -55,7 +55,7 @@ RemoveIPC=true
 ReadOnlyPaths=/
 ReadWritePaths=/var /run
 NoExecPaths=/
-ExecPaths=/usr/bin/siguldry-server /usr/bin/openssl /usr/libexec/sequoia-keystore /usr/lib /usr/lib64
+ExecPaths=/usr/bin/siguldry-server /usr/lib /usr/lib64
 
 # The service must be able to open TCP connections to the Siguldry bridge.
 # It also uses Unix sockets to communicate with the signer via socket activation.
