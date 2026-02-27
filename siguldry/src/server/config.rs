@@ -152,11 +152,7 @@ impl Default for Config {
                 certificate: PathBuf::from("siguldry.server.certificate.pem"),
                 ca_certificate: PathBuf::from("siguldry.ca_certificate.pem"),
             },
-            pkcs11_bindings: vec![Pkcs11Binding {
-                certificate: PathBuf::from("/etc/siguldry/public_key.pem"),
-                private_key: Some("pkcs11:serial=abc123;id=%01;type=private".to_string()),
-                pin: None,
-            }],
+            pkcs11_bindings: vec![],
             certificate_subject: Default::default(),
         }
     }
