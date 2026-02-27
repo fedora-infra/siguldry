@@ -28,14 +28,15 @@ use cryptoki_sys::{
     CK_INTERFACE_PTR_PTR, CK_MECHANISM_INFO, CK_MECHANISM_TYPE, CK_OBJECT_HANDLE, CK_RV,
     CK_SESSION_HANDLE, CK_SLOT_ID, CK_SLOT_INFO_PTR, CK_TOKEN_INFO_PTR, CK_ULONG, CK_ULONG_PTR,
     CK_USER_TYPE, CK_UTF8CHAR, CK_UTF8CHAR_PTR, CK_VERSION, CK_VERSION_PTR, CKF_LOGIN_REQUIRED,
-    CKF_SIGN, CKF_TOKEN_INITIALIZED, CKF_TOKEN_PRESENT, CKF_USER_PIN_INITIALIZED, CKM_ECDSA,
-    CKM_ECDSA_SHA3_256, CKM_ECDSA_SHA3_512, CKM_ECDSA_SHA256, CKM_ECDSA_SHA512, CKM_RSA_PKCS,
-    CKM_SHA3_256_RSA_PKCS, CKM_SHA3_512_RSA_PKCS, CKM_SHA256_RSA_PKCS, CKM_SHA512_RSA_PKCS,
-    CKR_ARGUMENTS_BAD, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID, CKR_BUFFER_TOO_SMALL,
-    CKR_CANT_LOCK, CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_CRYPTOKI_NOT_INITIALIZED,
-    CKR_FUNCTION_FAILED, CKR_MECHANISM_INVALID, CKR_NEED_TO_CREATE_THREADS,
-    CKR_OBJECT_HANDLE_INVALID, CKR_OK, CKR_OPERATION_ACTIVE, CKR_OPERATION_NOT_INITIALIZED,
-    CKR_PIN_INCORRECT, CKR_SESSION_HANDLE_INVALID, CKR_SLOT_ID_INVALID, CKR_USER_ALREADY_LOGGED_IN,
+    CKF_PROTECTED_AUTHENTICATION_PATH, CKF_SIGN, CKF_TOKEN_INITIALIZED, CKF_TOKEN_PRESENT,
+    CKF_USER_PIN_INITIALIZED, CKM_ECDSA, CKM_ECDSA_SHA3_256, CKM_ECDSA_SHA3_512, CKM_ECDSA_SHA256,
+    CKM_ECDSA_SHA512, CKM_RSA_PKCS, CKM_SHA3_256_RSA_PKCS, CKM_SHA3_512_RSA_PKCS,
+    CKM_SHA256_RSA_PKCS, CKM_SHA512_RSA_PKCS, CKR_ARGUMENTS_BAD, CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID, CKR_BUFFER_TOO_SMALL, CKR_CANT_LOCK,
+    CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_CRYPTOKI_NOT_INITIALIZED, CKR_FUNCTION_FAILED,
+    CKR_MECHANISM_INVALID, CKR_NEED_TO_CREATE_THREADS, CKR_OBJECT_HANDLE_INVALID, CKR_OK,
+    CKR_OPERATION_ACTIVE, CKR_OPERATION_NOT_INITIALIZED, CKR_PIN_INCORRECT,
+    CKR_SESSION_HANDLE_INVALID, CKR_SLOT_ID_INVALID, CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN, CKR_USER_TYPE_INVALID, CKU_USER,
 };
 
@@ -577,18 +578,34 @@ extern "C" fn C_GetTokenInfo(slotID: CK_SLOT_ID, pInfo: CK_TOKEN_INFO_PTR) -> CK
         label.push(' ');
     }
 
+    // Tokens are always initialized and have a PIN set up. Login unlocks the key in Siguldry.
+    // The client proxy can optionally be configured to unlock one or more keys automatically,
+    // which enables the protected authentication path. In that scenario, the application logs
+    // in without a PIN and, if the token is unlocked via the proxy, can proceed.
+    let flags = match CLIENT
+        .lock()
+        .expect("client lock poisoned")
+        .as_mut()
+        .map(|client| client.is_unlocked(token.name.clone()))
+    {
+        Some(Ok(true)) => {
+            CKF_TOKEN_INITIALIZED
+                | CKF_LOGIN_REQUIRED
+                | CKF_USER_PIN_INITIALIZED
+                | CKF_PROTECTED_AUTHENTICATION_PATH
+        }
+        Some(Ok(false)) => CKF_TOKEN_INITIALIZED | CKF_LOGIN_REQUIRED | CKF_USER_PIN_INITIALIZED,
+        Some(Err(error)) => {
+            tracing::error!(?error, "Failed to check if the key is unlocked");
+            return CKR_FUNCTION_FAILED;
+        }
+        None => return CKR_CRYPTOKI_NOT_INITIALIZED,
+    };
+
     // Safety:
     // pInfo is a non-NULL pointer and per the specification must point to a CK_TOKEN_INFO struct.
     unsafe {
-        // Tokens are always initialized and have a PIN set up. Login unlocks the key in Siguldry.
-        // The client proxy can optionally be configured to unlock one or more keys automatically,
-        // which enables the protected authentication path. In that scenario, the application logs
-        // in without a PIN and, if the token is unlocked via the proxy, can proceed.
-        //
-        // Once we have the ability to see if a key is unlocked via the proxy, add
-        // CKF_PROTECTED_AUTHENTICATION_PATH to this list to support the protected authentication
-        // path. A change will also be needed in C_Login.
-        (*pInfo).flags = CKF_TOKEN_INITIALIZED | CKF_LOGIN_REQUIRED | CKF_USER_PIN_INITIALIZED;
+        (*pInfo).flags = flags;
         (*pInfo).firmwareVersion = CK_VERSION { major: 1, minor: 0 };
         (*pInfo).hardwareVersion = CK_VERSION { major: 1, minor: 0 };
         (*pInfo).manufacturerID = *b"Fedora                          ";
@@ -661,9 +678,31 @@ extern "C" fn C_Login(
     } else {
         // Passing a null pointer for pPin indicates the protected authentication path is being used.
         // This is supported in Siguldry by configuring the client proxy to unlock the necessary keys.
-        // For now, we'll just assume the user set this up correctly.
-        //
-        // TODO: Add an is-unlocked command to Siguldry to ensure that's the case.
+        // If the key has been been configured to unlock, any attempt to do so will return okay without
+        // actually sending the request through, so we pass the empty string here.
+        match CLIENT
+            .lock()
+            .expect("client lock poisoned")
+            .as_mut()
+            .map(|client| client.is_unlocked(session.key.name.clone()))
+        {
+            Some(Ok(true)) => tracing::info!(
+                key = session.key.name,
+                "Protected authentication path succeeded"
+            ),
+            Some(Ok(false)) => {
+                tracing::info!(
+                    key = session.key.name,
+                    "Protected authentication path failed; siguldry proxy not configured to auto-unlock key"
+                );
+                return CKR_PIN_INCORRECT;
+            }
+            Some(Err(error)) => {
+                tracing::error!(?error, "Failed to check if the key is unlocked");
+                return CKR_FUNCTION_FAILED;
+            }
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED,
+        }
         tracing::info!(
             key = session.key.name,
             "Protected authentication path specified; configure the siguldry client to unlock key"

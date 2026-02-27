@@ -108,6 +108,18 @@ pub struct Key {
     passphrase: Password,
 }
 
+impl Key {
+    // Useful for tests that serialize entries out.
+    #[doc(hidden)]
+    pub fn private_new(key_name: String, passphrase_path: PathBuf) -> Self {
+        Self {
+            key_name,
+            passphrase_path,
+            passphrase: "".into(),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for Key {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -392,33 +404,46 @@ impl Client {
         }
     }
 
-    // TODO return opaque handle to provide to gpg_sign etc
+    /// Returns true if the key is unlocked.
+    ///
+    /// Note that if another thread has requested that the key be unlocked, but it has not yet
+    /// succeeded, this will return false.
+    pub async fn is_unlocked(&self, key: String) -> bool {
+        self.keys.lock().await.iter().any(|k| k.key_name == key)
+    }
+
     pub async fn unlock(&self, key: String, password: String) -> Result<(), ClientError> {
         // This key has already been unlocked
-        let mut keys = self.keys.lock().await;
-        if keys.iter().any(|k| k.key_name == key) {
+        if self.keys.lock().await.iter().any(|k| k.key_name == key) {
             return Ok(());
         }
 
-        // Ensure the key is unlocked again on reconnection.
-        // If this is the first call issued it'll result in the call to unlock the key twice
-        // since starting the connection pull the key list to unlock from this vec,
-        // but that's not a huge deal.
-        keys.push(Key {
-            key_name: key.clone(),
-            passphrase_path: PathBuf::new(),
-            passphrase: password.clone().into(),
-        });
-        drop(keys);
-
         let request = Request {
-            message: protocol::json::Request::Unlock { key, password },
+            message: protocol::json::Request::Unlock {
+                key: key.clone(),
+                password: password.clone(),
+            },
             binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;
         match response.json {
-            Response::Unlock {} => Ok(()),
+            Response::Unlock {} => {
+                // Ensure the key is unlocked again on reconnection.
+                // We dropped the lock since reconnecting_send might need to access the key list.
+                // We'll assume that in the race to reacquire the lock the password hasn't changed
+                // so it doesn't matter if someone else added the key to the list.
+                let mut keys = self.keys.lock().await;
+                if !keys.iter().any(|k| k.key_name == key) {
+                    keys.push(Key {
+                        key_name: key,
+                        passphrase_path: PathBuf::new(),
+                        passphrase: password.into(),
+                    });
+                }
+
+                Ok(())
+            }
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }

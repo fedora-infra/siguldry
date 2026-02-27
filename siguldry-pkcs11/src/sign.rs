@@ -196,15 +196,14 @@ pub extern "C" fn C_SignFinal(
         }
     };
 
-    let digests = vec![(digest, data_hex)];
     match CLIENT
         .lock()
         .expect("client lock poisoned")
         .as_mut()
-        .map(|client| client.sign_prehashed(session.key.name.clone(), digests))
+        .map(|client| client.sign(session.key.name.clone(), digest, data_hex))
     {
-        Some(Ok(mut signatures)) => {
-            session.signature = signatures.pop().and_then(|s| s.pkcs11_value());
+        Some(Ok(signature)) => {
+            session.signature = signature.pkcs11_value();
         }
         Some(Err(error)) => {
             session.reset_signing_state();
@@ -307,15 +306,14 @@ pub extern "C" fn C_Sign(
             (algorithm, data_hex)
         };
 
-        let digests = vec![(digest_algorithm, data_hex)];
         match CLIENT
             .lock()
             .expect("client lock poisoned")
             .as_mut()
-            .map(|client| client.sign_prehashed(session.key.name.clone(), digests))
+            .map(|client| client.sign(session.key.name.clone(), digest_algorithm, data_hex))
         {
-            Some(Ok(mut signatures)) => {
-                session.signature = signatures.pop().and_then(|s| s.pkcs11_value());
+            Some(Ok(signature)) => {
+                session.signature = signature.pkcs11_value();
             }
             Some(Err(error)) => {
                 session.reset_signing_state();

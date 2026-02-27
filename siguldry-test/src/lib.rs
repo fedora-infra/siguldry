@@ -159,6 +159,8 @@ pub mod keys {
 #[derive(Default)]
 pub struct InstanceBuilder {
     creds: Option<Creds>,
+    // If true, any keys added will be configured to unlock automatically with the client
+    auto_unlock_keys: bool,
     // If enabled, the gpg keys will use v6 keys.
     with_gpg_rfc9580_keys: bool,
     with_gpg_key: bool,
@@ -182,6 +184,12 @@ impl InstanceBuilder {
     /// Use pre-generated credentials instead of creating new ones.
     pub fn with_creds(mut self, creds: Creds) -> Self {
         self.creds = Some(creds);
+        self
+    }
+
+    /// Unlock any keys automatically in the client.
+    pub fn auto_unlock_keys(mut self) -> Self {
+        self.auto_unlock_keys = true;
         self
     }
 
@@ -390,6 +398,7 @@ impl InstanceBuilder {
             None,
         )?;
 
+        let mut maybe_auto_unlock = vec![];
         if let Some(answers) = &self.with_sigul_import {
             Self::import_sigul_data(&server_bin, tempdir.path(), &server_config_file, answers)?;
         } else {
@@ -422,6 +431,7 @@ impl InstanceBuilder {
                     ],
                     Some(&format!("{}\n", keys::GPG_KEY_PASSWORD)),
                 )?;
+                maybe_auto_unlock.push((keys::GPG_KEY_NAME, keys::GPG_KEY_PASSWORD));
             }
 
             if self.with_gpg_ec_key {
@@ -442,18 +452,22 @@ impl InstanceBuilder {
                     ],
                     Some(&format!("{}\n", keys::GPG_EC_KEY_PASSWORD)),
                 )?;
+                maybe_auto_unlock.push((keys::GPG_EC_KEY_NAME, keys::GPG_EC_KEY_PASSWORD));
             }
 
             if self.with_ca_key {
                 Self::create_ca_key(&server_bin, self.with_pkcs11_binding, &server_config_file)?;
+                maybe_auto_unlock.push((keys::CA_KEY_NAME, keys::CA_KEY_PASSWORD));
             }
 
             if let Some((pkcs11, slot, user_pin)) = pkcs11 {
                 if self.with_hsm_rsa_key {
                     Self::create_hsm_rsa_key(&pkcs11, slot, &user_pin)?;
+                    maybe_auto_unlock.push((keys::HSM_RSA_KEY_NAME, keys::HSM_ACCESS_PASSWORD));
                 }
                 if self.with_hsm_ec_key {
                     Self::create_hsm_ec_key(&pkcs11, slot, &user_pin)?;
+                    maybe_auto_unlock.push((keys::HSM_EC_KEY_NAME, keys::HSM_ACCESS_PASSWORD));
                 }
 
                 Self::run_server_command(
@@ -478,10 +492,13 @@ impl InstanceBuilder {
 
             if self.with_codesigning_key {
                 Self::create_codesigning_key(&server_bin, &server_config_file)?;
+                maybe_auto_unlock
+                    .push((keys::CODESIGNING_KEY_NAME, keys::CODESIGNING_KEY_PASSWORD));
             }
 
             if self.with_ec_key {
                 Self::create_ec_key(&server_bin, &server_config_file)?;
+                maybe_auto_unlock.push((keys::EC_KEY_NAME, keys::EC_KEY_PASSWORD));
             }
         }
 
@@ -512,15 +529,31 @@ impl InstanceBuilder {
         let server = server::service::Server::new(server_config).await?;
         let server = server.run();
 
+        let mut keys = vec![];
+        if self.auto_unlock_keys {
+            for (key, password) in maybe_auto_unlock {
+                let password_path = tempdir
+                    .path()
+                    .join("creds")
+                    .join(format!("{}_password", key));
+                std::fs::write(&password_path, format!("{}\n", password))?;
+                keys.push(client::Key::private_new(key.to_string(), password_path));
+            }
+        }
+
         let client_config = client::Config {
             server_hostname: server_hostname.to_string(),
             bridge_hostname: bridge_hostname.to_string(),
             bridge_port: bridge.client_port(),
             credentials: creds.client.clone(),
+            keys,
             ..Default::default()
         };
         let client_config_file = tempdir.path().join("client.toml");
+        // round-trip the config to trigger loading key passwords; this is silly and gross.
         std::fs::write(&client_config_file, toml::to_string_pretty(&client_config)?)?;
+        let client_config: client::Config =
+            toml::from_str(&std::fs::read_to_string(&client_config_file)?)?;
         let client = client::Client::new(client_config)?;
 
         let client_proxy = if self.with_client_proxy {

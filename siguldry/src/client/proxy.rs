@@ -13,17 +13,47 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
+use crate::protocol::Key;
+use crate::protocol::json::Signature;
 use crate::{
     client::Client,
     ipc_common::IpcClient,
     protocol::{self, DigestAlgorithm},
 };
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Request {
+    ListKeys {},
+    Unlock {
+        key: String,
+        password: String,
+    },
+    IsUnlocked {
+        key: String,
+    },
+    Sign {
+        key: String,
+        algorithm: DigestAlgorithm,
+        digest: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Response {
+    ListKeys { keys: Vec<Key> },
+    Unlock {},
+    IsUnlocked { unlocked: bool },
+    Sign { signature: Signature },
+}
 
 pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     client: Client,
@@ -48,33 +78,32 @@ pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             }
         };
 
-        let request: protocol::json::Request = serde_json::from_str(&line)?;
+        let request: Request = serde_json::from_str(&line)?;
         let response = match request {
-            protocol::json::Request::WhoAmI {} => {
-                let user = client.who_am_i().await?;
-                protocol::json::Response::WhoAmI { user }
-            }
-            protocol::json::Request::ListUsers {} => {
-                let users = client.list_users().await?;
-                protocol::json::Response::ListUsers { users }
-            }
-            protocol::json::Request::ListKeys {} => {
+            Request::ListKeys {} => {
                 let keys = client.list_keys().await?;
-                protocol::json::Response::ListKeys { keys }
+                Response::ListKeys { keys }
             }
-            protocol::json::Request::Unlock { key, password } => {
+            Request::Unlock { key, password } => {
                 client.unlock(key, password).await?;
-                protocol::json::Response::Unlock {}
+                Response::Unlock {}
             }
-            protocol::json::Request::SignPrehashed { key, digests } => {
-                let signatures = client.sign_prehashed(key, digests).await?;
-                protocol::json::Response::SignPrehashed { signatures }
+            Request::IsUnlocked { key } => Response::IsUnlocked {
+                unlocked: client.is_unlocked(key).await,
+            },
+            Request::Sign {
+                key,
+                algorithm,
+                digest,
+            } => {
+                let digests = vec![(algorithm, digest)];
+                let signature = client
+                    .sign_prehashed(key, digests)
+                    .await?
+                    .pop()
+                    .ok_or_else(|| anyhow::anyhow!("Response contained no signature"))?;
+                Response::Sign { signature }
             }
-            protocol::json::Request::GetKey { key } => {
-                let key = client.get_key(key).await?;
-                protocol::json::Response::GetKey { key }
-            }
-            _other => protocol::json::Response::Unsupported,
         };
         let mut response = serde_json::to_string(&response)?;
         response.push('\n');
@@ -97,10 +126,7 @@ pub struct ProxyClient {
     request_tx: UnboundedSender<ChannelRequest>,
 }
 
-type ChannelRequest = (
-    protocol::json::Request,
-    oneshot::Sender<anyhow::Result<serde_json::Value>>,
-);
+type ChannelRequest = (Request, oneshot::Sender<anyhow::Result<Response>>);
 
 impl ProxyClient {
     #[instrument]
@@ -116,7 +142,10 @@ impl ProxyClient {
                     let mut client = IpcClient::new(&socket_path).await?;
                     tracing::info!(?socket_path, "Proxy client connected");
                     while let Some((request, response_tx)) = request_rx.recv().await {
-                        let response = client.request(&request, None).await;
+                        let response = client.request(&request, None).await.and_then(|v| {
+                            serde_json::from_value(v)
+                                .map_err(|_| anyhow::anyhow!("Can't deserialize proxy response"))
+                        });
                         let _ = response_tx.send(response);
                     }
 
@@ -141,46 +170,61 @@ impl ProxyClient {
 
     #[instrument(skip_all)]
     pub fn list_keys(&mut self) -> anyhow::Result<Vec<protocol::Key>> {
-        let request = protocol::json::Request::ListKeys {};
+        let request = Request::ListKeys {};
         let (response_tx, response_rx) = oneshot::channel();
         self.request_tx.send((request, response_tx))?;
         let response = response_rx.blocking_recv()??;
-        let response: protocol::json::Response = serde_json::from_value(response)?;
 
         match response {
-            protocol::json::Response::ListKeys { keys } => Ok(keys),
+            Response::ListKeys { keys } => Ok(keys),
             unexpected => Err(anyhow::anyhow!("Unexpected response: {:?}", unexpected)),
         }
     }
 
     #[instrument(skip_all)]
     pub fn unlock(&mut self, key: String, password: String) -> anyhow::Result<()> {
-        let request = protocol::json::Request::Unlock { key, password };
+        let request = Request::Unlock { key, password };
         let (response_tx, response_rx) = oneshot::channel();
         self.request_tx.send((request, response_tx))?;
         let response = response_rx.blocking_recv()??;
-        let response: protocol::json::Response = serde_json::from_value(response)?;
 
         match response {
-            protocol::json::Response::Unlock {} => Ok(()),
+            Response::Unlock {} => Ok(()),
             unexpected => Err(anyhow::anyhow!("Unexpected response: {:?}", unexpected)),
         }
     }
 
     #[instrument(skip_all)]
-    pub fn sign_prehashed(
-        &mut self,
-        key: String,
-        digests: Vec<(DigestAlgorithm, String)>,
-    ) -> anyhow::Result<Vec<protocol::json::Signature>> {
-        let request = protocol::json::Request::SignPrehashed { key, digests };
+    pub fn is_unlocked(&mut self, key: String) -> anyhow::Result<bool> {
+        let request = Request::IsUnlocked { key };
         let (response_tx, response_rx) = oneshot::channel();
         self.request_tx.send((request, response_tx))?;
         let response = response_rx.blocking_recv()??;
-        let response: protocol::json::Response = serde_json::from_value(response)?;
 
         match response {
-            protocol::json::Response::SignPrehashed { signatures } => Ok(signatures),
+            Response::IsUnlocked { unlocked } => Ok(unlocked),
+            unexpected => Err(anyhow::anyhow!("Unexpected response: {:?}", unexpected)),
+        }
+    }
+
+    #[instrument(skip_all)]
+    pub fn sign(
+        &mut self,
+        key: String,
+        algorithm: DigestAlgorithm,
+        digest: String,
+    ) -> anyhow::Result<protocol::json::Signature> {
+        let request = Request::Sign {
+            key,
+            algorithm,
+            digest,
+        };
+        let (response_tx, response_rx) = oneshot::channel();
+        self.request_tx.send((request, response_tx))?;
+        let response = response_rx.blocking_recv()??;
+
+        match response {
+            Response::Sign { signature } => Ok(signature),
             unexpected => Err(anyhow::anyhow!("Unexpected response: {:?}", unexpected)),
         }
     }

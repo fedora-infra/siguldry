@@ -701,3 +701,98 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
     instance.halt().await?;
     Ok(())
 }
+
+// Test that if a key has been configured to be auto-unlocked by the proxy
+// it is marked wit the CKF_PROTECTED_AUTHENTICATION_PATH flag and works without a PIN.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn sign_protected_authentication_path() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .auto_unlock_keys()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let expected_pubkey = instance
+        .client
+        .get_key(keys::CODESIGNING_KEY_NAME.to_string())
+        .await?;
+    let expected_pubkey_der =
+        openssl::rsa::Rsa::public_key_from_pem(expected_pubkey.public_key.as_bytes())?
+            .public_key_to_der()?;
+
+    let (pubkey, signature) = tokio::task::spawn_blocking(move || {
+        let pkcs11 = initialize_module()?;
+        let slots = pkcs11.get_all_slots()?;
+        let slot = slots
+            .iter()
+            .find(|slot| {
+                if let Ok(info) = pkcs11.get_slot_info(**slot)
+                    && info.slot_description() == keys::CODESIGNING_KEY_NAME
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let token = pkcs11.get_token_info(*slot)?;
+        assert!(token.protected_authentication_path(), "Key is configured to auto-unlock but isn't marked with protected authentication path flag");
+
+        let session = pkcs11.open_ro_session(*slot)?;
+        session.login(UserType::User, None)?;
+        let mut key = session.find_objects(&[Attribute::Class(ObjectClass::PRIVATE_KEY)])?;
+        assert_eq!(
+            key.len(),
+            1,
+            "Each slot is expected to contain a single private key"
+        );
+        let key = key.pop().unwrap();
+
+        let mut pubkey_object =
+            session.find_objects(&[Attribute::Class(ObjectClass::PUBLIC_KEY)])?;
+        assert_eq!(
+            pubkey_object.len(),
+            1,
+            "Each slot is expected to contain a single public key"
+        );
+        let pubkey_object = pubkey_object.pop().unwrap();
+        let pubkey_attribute = session
+            .get_attributes(pubkey_object, &[AttributeType::PublicKeyInfo])?
+            .pop()
+            .expect("Missing PublicKeyInfo attribute");
+        let pubkey = match pubkey_attribute {
+            Attribute::PublicKeyInfo(der) => der,
+            attr => panic!("Got attribute {attr:?} instead of PublicKeyInfo"),
+        };
+
+        let signature = session.sign(&Mechanism::Sha256RsaPkcs, key, data)?;
+        Ok::<_, anyhow::Error>((pubkey, signature))
+    })
+    .await??;
+
+    assert_eq!(pubkey, expected_pubkey_der);
+    let pubkey_path = instance.state_dir.path().join("codesigning.der");
+    std::fs::write(&pubkey_path, &pubkey)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, &signature)?;
+    let data_path = instance.state_dir.path().join("data");
+    std::fs::write(&data_path, data)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("dgst")
+        .arg("-sha256")
+        .arg("-verify")
+        .arg(pubkey_path)
+        .arg("-signature")
+        .arg(sig_path)
+        .arg(data_path)
+        .output()
+        .await?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!("Verified OK\n", stdout);
+
+    Ok(())
+}

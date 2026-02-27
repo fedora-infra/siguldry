@@ -820,13 +820,11 @@ async fn client_proxy_prehashed_signature() -> anyhow::Result<()> {
             keys::EC_KEY_NAME.to_string(),
             keys::EC_KEY_PASSWORD.to_string(),
         )?;
-        let signature = client_proxy
-            .sign_prehashed(
-                keys::EC_KEY_NAME.to_string(),
-                vec![(DigestAlgorithm::Sha256, data_hex)],
-            )?
-            .pop()
-            .unwrap();
+        let signature = client_proxy.sign(
+            keys::EC_KEY_NAME.to_string(),
+            DigestAlgorithm::Sha256,
+            data_hex,
+        )?;
         Ok::<_, anyhow::Error>(signature)
     })
     .await??;
