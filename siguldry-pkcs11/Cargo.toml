@@ -75,7 +75,7 @@ features = ["std", "registry", "fmt", "env-filter"]
 [dev-dependencies]
 anyhow = "1"
 tempfile = "3"
-toml = "0.9"
+toml = "1.0"
 
 [dev-dependencies.tokio-util]
 version = "0.7"
