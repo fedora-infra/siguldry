@@ -4,24 +4,21 @@
 /*!
 # Siguldry
 
-Siguldry is (currently) an experimental replacement for Fedora's software signing service,
-[Sigul][1]. It is heavily inspired by Sigul, but includes a few protocol changes based on how
-Sigul is currently used in Fedora, which is significantly different from how it was originally
-envisioned when Sigul was designed.
+Siguldry is a replacement for Fedora's software signing service, [Sigul][1]. It is heavily inspired
+by Sigul, but includes a few protocol changes based on how Sigul is currently used in Fedora, which
+is significantly different from how it was originally envisioned when Sigul was designed.
 
-The key differences are that unlike Sigul, all client-server communication happens in the nested TLS
-session, and as such, it is no longer possible to mix traffic to the inner and outer TLS sessions:
-after the protocol header is sent to the bridge, all traffic must be sent via the inner session.
+In addition to the protocol level change, Siguldry also supports a greatly reduced set of commands.
 
-In addition to the protocol level change, Siguldry also supports a slightly different set of
-commands.
+<div class="warning">This crate is still under active development and there will be several more
+rounds of breaking changes to the Rust API before a 1.0 release is made. Command-line interfaces are
+expected to remain stable.</div>
 
 ## Components
 
 The service includes three components. The first part, the server, is responsible for keeping the
-signing keys safe and for servicing client requests for signatures. The server is designed such
-that the host firewall can drop all incoming traffic (assuming there's out-of-band management
-available). It does this by connecting to the second component, the bridge.
+signing keys safe and for servicing client requests for signatures. The server does not listen on
+any network interfaces and will only send outgoing TCP connections to the configured bridge.
 
 The bridge is a proxy. It accepts connections from servers and clients, which are both
 authenticated using mutual TLS certificates, and then ferries client and server traffic between the
@@ -29,14 +26,11 @@ two connections. This ensures only clients with valid TLS certificates can even 
 connection to the server.
 
 The final component is the client which lets users request signatures from the server. It is
-intended to be used in a larger application which handles content-specific details, like extracting
-RPM package headers for signing.
+recommended that end users make use of the `libsiguldry_pkcs11.so` PKCS#11 module provided by the
+[siguldry-pkcs11][2] crate for signing needs rather than using the client directly.
 
 Additionally, this crate provides a legacy [Sigul][1] client that is compatible with version
 1.2+.
-
-<div class="warning">This crate is still under active development and there will be several more
-rounds API-breaking changes before a 1.0 release is made.</div>
 
 ## Crate features
 
@@ -52,6 +46,7 @@ By default, the server, bridge, and client for Siguldry along with their CLIs is
   Include the client compatible with Sigul 1.2. This is not enabled by default.
 
 [1]: https://pagure.io/sigul
+[2]: https://crates.io/crates/siguldry-pkcs11
 */
 
 use tokio::signal::unix::{SignalKind, signal};
