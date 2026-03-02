@@ -53,7 +53,7 @@ RemoveIPC=true
 
 # Restrict write-able and executable filesystem locations
 ReadOnlyPaths=/
-ReadWritePaths=/var /run
+ReadWritePaths=/run
 NoExecPaths=/
 ExecPaths=/usr/bin/siguldry-server /usr/lib /usr/lib64
 
