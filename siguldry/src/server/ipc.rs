@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use crate::error::ServerError;
 use crate::ipc_common::IpcClient;
-use crate::protocol::{self, GpgSignatureType};
+use crate::protocol::{self, PgpSignatureType};
 use crate::server::config::Pkcs11Binding;
 use crate::{
     protocol::{DigestAlgorithm, json::Signature},
@@ -91,7 +91,7 @@ enum Request {
     },
     PgpSign {
         key: String,
-        signature_type: GpgSignatureType,
+        signature_type: PgpSignatureType,
         payload_size: usize,
     },
 }
@@ -214,7 +214,7 @@ impl Client {
     pub(crate) async fn pgp_sign_request(
         &mut self,
         key: String,
-        signature_type: GpgSignatureType,
+        signature_type: PgpSignatureType,
         blob: Bytes,
     ) -> anyhow::Result<protocol::Response> {
         let payload_size = blob.len();
@@ -517,7 +517,7 @@ async fn pgp_sign(
     conn: &mut SqliteConnection,
     keystore: &HashMap<String, UnlockedKey>,
     key_name: &str,
-    signature_type: GpgSignatureType,
+    signature_type: PgpSignatureType,
     blob: Vec<u8>,
 ) -> anyhow::Result<(Response, Vec<u8>)> {
     let key = db::Key::get(conn, key_name).await?;
@@ -554,9 +554,9 @@ async fn pgp_sign(
         let mut sink = vec![];
         let signer = PgpSigner::new(Message::new(&mut sink), signing_key)?;
         let mut message = match signature_type {
-            GpgSignatureType::Detached => signer.detached().build()?,
-            GpgSignatureType::Cleartext => signer.cleartext().build()?,
-            GpgSignatureType::Inline => LiteralWriter::new(signer.build()?).build()?,
+            PgpSignatureType::Detached => signer.detached().build()?,
+            PgpSignatureType::Cleartext => signer.cleartext().build()?,
+            PgpSignatureType::Inline => LiteralWriter::new(signer.build()?).build()?,
         };
 
         message.write_all(&blob)?;

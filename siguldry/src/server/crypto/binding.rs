@@ -333,7 +333,7 @@ pub mod sigul {
         token: String,
     }
 
-    // Shell out to gpg to decrypt the key password.
+    // Shell out to pgp to decrypt the key password.
     //
     // This is done rather than use Sequioa because the OpenPGP data structure written by
     // sigul is considered malformed to Sequoia.
@@ -351,12 +351,12 @@ pub mod sigul {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("Failed to spawn gpg process")?;
+            .context("Failed to spawn pgp process")?;
 
         let mut stdin = child
             .stdin
             .take()
-            .ok_or_else(|| anyhow::anyhow!("Failed to open gpg stdin"))?;
+            .ok_or_else(|| anyhow::anyhow!("Failed to open pgp stdin"))?;
         password.map(|p| {
             stdin.write_all(p)?;
             stdin.write_all(b"\n")?;
@@ -366,7 +366,7 @@ pub mod sigul {
 
         let output = child
             .wait_with_output()
-            .context("Failed to wait for gpg process")?;
+            .context("Failed to wait for pgp process")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

@@ -598,7 +598,7 @@ async fn sign_sha512_ecdsa_openssl_provider() -> anyhow::Result<()> {
 #[ignore = "Sequoia doesn't yet support PKCS11"]
 async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new()
-        .with_gpg_key()
+        .with_pgp_key()
         .with_client_proxy()
         .build()
         .await?;
@@ -609,12 +609,12 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
 
     let expected_pubkey = instance
         .client
-        .get_key(keys::GPG_KEY_NAME.to_string())
+        .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
     let certificate_path = instance.state_dir.path().join("signing_key.asc");
     tokio::fs::write(&certificate_path, expected_pubkey.public_key.as_bytes()).await?;
     let password_path = instance.state_dir.path().join("password");
-    tokio::fs::write(&password_path, keys::GPG_KEY_PASSWORD.as_bytes()).await?;
+    tokio::fs::write(&password_path, keys::PGP_KEY_PASSWORD.as_bytes()).await?;
 
     let sequoia_home = instance.state_dir.path().join("sequoia_home");
     let mut command = tokio::process::Command::new("sq");

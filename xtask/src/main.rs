@@ -169,14 +169,14 @@ async fn generate_sigul_data() -> anyhow::Result<()> {
         )
         .await?;
 
-    println!("Creating GPG key 'test-sigul-gpg-key'...");
+    println!("Creating OpenPGP key 'test-sigul-gpg-key'...");
     client
         .new_key(
             ADMIN_PASSPHRASE.into(),
             GPG_PASSPHRASE.into(),
             "test-sigul-gpg-key".to_string(),
             KeyType::GnuPG {
-                real_name: Some("Test GPG Key".to_string()),
+                real_name: Some("Test OpenPGP Key".to_string()),
                 comment: Some("For testing import".to_string()),
                 email: Some("test@example.com".to_string()),
                 expire_date: None,
@@ -293,14 +293,14 @@ async fn generate_sigul_data() -> anyhow::Result<()> {
     //
     // The expected prompts here are
     //   - import sigul-client
-    //     - import its access to the GPG key?
+    //     - import its access to the OpenPGP key?
     //     - import its access to the CA key?
     //     - import its access to the RSA key?
     //     - import its access to the ECC key?
     //   - import autosigner
     //     - import its access to the RSA key?
     //   - import siguldry-client
-    //     - import its access to the GPG key?
+    //     - import its access to the OpenPGP key?
     let import_dialog_answer = format!(
         "y\n\
          y\n\

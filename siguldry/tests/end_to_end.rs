@@ -6,7 +6,7 @@
 use siguldry::{
     client::{self, ProxyClient},
     error::{ClientError, ConnectionError, ProtocolError, ServerError},
-    protocol::{DigestAlgorithm, GpgSignatureType, KeyAlgorithm},
+    protocol::{DigestAlgorithm, KeyAlgorithm, PgpSignatureType},
 };
 
 use siguldry_test::{InstanceBuilder, create_credentials, keys};
@@ -123,13 +123,13 @@ async fn bridge_rejects_client_cert_empty_common_name() -> anyhow::Result<()> {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn unlock_gpg_key() -> anyhow::Result<()> {
-    let instance = InstanceBuilder::new().with_gpg_key().build().await?;
+    let instance = InstanceBuilder::new().with_pgp_key().build().await?;
 
     instance
         .client
         .unlock(
-            keys::GPG_KEY_NAME.to_string(),
-            keys::GPG_KEY_PASSWORD.to_string(),
+            keys::PGP_KEY_NAME.to_string(),
+            keys::PGP_KEY_PASSWORD.to_string(),
         )
         .await?;
 
@@ -141,7 +141,7 @@ async fn unlock_gpg_key() -> anyhow::Result<()> {
 #[tracing_test::traced_test]
 async fn client_proxy_unlock_gpg_key() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new()
-        .with_gpg_key()
+        .with_pgp_key()
         .with_client_proxy()
         .build()
         .await?;
@@ -149,8 +149,8 @@ async fn client_proxy_unlock_gpg_key() -> anyhow::Result<()> {
 
     tokio::task::spawn_blocking(move || {
         client_proxy.unlock(
-            keys::GPG_KEY_NAME.to_string(),
-            keys::GPG_KEY_PASSWORD.to_string(),
+            keys::PGP_KEY_NAME.to_string(),
+            keys::PGP_KEY_PASSWORD.to_string(),
         )
     })
     .await??;
@@ -162,11 +162,11 @@ async fn client_proxy_unlock_gpg_key() -> anyhow::Result<()> {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn wrong_gpg_password() -> anyhow::Result<()> {
-    let instance = InstanceBuilder::new().with_gpg_key().build().await?;
+    let instance = InstanceBuilder::new().with_pgp_key().build().await?;
 
     let result = instance
         .client
-        .unlock(keys::GPG_KEY_NAME.to_string(), "🪿🪿🦆".to_string())
+        .unlock(keys::PGP_KEY_NAME.to_string(), "🪿🪿🦆".to_string())
         .await;
     // TODO: split out server-side errors from client request errors
     assert!(result.is_err_and(|err| matches!(err, ClientError::Server(ServerError::Internal))));
@@ -201,7 +201,7 @@ async fn list_keys() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new().with_all_keys().build().await?;
 
     let keys = instance.client.list_keys().await?;
-    // GPG key + CA key + codesigning key + EC key
+    // OpenPGP key + CA key + codesigning key + EC key
     assert_eq!(4, keys.len());
 
     instance.halt().await?;
@@ -220,7 +220,7 @@ async fn client_proxy_list_keys() -> anyhow::Result<()> {
     let mut client_proxy = ProxyClient::new(instance.client_proxy_socket())?;
 
     let keys = tokio::task::spawn_blocking(move || client_proxy.list_keys()).await??;
-    // GPG key + CA key + codesigning key + EC key
+    // OpenPGP key + CA key + codesigning key + EC key
     assert_eq!(4, keys.len());
 
     instance.halt().await?;
@@ -230,33 +230,33 @@ async fn client_proxy_list_keys() -> anyhow::Result<()> {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn gpg_sign_inline() -> anyhow::Result<()> {
-    let instance = InstanceBuilder::new().with_gpg_key().build().await?;
+    let instance = InstanceBuilder::new().with_pgp_key().build().await?;
     let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
 
     instance
         .client
         .unlock(
-            keys::GPG_KEY_NAME.to_string(),
-            keys::GPG_KEY_PASSWORD.to_string(),
+            keys::PGP_KEY_NAME.to_string(),
+            keys::PGP_KEY_PASSWORD.to_string(),
         )
         .await?;
     let mut key = instance
         .client
-        .get_key(keys::GPG_KEY_NAME.to_string())
+        .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
     assert_eq!(1, key.certificates.len());
     let certificate = key.certificates.pop().unwrap();
     let signature = instance
         .client
         .gpg_sign(
-            keys::GPG_KEY_NAME.to_string(),
-            GpgSignatureType::Inline,
+            keys::PGP_KEY_NAME.to_string(),
+            PgpSignatureType::Inline,
             bytes::Bytes::from(data),
         )
         .await?;
 
     match certificate {
-        siguldry::protocol::Certificate::Gpg {
+        siguldry::protocol::Certificate::Pgp {
             version: _version,
             certificate,
             fingerprint,
@@ -281,8 +281,8 @@ async fn gpg_sign_inline() -> anyhow::Result<()> {
             assert!(stderr.contains(&format!(
                 "Authenticated signature made by {} ({} <{}>)",
                 fingerprint,
-                keys::GPG_KEY_NAME,
-                keys::GPG_KEY_EMAIL
+                keys::PGP_KEY_NAME,
+                keys::PGP_KEY_EMAIL
             )));
         }
         _ => panic!("unexpected key type"),
@@ -295,19 +295,19 @@ async fn gpg_sign_inline() -> anyhow::Result<()> {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn gpg_sign_detached() -> anyhow::Result<()> {
-    let instance = InstanceBuilder::new().with_gpg_key().build().await?;
+    let instance = InstanceBuilder::new().with_pgp_key().build().await?;
     let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
 
     instance
         .client
         .unlock(
-            keys::GPG_KEY_NAME.to_string(),
-            keys::GPG_KEY_PASSWORD.to_string(),
+            keys::PGP_KEY_NAME.to_string(),
+            keys::PGP_KEY_PASSWORD.to_string(),
         )
         .await?;
     let mut key = instance
         .client
-        .get_key(keys::GPG_KEY_NAME.to_string())
+        .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
     assert!(
         matches!(key.key_algorithm, KeyAlgorithm::Rsa4K),
@@ -319,14 +319,14 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
     let signature = instance
         .client
         .gpg_sign(
-            keys::GPG_KEY_NAME.to_string(),
-            GpgSignatureType::Detached,
+            keys::PGP_KEY_NAME.to_string(),
+            PgpSignatureType::Detached,
             bytes::Bytes::from(data),
         )
         .await?;
 
     match certificate {
-        siguldry::protocol::Certificate::Gpg {
+        siguldry::protocol::Certificate::Pgp {
             version: _version,
             certificate,
             fingerprint,
@@ -353,8 +353,8 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
             assert!(stderr.contains(&format!(
                 "Authenticated signature made by {} ({} <{}>)",
                 fingerprint,
-                keys::GPG_KEY_NAME,
-                keys::GPG_KEY_EMAIL
+                keys::PGP_KEY_NAME,
+                keys::PGP_KEY_EMAIL
             )));
         }
         _ => panic!("unexpected key type"),
@@ -368,8 +368,8 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
 #[tracing_test::traced_test]
 async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new()
-        .use_rfc9580_for_gpg()
-        .with_gpg_ec_key()
+        .use_rfc9580_for_pgp()
+        .with_pgp_ec_key()
         .build()
         .await?;
     let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
@@ -377,13 +377,13 @@ async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
     instance
         .client
         .unlock(
-            keys::GPG_EC_KEY_NAME.to_string(),
-            keys::GPG_EC_KEY_PASSWORD.to_string(),
+            keys::PGP_EC_KEY_NAME.to_string(),
+            keys::PGP_EC_KEY_PASSWORD.to_string(),
         )
         .await?;
     let mut key = instance
         .client
-        .get_key(keys::GPG_EC_KEY_NAME.to_string())
+        .get_key(keys::PGP_EC_KEY_NAME.to_string())
         .await?;
     assert!(
         matches!(key.key_algorithm, KeyAlgorithm::P256),
@@ -395,14 +395,14 @@ async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
     let signature = instance
         .client
         .gpg_sign(
-            keys::GPG_EC_KEY_NAME.to_string(),
-            GpgSignatureType::Detached,
+            keys::PGP_EC_KEY_NAME.to_string(),
+            PgpSignatureType::Detached,
             bytes::Bytes::from(data),
         )
         .await?;
 
     match certificate {
-        siguldry::protocol::Certificate::Gpg {
+        siguldry::protocol::Certificate::Pgp {
             version,
             certificate,
             fingerprint,
@@ -430,8 +430,8 @@ async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
             assert!(stderr.contains(&format!(
                 "Authenticated signature made by {} ({} <{}>)",
                 fingerprint,
-                keys::GPG_EC_KEY_NAME,
-                keys::GPG_EC_KEY_EMAIL
+                keys::PGP_EC_KEY_NAME,
+                keys::PGP_EC_KEY_EMAIL
             )));
             let mut command = tokio::process::Command::new("sq");
             let output = command.arg("inspect").arg(keyring_path).output().await?;
@@ -450,19 +450,19 @@ async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn gpg_sign_detached_p256() -> anyhow::Result<()> {
-    let instance = InstanceBuilder::new().with_gpg_ec_key().build().await?;
+    let instance = InstanceBuilder::new().with_pgp_ec_key().build().await?;
     let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
 
     instance
         .client
         .unlock(
-            keys::GPG_EC_KEY_NAME.to_string(),
-            keys::GPG_EC_KEY_PASSWORD.to_string(),
+            keys::PGP_EC_KEY_NAME.to_string(),
+            keys::PGP_EC_KEY_PASSWORD.to_string(),
         )
         .await?;
     let mut key = instance
         .client
-        .get_key(keys::GPG_EC_KEY_NAME.to_string())
+        .get_key(keys::PGP_EC_KEY_NAME.to_string())
         .await?;
     assert!(
         matches!(key.key_algorithm, KeyAlgorithm::P256),
@@ -474,14 +474,14 @@ async fn gpg_sign_detached_p256() -> anyhow::Result<()> {
     let signature = instance
         .client
         .gpg_sign(
-            keys::GPG_EC_KEY_NAME.to_string(),
-            GpgSignatureType::Detached,
+            keys::PGP_EC_KEY_NAME.to_string(),
+            PgpSignatureType::Detached,
             bytes::Bytes::from(data),
         )
         .await?;
 
     match certificate {
-        siguldry::protocol::Certificate::Gpg {
+        siguldry::protocol::Certificate::Pgp {
             version,
             certificate,
             fingerprint,
@@ -509,8 +509,8 @@ async fn gpg_sign_detached_p256() -> anyhow::Result<()> {
             assert!(stderr.contains(&format!(
                 "Authenticated signature made by {} ({} <{}>)",
                 fingerprint,
-                keys::GPG_EC_KEY_NAME,
-                keys::GPG_EC_KEY_EMAIL
+                keys::PGP_EC_KEY_NAME,
+                keys::PGP_EC_KEY_EMAIL
             )));
             let mut command = tokio::process::Command::new("sq");
             let output = command.arg("inspect").arg(keyring_path).output().await?;
@@ -529,19 +529,19 @@ async fn gpg_sign_detached_p256() -> anyhow::Result<()> {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn gpg_sign_cleartext() -> anyhow::Result<()> {
-    let instance = InstanceBuilder::new().with_gpg_key().build().await?;
+    let instance = InstanceBuilder::new().with_pgp_key().build().await?;
     let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
 
     instance
         .client
         .unlock(
-            keys::GPG_KEY_NAME.to_string(),
-            keys::GPG_KEY_PASSWORD.to_string(),
+            keys::PGP_KEY_NAME.to_string(),
+            keys::PGP_KEY_PASSWORD.to_string(),
         )
         .await?;
     let mut key = instance
         .client
-        .get_key(keys::GPG_KEY_NAME.to_string())
+        .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
     assert_eq!(1, key.certificates.len());
     let key = key.certificates.pop().unwrap();
@@ -549,8 +549,8 @@ async fn gpg_sign_cleartext() -> anyhow::Result<()> {
     let signature = instance
         .client
         .gpg_sign(
-            keys::GPG_KEY_NAME.to_string(),
-            GpgSignatureType::Cleartext,
+            keys::PGP_KEY_NAME.to_string(),
+            PgpSignatureType::Cleartext,
             bytes::Bytes::from(data),
         )
         .await?;
@@ -564,7 +564,7 @@ Hash: SHA512
     ));
 
     match key {
-        siguldry::protocol::Certificate::Gpg {
+        siguldry::protocol::Certificate::Pgp {
             version: _version,
             certificate,
             fingerprint,
@@ -589,8 +589,8 @@ Hash: SHA512
             assert!(stderr.contains(&format!(
                 "Authenticated signature made by {} ({} <{}>)",
                 fingerprint,
-                keys::GPG_KEY_NAME,
-                keys::GPG_KEY_EMAIL
+                keys::PGP_KEY_NAME,
+                keys::PGP_KEY_EMAIL
             )));
         }
         _ => panic!("unexpected key type"),
@@ -1103,7 +1103,7 @@ async fn hsm_rsa_prehashed_signature_with_pkcs11_binding() -> anyhow::Result<()>
     Ok(())
 }
 
-/// Import data from a sigul database and verify PGP signing works with the imported key.
+/// Import data from a sigul database and verify OpenPGP signing works with the imported key.
 ///
 /// This test requires you to run `cargo xtask generate-sigul-data` and have softhsm2
 #[tokio::test]
@@ -1137,12 +1137,12 @@ async fn import_sigul_and_sign() -> anyhow::Result<()> {
         .client
         .gpg_sign(
             keys::SIGUL_GPG_KEY_NAME.to_string(),
-            GpgSignatureType::Detached,
+            PgpSignatureType::Detached,
             bytes::Bytes::from(data),
         )
         .await?;
     match certificate {
-        siguldry::protocol::Certificate::Gpg {
+        siguldry::protocol::Certificate::Pgp {
             version: _version,
             certificate,
             fingerprint,
@@ -1176,7 +1176,7 @@ async fn import_sigul_and_sign() -> anyhow::Result<()> {
                 "Signature should be from the imported key"
             );
         }
-        _ => panic!("Expected a GPG certificate from the imported key"),
+        _ => panic!("Expected a OpenPGP certificate from the imported key"),
     }
 
     instance.halt().await?;
@@ -1210,7 +1210,7 @@ async fn import_sigul_just_a_user() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Import a subset of data from a sigul database and verify PGP signing works.
+/// Import a subset of data from a sigul database and verify OpenPGP signing works.
 ///
 /// This test requires you to run `cargo xtask generate-sigul-data` and have softhsm2
 #[tokio::test]
@@ -1253,12 +1253,12 @@ async fn import_sigul_just_gpg_key() -> anyhow::Result<()> {
         .client
         .gpg_sign(
             keys::SIGUL_GPG_KEY_NAME.to_string(),
-            GpgSignatureType::Detached,
+            PgpSignatureType::Detached,
             bytes::Bytes::from(data),
         )
         .await?;
     match certificate {
-        siguldry::protocol::Certificate::Gpg {
+        siguldry::protocol::Certificate::Pgp {
             version: _version,
             certificate,
             fingerprint,
@@ -1292,7 +1292,7 @@ async fn import_sigul_just_gpg_key() -> anyhow::Result<()> {
                 "Signature should be from the imported key"
             );
         }
-        _ => panic!("Expected a GPG certificate from the imported key"),
+        _ => panic!("Expected a OpenPGP certificate from the imported key"),
     }
 
     instance.halt().await?;

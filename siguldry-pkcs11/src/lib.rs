@@ -6,9 +6,9 @@
 //!
 //! This module requires that users have set up a siguldry-client proxy.
 //!
-//! Sequoia cryptoki support is provided by this module by presenting Siguldry PGP keys
+//! Sequoia cryptoki support is provided by this module by presenting Siguldry OpenPGP keys
 //! in the format expected by the Sequoia key store. Keys with an Id attribute that starts
-//! with "pgp" are PGP keys.
+//! with "pgp" are OpenPGP keys.
 
 #![allow(non_snake_case)]
 use std::{

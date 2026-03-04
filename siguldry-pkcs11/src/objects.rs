@@ -246,7 +246,7 @@ impl Attribute {
         let mut attrs = HashMap::new();
 
         match key.certificates.first() {
-            Some(Certificate::Gpg {
+            Some(Certificate::Pgp {
                 version,
                 certificate,
                 fingerprint,

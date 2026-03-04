@@ -36,7 +36,7 @@ impl IpcClient {
     ///
     /// The bytes argument exists just because Sequioa doesn't support signing from a digest
     /// (easily, anyway). Don't use it for anything else, and delete it if signing via PKCS#11
-    /// for PGP is good enough.
+    /// for OpenPGP is good enough.
     #[instrument(skip_all, level = Level::DEBUG)]
     pub async fn request<R: ?Sized + serde::Serialize>(
         &mut self,
@@ -69,7 +69,7 @@ impl IpcClient {
         response
     }
 
-    /// Only use this for PGP signing to read the payload back after the response.
+    /// Only use this for OpenPGP signing to read the payload back after the response.
     ///
     /// Delete this if we can use PKCS#11 client-side for all signing.
     #[instrument(skip(self), level = Level::DEBUG)]

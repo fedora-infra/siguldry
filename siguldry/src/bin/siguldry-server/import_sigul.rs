@@ -46,11 +46,11 @@
 //!
 //! ## PGP
 //!
-//! PGP keys are stored in the `gnupg/` directory relative to the state directory root by default,
-//! and is used at the GPG_HOME location. Sigul uses gpg to generate and access the keys so the
-//! layout should follow the standard for the version of gpg installed on the Sigul host.
+//! OpenPGP keys are stored in the `gnupg/` directory relative to the state directory root by default,
+//! and is used at the GPG_HOME location. Sigul uses pgp to generate and access the keys so the
+//! layout should follow the standard for the version of pgp installed on the Sigul host.
 //!
-//! Sigul supports configuring a different location for the PGP keys; this is not supported by the
+//! Sigul supports configuring a different location for the OpenPGP keys; this is not supported by the
 //! import tool and users must move the non-standard location to gnupg/ relative to the provided
 //! state directory.
 //!
@@ -78,7 +78,7 @@
 //! # Key Accesses
 //!
 //! Sigul encrypts keys using a server-generated secret. It then encrypts that secret using
-//! per-user passwords via GPG symmetric encryption. Optionally, it will encrypt the server-
+//! per-user passwords via OpenPGP symmetric encryption. Optionally, it will encrypt the server-
 //! generated secret using a PKCS #11 public key or via TPM 1.2 (unsupported by this tool).
 //! The per-user password is then used to encrypt the output of the "bound" server-generated
 //! secret that was used to encrypt the key.
@@ -133,7 +133,7 @@ impl SigulUser {
 /// Key types supported by sigul.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SigulKeyType {
-    /// A GPG key stored in the gnupg home directory.
+    /// A OpenPGP key stored in the gnupg home directory.
     Gnupg,
     /// An ECC key stored as PEM files in the keys/ directory.
     Ecc,
@@ -165,7 +165,7 @@ struct SigulKey {
     id: i64,
     name: String,
     keytype: SigulKeyType,
-    /// For gnupg keys, this is the GPG fingerprint.
+    /// For gnupg keys, this is the OpenPGP fingerprint.
     /// For ECC/RSA keys, this is the SHA1 hash of the public key DER.
     fingerprint: String,
     /// Path to where the keys are store; how they're stored depends on the `keytype`
@@ -174,7 +174,7 @@ struct SigulKey {
     /// the fingerprint then ".pem" for encrypted secret, "public.pem" for public keys, and
     /// "cert.<name>.pem" for certs.
     ///
-    /// For PGP keys, they're stored however gnupg wrote them out (version-dependent).
+    /// For OpenPGP keys, they're stored however gnupg wrote them out (version-dependent).
     keys_directory: PathBuf,
 }
 

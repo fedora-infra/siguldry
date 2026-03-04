@@ -22,7 +22,7 @@ use siguldry::server::{
 };
 use tracing::instrument;
 
-use crate::cli::{GpgCommands, KeyCommands, KeyUsage, ManagementCommands, UserCommands};
+use crate::cli::{KeyCommands, KeyUsage, ManagementCommands, PgpCommands, UserCommands};
 
 pub struct PromptPassword {
     termios: Option<Termios>,
@@ -115,8 +115,8 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
 
     let mut conn = db_pool.begin().await?;
     match command {
-        ManagementCommands::Gpg(gpg_commands) => match gpg_commands {
-            GpgCommands::Create {
+        ManagementCommands::Pgp(gpg_commands) => match gpg_commands {
+            PgpCommands::Create {
                 algorithm,
                 profile,
                 password_file,
@@ -183,7 +183,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
 
                 println!("Successfully created key {key} with {user} as the key administrator");
             }
-            GpgCommands::List {} => {
+            PgpCommands::List {} => {
                 for key in db::Key::list(&mut conn).await? {
                     match key.key_purpose {
                         db::KeyPurpose::PGP => println!("{key}"),
@@ -567,7 +567,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::cli::{
-        GpgCommands, KeyCommands, KeyUsage, ManagementCommands, OpenPgpProfile, Pkcs11Commands,
+        KeyCommands, KeyUsage, ManagementCommands, OpenPgpProfile, PgpCommands, Pkcs11Commands,
         UserCommands,
     };
 
@@ -1088,7 +1088,7 @@ mod tests {
         std::fs::write(&password_file, "gpg-password\n")?;
 
         manage(
-            ManagementCommands::Gpg(GpgCommands::Create {
+            ManagementCommands::Pgp(PgpCommands::Create {
                 algorithm: KeyAlgorithm::Rsa4K,
                 profile: OpenPgpProfile::RFC4880,
                 password_file: Some(password_file),
@@ -1113,7 +1113,7 @@ mod tests {
         std::fs::write(&password_file, "gpg-password\n")?;
 
         manage(
-            ManagementCommands::Gpg(GpgCommands::Create {
+            ManagementCommands::Pgp(PgpCommands::Create {
                 algorithm: KeyAlgorithm::P256,
                 profile: OpenPgpProfile::RFC4880,
                 password_file: Some(password_file),
@@ -1138,7 +1138,7 @@ mod tests {
         std::fs::write(&password_file, "gpg-password\n")?;
 
         manage(
-            ManagementCommands::Gpg(GpgCommands::Create {
+            ManagementCommands::Pgp(PgpCommands::Create {
                 algorithm: KeyAlgorithm::P256,
                 profile: OpenPgpProfile::RFC9580,
                 password_file: Some(password_file),
@@ -1163,7 +1163,7 @@ mod tests {
         std::fs::write(&password_file, "short\n")?;
 
         let result = manage(
-            ManagementCommands::Gpg(GpgCommands::Create {
+            ManagementCommands::Pgp(PgpCommands::Create {
                 algorithm: KeyAlgorithm::Rsa4K,
                 profile: OpenPgpProfile::RFC4880,
                 password_file: Some(password_file),
@@ -1188,7 +1188,7 @@ mod tests {
         std::fs::write(&password_file, "gpg-password\n")?;
 
         let result = manage(
-            ManagementCommands::Gpg(GpgCommands::Create {
+            ManagementCommands::Pgp(PgpCommands::Create {
                 algorithm: KeyAlgorithm::Rsa4K,
                 profile: OpenPgpProfile::RFC4880,
                 password_file: Some(password_file),
@@ -1352,7 +1352,7 @@ mod tests {
                 admin: "admin".to_string(),
                 name: "test-rsa-key".to_string(),
             }),
-            ManagementCommands::Gpg(GpgCommands::Create {
+            ManagementCommands::Pgp(PgpCommands::Create {
                 algorithm: KeyAlgorithm::Rsa4K,
                 profile: OpenPgpProfile::RFC4880,
                 password_file: Some("/path/does/not/exist".into()),
@@ -1399,7 +1399,7 @@ mod tests {
                 admin: "admin".to_string(),
                 name: "test-rsa-key".to_string(),
             }),
-            ManagementCommands::Gpg(GpgCommands::Create {
+            ManagementCommands::Pgp(PgpCommands::Create {
                 profile: OpenPgpProfile::RFC4880,
                 algorithm: KeyAlgorithm::Rsa4K,
                 password_file: Some("/path/does/not/exist".into()),
@@ -1450,7 +1450,7 @@ mod tests {
                 admin: "admin".to_string(),
                 name: "test-rsa-key".to_string(),
             }),
-            ManagementCommands::Gpg(GpgCommands::Create {
+            ManagementCommands::Pgp(PgpCommands::Create {
                 algorithm: KeyAlgorithm::Rsa4K,
                 profile: OpenPgpProfile::RFC4880,
                 password_file: Some(password_file),

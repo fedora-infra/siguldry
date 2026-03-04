@@ -385,14 +385,14 @@ pub mod json {
             /// The password to unlock the key with.
             password: String,
         },
-        /// Request a GPG signature.
+        /// Request a OpenPGP signature.
         ///
         /// The content to be signed should be sent in the binary section of the request.
-        GpgSign {
-            /// The key to use for signing. The request will fail if this is not a GPG key.
+        PgpSign {
+            /// The key to use for signing. The request will fail if this is not a OpenPGP key.
             key: String,
             /// The format of the signature to produce.
-            signature_type: super::GpgSignatureType,
+            signature_type: super::PgpSignatureType,
         },
         /// Request an RSA or ECDSA signature.
         ///
@@ -546,8 +546,8 @@ pub mod json {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Certificate {
-    /// A key pair that can be used for GPG signatures.
-    Gpg {
+    /// A key pair that can be used for OpenPGP signatures.
+    Pgp {
         /// The key version; likely either 4 or 6, but refer to RFC 9580 and any superceding RFCs.
         version: u8,
         /// The ASCII-armored public key
@@ -572,7 +572,7 @@ pub struct Key {
     pub name: String,
     /// Indicates the key type.
     pub key_algorithm: KeyAlgorithm,
-    /// This uniquely identifies a key. For example, the GPG key fingerprint, or the SHA256 sum of
+    /// This uniquely identifies a key. For example, the OpenPGP key fingerprint, or the SHA256 sum of
     /// the public key.
     pub handle: String,
     /// The public key in a text-friendly encoding (ASCII-armored, PEM-encoded, etc).
@@ -582,7 +582,7 @@ pub struct Key {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
-pub enum GpgSignatureType {
+pub enum PgpSignatureType {
     /// Create a detached signature as described in [Section 10.4 of RFC 9580].
     ///
     /// Detached signatures are one or more Signature packets stored separately from the

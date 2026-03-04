@@ -86,13 +86,13 @@ pub enum KeyType {
     ///
     /// Server configuration determines the key size and algorithm used when creating a new key.
     GnuPG {
-        /// The real name field to use on the GPG key, if any.
+        /// The real name field to use on the OpenPGP key, if any.
         real_name: Option<String>,
-        /// The comment field to use on the GPG key, if any.
+        /// The comment field to use on the OpenPGP key, if any.
         comment: Option<String>,
-        /// The email address for the GPG key, if any.
+        /// The email address for the OpenPGP key, if any.
         email: Option<String>,
-        /// The expiration date for the GPG key. If [`Option::None`], the key does not expire.
+        /// The expiration date for the OpenPGP key. If [`Option::None`], the key does not expire.
         expire_date: Option<String>,
     },
     /// The Elliptic Curve Cryptography key type.

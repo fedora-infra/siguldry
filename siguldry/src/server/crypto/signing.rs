@@ -750,7 +750,7 @@ mod tests {
         let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_der(signature)?;
         assert!(
             ecdsa_sig.verify(&digest, &ec_key)?,
-            "EC PGP signature should be valid (OpenSSL bindings)"
+            "EC OpenPGP signature should be valid (OpenSSL bindings)"
         );
 
         // Also verify using the OpenSSL CLI

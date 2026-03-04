@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use siguldry::{client, protocol::GpgSignatureType};
+use siguldry::{client, protocol::PgpSignatureType};
 use tokio::task::JoinSet;
 
 use siguldry_test::InstanceBuilder;
@@ -163,7 +163,7 @@ fn gpg_sign_detached(criterion: &mut Criterion) {
         .unwrap();
     let instance = runtime
         .block_on(async {
-            let instance = InstanceBuilder::new().with_gpg_key().build().await?;
+            let instance = InstanceBuilder::new().with_pgp_key().build().await?;
             instance
                 .client
                 .unlock("test-gpg-key".to_string(), "🪿🪿🪿".to_string())
@@ -181,7 +181,7 @@ fn gpg_sign_detached(criterion: &mut Criterion) {
                     .client
                     .gpg_sign(
                         "test-gpg-key".to_string(),
-                        GpgSignatureType::Detached,
+                        PgpSignatureType::Detached,
                         bytes::Bytes::from(payload.clone()),
                     )
                     .await
@@ -201,7 +201,7 @@ fn gpg_sign_throughput(c: &mut Criterion) {
         .unwrap();
     let instance = runtime
         .block_on(async {
-            let instance = InstanceBuilder::new().with_gpg_key().build().await?;
+            let instance = InstanceBuilder::new().with_pgp_key().build().await?;
             instance
                 .client
                 .unlock("test-gpg-key".to_string(), "🪿🪿🪿".to_string())
@@ -229,7 +229,7 @@ fn gpg_sign_throughput(c: &mut Criterion) {
                                 client
                                     .gpg_sign(
                                         "test-gpg-key".to_string(),
-                                        GpgSignatureType::Detached,
+                                        PgpSignatureType::Detached,
                                         bytes::Bytes::from(payload),
                                     )
                                     .await

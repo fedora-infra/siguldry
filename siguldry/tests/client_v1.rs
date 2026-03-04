@@ -620,7 +620,7 @@ async fn key_modify() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Test creating and then deleting a GPG key.
+/// Test creating and then deleting a OpenPGP key.
 #[tokio::test]
 async fn key_gpg_create_and_delete() -> anyhow::Result<()> {
     let client = get_client();
@@ -657,7 +657,7 @@ async fn key_gpg_create_and_delete() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Test creating a GPG key with an expiration date.
+/// Test creating a OpenPGP key with an expiration date.
 ///
 /// The date needs to be in the future so in a few years this test will fail.
 #[tokio::test]
@@ -1063,7 +1063,7 @@ pub async fn key_revoke_user() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Test key expiration for GPG keys can be altered.
+/// Test key expiration for OpenPGP keys can be altered.
 ///
 /// The test requires dates in the future, so it will fail if run after the expiration date.
 #[tokio::test]

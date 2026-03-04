@@ -271,7 +271,7 @@ async fn handle(
             Request::ListUsers {} => request_handler.list_users(&mut db_transaction).await,
             Request::ListKeys {} => request_handler.list_keys(&mut db_transaction).await,
             Request::Unlock { key, password } => request_handler.unlock(key, password).await,
-            Request::GpgSign {
+            Request::PgpSign {
                 key,
                 signature_type,
             } => {

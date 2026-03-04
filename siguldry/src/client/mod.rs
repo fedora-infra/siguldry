@@ -10,7 +10,7 @@ use bytes::Bytes;
 use tokio::sync::Mutex;
 
 use crate::protocol::json::Signature;
-use crate::protocol::{DigestAlgorithm, GpgSignatureType};
+use crate::protocol::{DigestAlgorithm, PgpSignatureType};
 use crate::{
     error::{ClientError, ConnectionError},
     nestls::Nestls,
@@ -319,11 +319,11 @@ impl Client {
     pub async fn gpg_sign(
         &self,
         key: String,
-        signature_type: GpgSignatureType,
+        signature_type: PgpSignatureType,
         data: Bytes,
     ) -> Result<Bytes, ClientError> {
         let request = Request {
-            message: protocol::json::Request::GpgSign {
+            message: protocol::json::Request::PgpSign {
                 key,
                 signature_type,
             },

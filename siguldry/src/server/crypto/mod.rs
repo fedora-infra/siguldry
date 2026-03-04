@@ -3,7 +3,7 @@
 
 //! All the cryptography-related operations are in these modules.
 //!
-//! Sequoia is used for GPG signatures and for the symmetric encryption of keys managed by Siguldry.
+//! Sequoia is used for OpenPGP signatures and for the symmetric encryption of keys managed by Siguldry.
 //! OpenSSL is used for other signatures.
 
 use openssl::{
@@ -70,7 +70,7 @@ pub fn create_encrypted_key(
     Ok((handle, encrypted_password, private_key_pem, public_key_pem))
 }
 
-/// A GPG key.
+/// A OpenPGP key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GpgKey {
     cert: sequoia_openpgp::Cert,
@@ -78,7 +78,7 @@ pub struct GpgKey {
 }
 
 impl GpgKey {
-    /// Create a new GPG key bound to the server.
+    /// Create a new OpenPGP key bound to the server.
     pub fn new<U: Into<packet::UserID>>(
         bindings: &[Pkcs11Binding],
         user_id: U,
@@ -118,7 +118,7 @@ impl GpgKey {
         )?)
     }
 
-    /// Get the hex GPG fingerprint.
+    /// Get the hex OpenPGP fingerprint.
     pub fn fingerprint(&self) -> String {
         self.cert.fingerprint().to_hex()
     }
@@ -158,7 +158,7 @@ pub mod sigul {
         key_password: Password,
     ) -> anyhow::Result<(sequoia_openpgp::Cert, KeyAlgorithm)> {
         let cert = sequoia_openpgp::Cert::from_bytes(bytes)
-            .context("Failed to parse the exported GPG secret key with Sequoia")?;
+            .context("Failed to parse the exported OpenPGP secret key with Sequoia")?;
 
         // Check that there's a secret key we can decrypt that's marked for signing to ensure
         // we've unbound the key properly. We may need to tweak this policy if we import very

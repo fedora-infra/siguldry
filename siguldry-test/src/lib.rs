@@ -113,13 +113,13 @@ impl Instance {
 }
 
 pub mod keys {
-    pub const GPG_KEY_NAME: &str = "test-gpg-key";
-    pub const GPG_KEY_PASSWORD: &str = "🪿🪿🪿";
-    pub const GPG_KEY_EMAIL: &str = "admin@example.com";
+    pub const PGP_KEY_NAME: &str = "test-gpg-key";
+    pub const PGP_KEY_PASSWORD: &str = "🪿🪿🪿";
+    pub const PGP_KEY_EMAIL: &str = "admin@example.com";
 
-    pub const GPG_EC_KEY_NAME: &str = "test-gpg-ec-key";
-    pub const GPG_EC_KEY_PASSWORD: &str = "🐉🐉🐉🐉🐉";
-    pub const GPG_EC_KEY_EMAIL: &str = "admin@example.com";
+    pub const PGP_EC_KEY_NAME: &str = "test-gpg-ec-key";
+    pub const PGP_EC_KEY_PASSWORD: &str = "🐉🐉🐉🐉🐉";
+    pub const PGP_EC_KEY_EMAIL: &str = "admin@example.com";
 
     pub const CA_KEY_NAME: &str = "test-ca-key";
     pub const CA_KEY_PASSWORD: &str = "🦀🦀🦀🦀";
@@ -139,7 +139,7 @@ pub mod keys {
     /// ID used for the PKCS#11 binding key
     pub const HSM_BINDING_KEY_ID: u8 = 99;
 
-    /// GPG key imported from sigul
+    /// OpenPGP key imported from sigul
     pub const SIGUL_GPG_KEY_NAME: &str = "test-sigul-gpg-key";
     pub const SIGUL_GPG_KEY_PASSWORD: &str = "siguldry-gpg-key-passphrase";
 
@@ -161,10 +161,10 @@ pub struct InstanceBuilder {
     creds: Option<Creds>,
     // If true, any keys added will be configured to unlock automatically with the client
     auto_unlock_keys: bool,
-    // If enabled, the gpg keys will use v6 keys.
-    with_gpg_rfc9580_keys: bool,
-    with_gpg_key: bool,
-    with_gpg_ec_key: bool,
+    // If enabled, the pgp keys will use v6 keys.
+    with_pgp_rfc9580_keys: bool,
+    with_pgp_key: bool,
+    with_pgp_ec_key: bool,
     with_ca_key: bool,
     with_codesigning_key: bool,
     with_ec_key: bool,
@@ -193,18 +193,18 @@ impl InstanceBuilder {
         self
     }
 
-    pub fn use_rfc9580_for_gpg(mut self) -> Self {
-        self.with_gpg_rfc9580_keys = true;
+    pub fn use_rfc9580_for_pgp(mut self) -> Self {
+        self.with_pgp_rfc9580_keys = true;
         self
     }
 
-    pub fn with_gpg_key(mut self) -> Self {
-        self.with_gpg_key = true;
+    pub fn with_pgp_key(mut self) -> Self {
+        self.with_pgp_key = true;
         self
     }
 
-    pub fn with_gpg_ec_key(mut self) -> Self {
-        self.with_gpg_ec_key = true;
+    pub fn with_pgp_ec_key(mut self) -> Self {
+        self.with_pgp_ec_key = true;
         self
     }
 
@@ -271,7 +271,7 @@ impl InstanceBuilder {
     }
 
     pub fn with_all_keys(mut self) -> Self {
-        self.with_gpg_key = true;
+        self.with_pgp_key = true;
         self.with_ca_key = true;
         self.with_codesigning_key = true;
         self.with_ec_key = true;
@@ -382,7 +382,7 @@ impl InstanceBuilder {
             bridge_port: bridge.server_port(),
             credentials: creds.server.clone(),
             signer_socket_path: tempdir.path().join("signer-helper.socket"),
-            user_password_length: NonZeroU16::new(keys::GPG_KEY_PASSWORD.len() as u16)
+            user_password_length: NonZeroU16::new(keys::PGP_KEY_PASSWORD.len() as u16)
                 .expect("it's three geese"),
             pkcs11_bindings,
             connection_pool_size: 1,
@@ -409,50 +409,50 @@ impl InstanceBuilder {
                 None,
             )?;
 
-            let profile = if self.with_gpg_rfc9580_keys {
+            let profile = if self.with_pgp_rfc9580_keys {
                 "rfc9580"
             } else {
                 "rfc4880"
             };
 
-            if self.with_gpg_key {
+            if self.with_pgp_key {
                 Self::run_server_command(
                     &server_bin,
                     &server_config_file,
                     &[
                         "manage",
-                        "gpg",
+                        "pgp",
                         "create",
                         "--profile",
                         profile,
                         "siguldry-client",
-                        keys::GPG_KEY_NAME,
-                        keys::GPG_KEY_EMAIL,
+                        keys::PGP_KEY_NAME,
+                        keys::PGP_KEY_EMAIL,
                     ],
-                    Some(&format!("{}\n", keys::GPG_KEY_PASSWORD)),
+                    Some(&format!("{}\n", keys::PGP_KEY_PASSWORD)),
                 )?;
-                maybe_auto_unlock.push((keys::GPG_KEY_NAME, keys::GPG_KEY_PASSWORD));
+                maybe_auto_unlock.push((keys::PGP_KEY_NAME, keys::PGP_KEY_PASSWORD));
             }
 
-            if self.with_gpg_ec_key {
+            if self.with_pgp_ec_key {
                 Self::run_server_command(
                     &server_bin,
                     &server_config_file,
                     &[
                         "manage",
-                        "gpg",
+                        "pgp",
                         "create",
                         "--profile",
                         profile,
                         "--algorithm",
                         "p256",
                         "siguldry-client",
-                        keys::GPG_EC_KEY_NAME,
-                        keys::GPG_EC_KEY_EMAIL,
+                        keys::PGP_EC_KEY_NAME,
+                        keys::PGP_EC_KEY_EMAIL,
                     ],
-                    Some(&format!("{}\n", keys::GPG_EC_KEY_PASSWORD)),
+                    Some(&format!("{}\n", keys::PGP_EC_KEY_PASSWORD)),
                 )?;
-                maybe_auto_unlock.push((keys::GPG_EC_KEY_NAME, keys::GPG_EC_KEY_PASSWORD));
+                maybe_auto_unlock.push((keys::PGP_EC_KEY_NAME, keys::PGP_EC_KEY_PASSWORD));
             }
 
             if self.with_ca_key {

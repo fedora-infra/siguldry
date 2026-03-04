@@ -11,7 +11,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
-    protocol::{self, DigestAlgorithm, GpgSignatureType, Response, ServerError, json},
+    protocol::{self, DigestAlgorithm, PgpSignatureType, Response, ServerError, json},
     server::{
         Config,
         db::{self, KeyPurpose, User},
@@ -69,7 +69,7 @@ impl Handler {
                 let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material.as_bytes())?;
                 let version = cert.primary_key().key().version();
                 let fingerprint = cert.fingerprint().to_hex();
-                vec![crate::protocol::Certificate::Gpg {
+                vec![crate::protocol::Certificate::Pgp {
                     version,
                     fingerprint,
                     certificate: key.public_key.clone(),
@@ -109,7 +109,7 @@ impl Handler {
     pub(crate) async fn pgp_sign(
         &mut self,
         key: String,
-        signature_type: GpgSignatureType,
+        signature_type: PgpSignatureType,
         blob: Bytes,
     ) -> Result<Response, ServerError> {
         self.ipc_helper
@@ -129,7 +129,7 @@ impl Handler {
             let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material.as_bytes())?;
             let version = cert.primary_key().key().version();
             let fingerprint = cert.fingerprint().to_hex();
-            vec![crate::protocol::Certificate::Gpg {
+            vec![crate::protocol::Certificate::Pgp {
                 version,
                 fingerprint,
                 certificate: key.public_key.clone(),

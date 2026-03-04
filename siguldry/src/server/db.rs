@@ -104,7 +104,7 @@ impl User {
 #[allow(clippy::exhaustive_enums)]
 #[doc(hidden)]
 pub enum KeyPurpose {
-    /// The key is meant to be used for PGP signatures
+    /// The key is meant to be used for OpenPGP signatures
     PGP,
     /// The key is intended to be used for signing using its algorithm-specific signing scheme.
     Signing,
@@ -345,7 +345,7 @@ pub struct Key {
     /// The key location indicates where the key is stored. Keys may be stored on the filesystem
     /// or in a hardware security module.
     pub key_purpose: KeyPurpose,
-    /// This uniquely identifies a key. For example, the GPG key fingerprint, or the SHA256 sum of
+    /// This uniquely identifies a key. For example, the OpenPGP key fingerprint, or the SHA256 sum of
     /// the public key.
     pub handle: String,
     /// The encrypted key material, or in the case of keys stored in hardware, information on how

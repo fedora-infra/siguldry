@@ -118,9 +118,9 @@ impl From<OpenPgpProfile> for sequoia_openpgp::Profile {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ManagementCommands {
-    /// Manage GPG signing keys.
+    /// Manage OpenPGP signing keys.
     #[command(subcommand)]
-    Gpg(GpgCommands),
+    Pgp(PgpCommands),
 
     /// Manage non-GPG signing keys and certificates.
     #[command(subcommand)]
@@ -161,7 +161,7 @@ pub enum ManagementCommands {
 }
 
 #[derive(clap::Subcommand, Debug)]
-pub enum GpgCommands {
+pub enum PgpCommands {
     /// Generate a new signing key.
     Create {
         /// The key algorithm to use.
@@ -183,10 +183,10 @@ pub enum GpgCommands {
         admin: String,
         /// The name of the key in Siguldry.
         name: String,
-        /// The email to use for the GPG user id.
+        /// The email to use for the OpenPGP user id.
         email: String,
     },
-    /// List available GPG keys.
+    /// List available OpenPGP keys.
     List {},
 }
 
