@@ -22,6 +22,7 @@ async fn main() -> Result<(), anyhow::Error> {
     )?;
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+        .without_time()
         .with_writer(std::io::stderr);
     let registry = tracing_subscriber::registry()
         .with(stderr_layer)
