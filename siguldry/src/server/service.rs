@@ -15,7 +15,7 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{Instrument, instrument};
+use tracing::{Instrument, Span, instrument};
 use zerocopy::{IntoBytes, TryFromBytes};
 
 use crate::{
@@ -89,7 +89,6 @@ impl Server {
     }
 
     /// Run the server.
-    #[instrument(skip_all, name = "server")]
     pub fn run(self) -> Listener {
         let halt_token = CancellationToken::new();
         let server_halt_token = halt_token.clone();
@@ -155,7 +154,7 @@ impl Server {
             tracing::info!("All pending requests are now complete");
 
             Ok::<_, anyhow::Error>(())
-        });
+        }.instrument(Span::current()));
 
         Listener { task, halt_token }
     }
@@ -175,7 +174,7 @@ impl Server {
                 .into_ssl(&self.config.bridge_hostname)?,
             Role::Server,
         );
-        connection_pool.spawn(builder.accept(bridge_addr, ssl));
+        connection_pool.spawn(builder.accept(bridge_addr, ssl).instrument(Span::current()));
 
         Ok(())
     }

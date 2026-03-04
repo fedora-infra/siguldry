@@ -203,7 +203,7 @@ impl NestlsBuilder {
     }
 
     /// Accept a new incoming nested TLS connection.
-    #[instrument(err, skip(self, ssl))]
+    #[instrument(err, skip(self, ssl), level = tracing::Level::DEBUG)]
     pub async fn accept<S: ToSocketAddrs + std::fmt::Debug>(
         self,
         bridge_addr: S,

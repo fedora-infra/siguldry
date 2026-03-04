@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
                 .credentials
                 .with_credentials_dir(&credentials_directory)?;
 
-            let root_span = tracing::info_span!("server");
+            let root_span = tracing::info_span!("siguldry-server");
             async move {
                 let server = Server::new(config).await?;
                 let server = server.run();
