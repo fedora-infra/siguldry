@@ -612,7 +612,18 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
         .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
     let certificate_path = instance.state_dir.path().join("signing_key.asc");
-    tokio::fs::write(&certificate_path, expected_pubkey.public_key.as_bytes()).await?;
+    let cert = expected_pubkey.certificates.first().unwrap();
+    let fingerprint = match cert {
+        siguldry::protocol::Certificate::Pgp {
+            version: _,
+            certificate,
+            fingerprint,
+        } => {
+            tokio::fs::write(&certificate_path, certificate.as_bytes()).await?;
+            fingerprint
+        }
+        _ => panic!("was expecting a Pgp cert"),
+    };
     let password_path = instance.state_dir.path().join("password");
     tokio::fs::write(&password_path, keys::PGP_KEY_PASSWORD.as_bytes()).await?;
 
@@ -641,23 +652,32 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
         .arg("pki")
         .arg("link")
         .arg("add")
-        .arg(format!("--cert={}", &expected_pubkey.handle))
+        .arg(format!("--cert={}", fingerprint))
         .arg("--all")
         .output()
         .await?;
     assert!(
         output.status.success(),
         "'sq --batch pki link add --cert={} --all' failed:\nstdout: {}\nstderr: {}",
-        &expected_pubkey.handle,
+        fingerprint,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
 
+    let cryptoki_config_dir = sequoia_home.join("config/keystore/cryptoki");
+    tokio::fs::create_dir_all(&cryptoki_config_dir).await?;
+    let cryptoki_config_path = cryptoki_config_dir.join("config.toml");
+    tokio::fs::write(
+        &cryptoki_config_path,
+        format!("[[modules]]\npath = \"{}\"\n", module_path().display()),
+    )
+    .await?;
     let mut command = tokio::process::Command::new("sq");
     let output = command
         .stdin(std::process::Stdio::null())
         .env("SEQUOIA_HOME", &sequoia_home)
         .env("RUST_LOG", "trace")
+        .env("SEQUOIA_CRYPTOKI_MODULE", module_path())
         .env(
             "LIBSIGULDRY_PKCS11_PROXY_PATH",
             instance.client_proxy_socket(),
@@ -665,7 +685,7 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
         .arg("--batch")
         .arg(format!("--password-file={}", password_path.display()))
         .arg("sign")
-        .arg(format!("--signer={}", &expected_pubkey.handle))
+        .arg(format!("--signer={}", fingerprint))
         .arg(format!("--signature-file={}", sig_path.display()))
         .arg(&data_path)
         .output()
@@ -674,7 +694,7 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
     assert!(
         output.status.success(),
         "'sq --batch sign --signer={} --signature-file={} {}' failed:\nstdout: {}\nstderr: {}",
-        &expected_pubkey.handle,
+        fingerprint,
         sig_path.display(),
         data_path.display(),
         String::from_utf8_lossy(&output.stdout),

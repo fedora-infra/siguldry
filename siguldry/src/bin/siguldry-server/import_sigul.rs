@@ -101,7 +101,7 @@ use std::{
 };
 
 use anyhow::Context;
-use sequoia_openpgp::{crypto::Password, serialize::MarshalInto};
+use sequoia_openpgp::crypto::Password;
 use siguldry::{
     protocol::KeyAlgorithm,
     server::{Pkcs11Binding, crypto, db},
@@ -379,21 +379,25 @@ impl SigulKey {
                 String::from_utf8_lossy(&secret_output.stderr)
             ));
         }
-        let (cert, key_algorithm) =
-            crypto::sigul::check_gpg_key(&secret_output.stdout, sigul_key_password)?;
-        let fingerprint = cert.fingerprint().to_hex();
-        let private_key = String::from_utf8(cert.as_tsk().armored().to_vec()?)?;
-        let public_key = String::from_utf8(cert.strip_secret_key_material().armored().to_vec()?)?;
+        let imported_key = crypto::sigul::check_gpg_key(&secret_output.stdout, sigul_key_password)?;
         let key = db::Key::create(
             conn,
             &self.name,
-            &fingerprint,
-            key_algorithm,
+            &imported_key.handle,
+            imported_key.algorithm,
             db::KeyPurpose::PGP,
-            &private_key,
-            &public_key,
+            &imported_key.private_key_pem,
+            &imported_key.public_key_pem,
             None,
             None,
+        )
+        .await?;
+        db::PublicKeyMaterial::create(
+            conn,
+            &key,
+            self.name.clone(),
+            db::PublicKeyMaterialType::OpenPgpCert,
+            imported_key.openpgp_cert,
         )
         .await?;
 

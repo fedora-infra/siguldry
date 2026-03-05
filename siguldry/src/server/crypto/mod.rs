@@ -6,23 +6,27 @@
 //! Sequoia is used for OpenPGP signatures and for the symmetric encryption of keys managed by Siguldry.
 //! OpenSSL is used for other signatures.
 
+use std::num::NonZeroU32;
+
 use openssl::{
+    bn::{BigNum, BigNumContext},
     ec::{EcGroup, EcKey},
     nid::Nid,
     pkey::{PKey, Private},
     rsa::Rsa,
     symm::Cipher,
+    x509,
 };
 use sequoia_openpgp::{
     Profile,
-    cert::{CertBuilder, CipherSuite},
-    crypto::Password,
+    crypto::{Password, mpi},
     packet,
+    policy::StandardPolicy,
     serialize::MarshalInto,
-    types::KeyFlags,
+    types::{KeyFlags, SignatureType},
 };
 
-use crate::{protocol::KeyAlgorithm, server::config::Pkcs11Binding};
+use crate::{protocol::KeyAlgorithm, server::db};
 
 pub mod binding;
 pub mod signing;
@@ -47,11 +51,28 @@ fn encrypt_key(key_password: Password, private_key: PKey<Private>) -> anyhow::Re
     Ok(encrypted_pem)
 }
 
+#[derive(Clone)]
+pub struct EncryptedKey {
+    pub handle: String,
+    pub encrypted_password: Vec<u8>,
+    pub private_key_pem: String,
+    pub public_key_pem: String,
+    pub openpgp_certificate: String,
+    pub x509_certificate: String,
+}
+
+/// Generate a "soft" key pair, OpenPGP certificate, and X509 certificate.
+#[allow(clippy::too_many_arguments)]
 pub fn create_encrypted_key(
-    bindings: &[Pkcs11Binding],
+    config: &crate::server::Config,
     user_password: Password,
     algorithm: KeyAlgorithm,
-) -> anyhow::Result<(String, Vec<u8>, String, String)> {
+    openpgp_profile: Profile,
+    key_usage: KeyUsage,
+    x509_common_name: String,
+    x509_validity: NonZeroU32,
+    x509_ca: Option<(db::Key, Password, db::PublicKeyMaterial)>,
+) -> anyhow::Result<EncryptedKey> {
     let key_password = generate_password()?;
     let key = match algorithm {
         KeyAlgorithm::Rsa2K => PKey::from_rsa(Rsa::generate(2048)?)?,
@@ -60,72 +81,297 @@ pub fn create_encrypted_key(
             EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?.as_ref(),
         )?)?,
     };
+    let (signing_key, issuer) = if let Some((ca_key, key_password, issuer)) = x509_ca {
+        let signing_key = key_password.map(|passphrase| {
+            PKey::private_key_from_pem_passphrase(ca_key.key_material.as_bytes(), passphrase)
+        })?;
+        let issuer = x509::X509::from_pem(issuer.data.as_bytes())?;
+        (signing_key, Some(issuer))
+    } else {
+        (key.clone(), None)
+    };
+    // This seems silly but I can't find a better interface to get the public key variant.
+    let pubkey = PKey::public_key_from_der(&key.public_key_to_der()?)?;
+    let x509_certificate = x509_certificate_for_key_private(
+        pubkey,
+        signing_key,
+        issuer,
+        &config.certificate_subject,
+        key_usage,
+        &x509_common_name,
+        x509_validity,
+    )?;
+
+    let openpgp_cert = openpgp_cert_for_key(
+        &key,
+        config.openpgp_user_id.clone().into(),
+        openpgp_profile,
+        sequoia_openpgp::types::HashAlgorithm::SHA512,
+    )?;
+    let openpgp_certificate = String::from_utf8(
+        openpgp_cert
+            .strip_secret_key_material()
+            .armored()
+            .to_vec()?,
+    )?;
     let public_key_pem = String::from_utf8(key.public_key_to_pem()?)?;
     let handle = hex::encode_upper(openssl::hash::hash(
         openssl::hash::MessageDigest::sha256(),
         &key.public_key_to_der()?,
     )?);
     let private_key_pem = encrypt_key(key_password.clone(), key)?;
-    let encrypted_password = binding::encrypt_key_password(bindings, user_password, key_password)?;
-    Ok((handle, encrypted_password, private_key_pem, public_key_pem))
+    let encrypted_password =
+        binding::encrypt_key_password(&config.pkcs11_bindings, user_password, key_password)?;
+
+    Ok(EncryptedKey {
+        handle,
+        encrypted_password,
+        private_key_pem,
+        public_key_pem,
+        openpgp_certificate,
+        x509_certificate,
+    })
 }
 
-/// A OpenPGP key.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GpgKey {
-    cert: sequoia_openpgp::Cert,
-    encrypted_password: Vec<u8>,
+fn pgp_key_to_openssl(
+    cert: &sequoia_openpgp::Cert,
+    password: &Password,
+) -> anyhow::Result<PKey<openssl::pkey::Private>> {
+    let policy = &StandardPolicy::new();
+    let key = cert
+        .keys()
+        .secret()
+        .with_policy(policy, None)
+        .supported()
+        .for_signing()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No signing-capable key found in certificate"))?
+        .key()
+        .clone()
+        .decrypt_secret(password)?;
+    let secret = match key.secret() {
+        sequoia_openpgp::packet::key::SecretKeyMaterial::Unencrypted(unencrypted) => unencrypted,
+        sequoia_openpgp::packet::key::SecretKeyMaterial::Encrypted(_) => {
+            return Err(anyhow::anyhow!("OpenPGP wasn't decrypted"));
+        }
+    };
+
+    let key = secret.map(|secret| {
+        match (key.mpis(), secret) {
+            (mpi::PublicKey::RSA { e, n }, mpi::SecretKeyMaterial::RSA { d, p, q, u: _ }) => {
+                let e = BigNum::from_slice(e.value())?;
+                let n = BigNum::from_slice(n.value())?;
+                let d = BigNum::from_slice(d.value())?;
+                let p = BigNum::from_slice(p.value())?;
+                let q = BigNum::from_slice(q.value())?;
+                let one = BigNum::from_u32(1)?;
+
+                // https://en.wikipedia.org/wiki/RSA_cryptosystem#Using_the_Chinese_remainder_algorithm
+                let mut context = BigNumContext::new_secure()?;
+                let mut p_sub_1 = BigNum::new()?;
+                p_sub_1.checked_sub(&p, &one)?;
+                let mut dmp1 = BigNum::new()?;
+                dmp1.checked_rem(&d, &p_sub_1, &mut context)?;
+
+                let mut context = BigNumContext::new_secure()?;
+                let mut q_sub_1 = BigNum::new()?;
+                q_sub_1.checked_sub(&q, &one)?;
+                let mut dmq1 = BigNum::new()?;
+                dmq1.checked_rem(&d, &q_sub_1, &mut context)?;
+
+                let mut context = BigNumContext::new_secure()?;
+                let mut iqmp = BigNum::new()?;
+                iqmp.mod_inverse(&q, &p, &mut context)?;
+
+                let privkey = Rsa::from_private_components(n, e, d, p, q, dmp1, dmq1, iqmp)?;
+                assert!(privkey.check_key()?);
+                Ok(PKey::from_rsa(privkey)?)
+            }
+            (mpi::PublicKey::ECDSA { curve, q }, mpi::SecretKeyMaterial::ECDSA { scalar }) => {
+                let curve = match curve {
+                    sequoia_openpgp::types::Curve::NistP256 => Ok(Nid::X9_62_PRIME256V1),
+                    _ => Err(anyhow::anyhow!(
+                        "Only ECDSA keys using the NIST P-256 curve are supported"
+                    )),
+                }?;
+
+                let group = openssl::ec::EcGroup::from_curve_name(curve)?;
+                let scalar = BigNum::from_slice(scalar.value())?;
+                let mut context = BigNumContext::new_secure()?;
+                let public_key = openssl::ec::EcPoint::from_bytes(&group, q.value(), &mut context)?;
+                let privkey = EcKey::from_private_components(&group, &scalar, &public_key)?;
+
+                Ok(PKey::from_ec_key(privkey)?)
+            }
+            _unsupported => Err(anyhow::anyhow!(
+                "No support for signing via OpenSSL with this OpenPGP key type"
+            )),
+        }
+    })?;
+
+    Ok(key)
 }
 
-impl GpgKey {
-    /// Create a new OpenPGP key bound to the server.
-    pub fn new<U: Into<packet::UserID>>(
-        bindings: &[Pkcs11Binding],
-        user_id: U,
-        user_password: Password,
-        profile: Profile,
-        cipher: CipherSuite,
-    ) -> anyhow::Result<GpgKey> {
-        let key_password = generate_password()?;
-        let encrypted_password =
-            binding::encrypt_key_password(bindings, user_password.clone(), key_password.clone())?;
-        let (cert, _signature) = CertBuilder::new()
-            .set_profile(profile)?
-            .set_cipher_suite(cipher)
-            .add_userid(user_id)
-            .set_primary_key_flags(KeyFlags::signing())
-            .set_password(Some(key_password))
-            .generate()?;
+// TODO: Delete this when we yank out all the PGP signing stuff on the server side
+pub(crate) fn openssl_key_to_pgp(
+    cert: &sequoia_openpgp::Cert,
+    openssl_key: &PKey<openssl::pkey::Private>,
+) -> anyhow::Result<sequoia_openpgp::Cert> {
+    let policy = &StandardPolicy::new();
+    let ka = cert
+        .keys()
+        .with_policy(policy, None)
+        .supported()
+        .for_signing()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No signing-capable key found"))?;
 
-        Ok(GpgKey {
-            cert,
-            encrypted_password,
-        })
-    }
+    let key = ka.key();
 
-    /// Get the encrypted, ASCII-armored private key.
-    pub fn armored_key(&self) -> anyhow::Result<Vec<u8>> {
-        self.cert.as_tsk().armored().to_vec()
-    }
+    let secret = if let Ok(rsa) = openssl_key.rsa() {
+        let d = mpi::ProtectedMPI::from(rsa.d().to_vec());
+        let p = mpi::ProtectedMPI::from(rsa.p().unwrap().to_vec());
+        let q = mpi::ProtectedMPI::from(rsa.q().unwrap().to_vec());
 
-    pub fn public_key(&self) -> anyhow::Result<String> {
-        Ok(String::from_utf8(
-            self.cert
-                .clone()
-                .strip_secret_key_material()
-                .armored()
-                .to_vec()?,
-        )?)
-    }
+        // Inverse of p mod q.
+        let mut context = BigNumContext::new_secure()?;
+        let mut u = BigNum::new()?;
+        u.mod_inverse(rsa.p().unwrap(), rsa.q().unwrap(), &mut context)?;
+        let u = mpi::ProtectedMPI::from(u.to_vec());
 
-    /// Get the hex OpenPGP fingerprint.
-    pub fn fingerprint(&self) -> String {
-        self.cert.fingerprint().to_hex()
-    }
+        mpi::SecretKeyMaterial::RSA { d, p, q, u }
+    } else if let Ok(ec) = openssl_key.ec_key() {
+        let scalar = mpi::ProtectedMPI::from(ec.private_key().to_vec());
+        mpi::SecretKeyMaterial::ECDSA { scalar }
+    } else {
+        return Err(anyhow::anyhow!("Unsupported key type"));
+    };
 
-    pub fn encrypted_password(&self) -> &[u8] {
-        &self.encrypted_password
-    }
+    let (key_with_secret, _old) = key.clone().add_secret(secret.into());
+    let key_with_secret = key_with_secret.role_into_primary();
+    let key_packet = sequoia_openpgp::packet::Packet::SecretKey(key_with_secret);
+    let (cert, _changed) = cert.clone().insert_packets(key_packet)?;
+
+    Ok(cert)
+}
+
+/// Build an OpenPGP certificate for an OpenSSL key.
+///
+/// Note that this will need adjustments to handle hybrid keys.
+fn openpgp_cert_for_key(
+    openssl_key: &PKey<Private>,
+    user_id: packet::UserID,
+    profile: Profile,
+    hash_algorithm: sequoia_openpgp::types::HashAlgorithm,
+) -> anyhow::Result<sequoia_openpgp::Cert> {
+    let (public, secret, alorithm) = if let Ok(rsa) = openssl_key.rsa() {
+        let p = rsa
+            .p()
+            .ok_or_else(|| anyhow::anyhow!("Generated RSA key is missing p"))?;
+        let q = rsa
+            .q()
+            .ok_or_else(|| anyhow::anyhow!("Generated RSA key is missing q"))?;
+        // Inverse of p mod q.
+        let mut context = BigNumContext::new_secure()?;
+        let mut u = BigNum::new()?;
+        u.mod_inverse(p, q, &mut context)?;
+
+        let u = mpi::ProtectedMPI::from(u.to_vec());
+        let d = mpi::ProtectedMPI::from(rsa.d().to_vec());
+        let p = mpi::ProtectedMPI::from(p.to_vec());
+        let q = mpi::ProtectedMPI::from(q.to_vec());
+        let secret = mpi::SecretKeyMaterial::RSA { d, p, q, u };
+        let public = mpi::PublicKey::RSA {
+            e: rsa.e().to_vec().into(),
+            n: rsa.n().to_vec().into(),
+        };
+
+        (
+            public,
+            secret,
+            sequoia_openpgp::types::PublicKeyAlgorithm::RSAEncryptSign,
+        )
+    } else if let Ok(ec) = openssl_key.ec_key() {
+        let secret = mpi::SecretKeyMaterial::ECDSA {
+            scalar: mpi::ProtectedMPI::from(ec.private_key().to_vec()),
+        };
+        let mut context = BigNumContext::new_secure()?;
+        let public = ec.public_key().to_bytes(
+            ec.group(),
+            openssl::ec::PointConversionForm::UNCOMPRESSED,
+            &mut context,
+        )?;
+        let public = mpi::PublicKey::ECDSA {
+            curve: sequoia_openpgp::types::Curve::NistP256,
+            q: mpi::MPI::from(public),
+        };
+
+        (
+            public,
+            secret,
+            sequoia_openpgp::types::PublicKeyAlgorithm::ECDSA,
+        )
+    } else {
+        return Err(anyhow::anyhow!("Unsupported key type"));
+    };
+
+    let creation_time = std::time::SystemTime::now();
+    let key: packet::key::Key<packet::key::SecretParts, packet::key::PrimaryRole> = match profile {
+        Profile::RFC9580 => {
+            packet::key::Key6::with_secret(creation_time, alorithm, public, secret.into())?.into()
+        }
+        Profile::RFC4880 => {
+            packet::key::Key4::with_secret(creation_time, alorithm, public, secret.into())?.into()
+        }
+        _ => return Err(anyhow::anyhow!("Unsupported OpenPGP profile")),
+    };
+    let key_packet = packet::Packet::SecretKey(key.clone());
+
+    let builder = packet::signature::SignatureBuilder::new(SignatureType::DirectKey)
+        .set_hash_algo(hash_algorithm)
+        .set_signature_creation_time(creation_time)?
+        .set_key_flags(KeyFlags::empty().set_signing().set_certification())?
+        .set_features(sequoia_openpgp::types::Features::sequoia())?
+        .set_preferred_hash_algorithms(vec![
+            sequoia_openpgp::types::HashAlgorithm::SHA512,
+            sequoia_openpgp::types::HashAlgorithm::SHA256,
+        ])?
+        .set_preferred_symmetric_algorithms(vec![
+            sequoia_openpgp::types::SymmetricAlgorithm::AES256,
+            sequoia_openpgp::types::SymmetricAlgorithm::AES128,
+        ])?;
+    let direct_key_signature =
+        builder.sign_direct_key(&mut key.clone().into_keypair()?, key.parts_as_public())?;
+
+    let builder = packet::signature::SignatureBuilder::new(SignatureType::PositiveCertification)
+        .set_hash_algo(hash_algorithm)
+        .set_signature_creation_time(creation_time)?
+        .set_key_flags(KeyFlags::empty().set_signing().set_certification())?
+        .set_features(sequoia_openpgp::types::Features::sequoia())?
+        .set_preferred_hash_algorithms(vec![
+            sequoia_openpgp::types::HashAlgorithm::SHA512,
+            sequoia_openpgp::types::HashAlgorithm::SHA256,
+        ])?
+        .set_preferred_symmetric_algorithms(vec![
+            sequoia_openpgp::types::SymmetricAlgorithm::AES256,
+            sequoia_openpgp::types::SymmetricAlgorithm::AES128,
+        ])?;
+    let positive_cert_signature = user_id.bind(
+        &mut key.clone().into_keypair()?,
+        &sequoia_openpgp::Cert::try_from(key_packet.clone())?,
+        builder,
+    )?;
+
+    let cert = sequoia_openpgp::Cert::try_from(vec![
+        key_packet,
+        packet::Packet::from(user_id),
+        packet::Packet::from(direct_key_signature),
+        packet::Packet::from(positive_cert_signature),
+    ])?
+    .strip_secret_key_material();
+    assert!(!cert.is_tsk());
+
+    Ok(cert)
 }
 
 /// This module contains functions for working with Sigul-bound keys.
@@ -135,7 +381,7 @@ impl GpgKey {
 pub mod sigul {
     use anyhow::Context;
     use openssl::pkey::{PKey, Private};
-    use sequoia_openpgp::{crypto::Password, parse::Parse};
+    use sequoia_openpgp::{crypto::Password, parse::Parse, serialize::SerializeInto};
 
     use crate::protocol::KeyAlgorithm;
 
@@ -153,10 +399,15 @@ pub mod sigul {
         super::encrypt_key(key_password, private_key)
     }
 
-    pub fn check_gpg_key(
-        bytes: &[u8],
-        key_password: Password,
-    ) -> anyhow::Result<(sequoia_openpgp::Cert, KeyAlgorithm)> {
+    pub struct ImportedPgpKey {
+        pub handle: String,
+        pub private_key_pem: String,
+        pub public_key_pem: String,
+        pub openpgp_cert: String,
+        pub algorithm: KeyAlgorithm,
+    }
+
+    pub fn check_gpg_key(bytes: &[u8], key_password: Password) -> anyhow::Result<ImportedPgpKey> {
         let cert = sequoia_openpgp::Cert::from_bytes(bytes)
             .context("Failed to parse the exported OpenPGP secret key with Sequoia")?;
 
@@ -175,18 +426,7 @@ pub mod sigul {
             .clone()
             .decrypt_secret(&key_password)?;
 
-        // Be certain all secret keys are encrypted
-        if cert
-            .keys()
-            .secret()
-            .any(|key| key.key().has_unencrypted_secret())
-        {
-            return Err(anyhow::anyhow!(
-                "The certificate contains an unencrypted secret key"
-            ));
-        }
-
-        let key_algorithm = match cert.primary_key().key().pk_algo() {
+        let algorithm = match cert.primary_key().key().pk_algo() {
             sequoia_openpgp::types::PublicKeyAlgorithm::RSAEncryptSign => {
                 let bits = cert.primary_key().key().mpis().bits().unwrap_or(0);
                 match bits {
@@ -204,8 +444,155 @@ pub mod sigul {
             }
         };
 
-        Ok((cert, key_algorithm))
+        let private_key = super::pgp_key_to_openssl(&cert, &key_password)?;
+        let handle = hex::encode_upper(openssl::hash::hash(
+            openssl::hash::MessageDigest::sha256(),
+            &private_key.public_key_to_der()?,
+        )?);
+        let public_key_pem = String::from_utf8(private_key.public_key_to_pem()?)?;
+        let private_key_pem = super::encrypt_key(key_password, private_key)?;
+        let openpgp_cert = String::from_utf8(cert.strip_secret_key_material().armored().to_vec()?)?;
+
+        Ok(ImportedPgpKey {
+            handle,
+            private_key_pem,
+            public_key_pem,
+            openpgp_cert,
+            algorithm,
+        })
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[non_exhaustive]
+pub enum KeyUsage {
+    #[default]
+    CodeSigning,
+    CertificateAuthority,
+}
+
+fn x509_certificate_for_key_private(
+    pubkey: PKey<openssl::pkey::Public>,
+    signing_key: PKey<Private>,
+    issuer: Option<x509::X509>,
+    subject_config: &crate::server::config::X509SubjectName,
+    usage: KeyUsage,
+    common_name: &str,
+    validity_days: NonZeroU32,
+) -> anyhow::Result<String> {
+    let mut builder = x509::X509Builder::new()?;
+    builder.set_pubkey(&pubkey)?;
+
+    let mut serial_number = [0; 20];
+    openssl::rand::rand_bytes(&mut serial_number)?;
+    let mut serial_number = openssl::bn::BigNum::from_slice(&serial_number)?;
+    serial_number.set_negative(false);
+    builder.set_serial_number(openssl::asn1::Asn1Integer::from_bn(&serial_number)?.as_ref())?;
+
+    let mut subject_name = x509::X509NameBuilder::new()?;
+    subject_name.append_entry_by_nid(Nid::COUNTRYNAME, &subject_config.country)?;
+    subject_name
+        .append_entry_by_nid(Nid::STATEORPROVINCENAME, &subject_config.state_or_province)?;
+    subject_name.append_entry_by_nid(Nid::LOCALITYNAME, &subject_config.locality)?;
+    subject_name.append_entry_by_nid(Nid::ORGANIZATIONNAME, &subject_config.organization)?;
+    subject_name.append_entry_by_nid(
+        Nid::ORGANIZATIONALUNITNAME,
+        &subject_config.organizational_unit,
+    )?;
+    subject_name.append_entry_by_nid(Nid::COMMONNAME, common_name)?;
+    let subject_name = subject_name.build();
+    builder.set_subject_name(&subject_name)?;
+
+    let issuer_name = issuer
+        .as_ref()
+        .map_or(subject_name.as_ref(), |ca| ca.subject_name());
+    builder.set_issuer_name(issuer_name)?;
+
+    builder.set_not_before(openssl::asn1::Asn1Time::days_from_now(0)?.as_ref())?;
+    builder.set_not_after(openssl::asn1::Asn1Time::days_from_now(validity_days.get())?.as_ref())?;
+
+    let mut basic_constraints = x509::extension::BasicConstraints::new();
+    basic_constraints.critical().pathlen(0);
+    if let KeyUsage::CertificateAuthority = usage {
+        basic_constraints.ca();
+    }
+    builder.append_extension(basic_constraints.build()?)?;
+
+    match usage {
+        KeyUsage::CodeSigning => {
+            builder.append_extension(
+                x509::extension::KeyUsage::new()
+                    .critical()
+                    .digital_signature()
+                    .build()?,
+            )?;
+            builder.append_extension(
+                x509::extension::ExtendedKeyUsage::new()
+                    .code_signing()
+                    .build()?,
+            )?;
+        }
+        KeyUsage::CertificateAuthority => {
+            builder.append_extension(
+                x509::extension::KeyUsage::new()
+                    .critical()
+                    .key_cert_sign()
+                    .crl_sign()
+                    .build()?,
+            )?;
+        }
+    };
+
+    let subj_key_id = x509::extension::SubjectKeyIdentifier::new();
+    let context = builder.x509v3_context(issuer.as_ref().map(|i| i.as_ref()), None);
+    builder.append_extension(subj_key_id.build(&context)?)?;
+    builder.sign(&signing_key, openssl::hash::MessageDigest::sha512())?;
+    let certificate = String::from_utf8(builder.build().to_pem()?)?;
+
+    Ok(certificate)
+}
+
+/// Generate an X509 certificate for the provided key.
+///
+/// If the `certificate_authority` is `None`, the certificate will be self-signed.
+/// The `key_password` is for the _signing key_, so the certificate authority if it's Some,
+/// or the key if this will be a self-signed certificate.
+pub fn x509_certificate_for_key(
+    key: db::Key,
+    certificate_authority: Option<(db::Key, db::PublicKeyMaterial)>,
+    key_password: Password,
+    subject_config: &crate::server::config::X509SubjectName,
+    usage: KeyUsage,
+    common_name: &str,
+    validity_days: NonZeroU32,
+) -> anyhow::Result<String> {
+    let (signing_key, issuer) = if let Some((key, cert)) = certificate_authority {
+        let ca_cert = x509::X509::from_pem(cert.data.as_bytes())?;
+        (key, Some(ca_cert))
+    } else {
+        (key.clone(), None)
+    };
+
+    let pubkey = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+    let signing_key = key_password.map(|passphrase| {
+        openssl::pkey::PKey::private_key_from_pem_passphrase(
+            signing_key.key_material.as_bytes(),
+            passphrase,
+        )
+    })?;
+
+    let certificate = x509_certificate_for_key_private(
+        pubkey,
+        signing_key,
+        issuer,
+        subject_config,
+        usage,
+        common_name,
+        validity_days,
+    )?;
+
+    Ok(certificate)
 }
 
 // Shared test setup functions.
@@ -442,6 +829,14 @@ pub(crate) mod test_utils {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
+    use sequoia_openpgp::{
+        cert::{CertBuilder, CipherSuite},
+        parse::Parse,
+        serialize::stream::{Message, Signer},
+    };
+
     use super::*;
 
     // Generated passwords should be base64 encoded and 128 bytes of randomness.
@@ -451,6 +846,120 @@ mod tests {
         let string = password.map(|p| String::from_utf8(p.to_vec()))?;
         let bytes = openssl::base64::decode_block(&string)?;
         assert_eq!(128, bytes.len());
+
+        Ok(())
+    }
+
+    #[test]
+    fn roundtrip_rsa_pgp() -> anyhow::Result<()> {
+        let key_password = generate_password()?;
+        let (cert, _signature) = CertBuilder::new()
+            .set_profile(Profile::RFC4880)?
+            .set_cipher_suite(CipherSuite::RSA4k)
+            .add_userid("User <user@example.com>")
+            .set_primary_key_flags(KeyFlags::signing())
+            .set_password(Some(key_password.clone()))
+            .generate()?;
+        let public_cert = cert.clone().strip_secret_key_material();
+
+        let key = pgp_key_to_openssl(&cert, &key_password)?;
+        let new_cert = openssl_key_to_pgp(&public_cert, &key)?;
+        assert!(
+            !public_cert.is_tsk(),
+            "The public cert should not include secret materials"
+        );
+        assert!(new_cert.is_tsk(), "The secret key has been added back");
+        assert_eq!(cert, new_cert);
+
+        let policy = &StandardPolicy::new();
+        let signing_key = new_cert
+            .keys()
+            .secret()
+            .with_policy(policy, None)
+            .supported()
+            .for_signing()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("No signing-capable key found in certificate"))?
+            .key()
+            .clone()
+            .into_keypair()?;
+
+        let blob = "🦧📖".as_bytes();
+        let signature = {
+            let mut sink = vec![];
+            let mut signer = Signer::new(Message::new(&mut sink), signing_key)?
+                .detached()
+                .build()?;
+            signer.write_all(blob)?;
+            signer.finalize()?;
+            tracing::trace!("Successfully signed message");
+            Ok::<_, anyhow::Error>(sink)
+        }?;
+
+        struct VerifyHelper<'a> {
+            cert: &'a sequoia_openpgp::Cert,
+        }
+
+        impl sequoia_openpgp::parse::stream::VerificationHelper for VerifyHelper<'_> {
+            fn get_certs(
+                &mut self,
+                _ids: &[sequoia_openpgp::KeyHandle],
+            ) -> sequoia_openpgp::Result<Vec<sequoia_openpgp::Cert>> {
+                Ok(vec![self.cert.clone()])
+            }
+
+            fn check(
+                &mut self,
+                structure: sequoia_openpgp::parse::stream::MessageStructure<'_>,
+            ) -> sequoia_openpgp::Result<()> {
+                for layer in structure {
+                    match layer {
+                        sequoia_openpgp::parse::stream::MessageLayer::SignatureGroup {
+                            results,
+                        } => {
+                            for result in results {
+                                match result {
+                                    Ok(_) => {}
+                                    Err(
+                                        sequoia_openpgp::parse::stream::VerificationError::MissingKey {
+                                            sig: _,
+                                        },
+                                    ) => return Err(anyhow::anyhow!("it's no good".to_string())),
+                                    unexpected => panic!("Unexpected error: {:?}", unexpected),
+                                }
+                            }
+                        }
+                        _ => panic!("Unexpected message structure"),
+                    }
+                }
+                Ok(())
+            }
+        }
+        let helper = VerifyHelper { cert: &cert };
+        let policy = &StandardPolicy::new();
+        let mut verifier =
+            sequoia_openpgp::parse::stream::DetachedVerifierBuilder::from_bytes(&signature)?
+                .with_policy(policy, None, helper)?;
+        verifier.verify_bytes(blob)?;
+
+        let (different_cert, _signature) = CertBuilder::new()
+            .set_profile(Profile::RFC4880)?
+            .set_cipher_suite(CipherSuite::RSA4k)
+            .add_userid("User <user@example.com>")
+            .set_primary_key_flags(KeyFlags::signing())
+            .set_password(Some(key_password.clone()))
+            .generate()?;
+        let helper = VerifyHelper {
+            cert: &different_cert,
+        };
+        let policy = &StandardPolicy::new();
+        let mut verifier =
+            sequoia_openpgp::parse::stream::DetachedVerifierBuilder::from_bytes(&signature)?
+                .with_policy(policy, None, helper)?;
+        assert!(
+            verifier.verify_bytes(blob).is_err(),
+            "This certificate didn't sign the data"
+        );
 
         Ok(())
     }

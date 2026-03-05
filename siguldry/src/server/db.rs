@@ -150,6 +150,8 @@ pub enum PublicKeyMaterialType {
     X509,
     /// A signed revocation for a key.
     Revocation,
+    /// An OpenPGP certificate.
+    OpenPgpCert,
 }
 
 impl TryFrom<&str> for PublicKeyMaterialType {
@@ -159,6 +161,7 @@ impl TryFrom<&str> for PublicKeyMaterialType {
         match value {
             "x509" => Ok(Self::X509),
             "revocation" => Ok(Self::Revocation),
+            "openpgp" => Ok(Self::OpenPgpCert),
             _ => Err(anyhow::anyhow!(
                 "The database contains public key material types the application \
             is unaware of; this is either an application bug, or the database migration level does \
@@ -171,8 +174,9 @@ impl TryFrom<&str> for PublicKeyMaterialType {
 impl PublicKeyMaterialType {
     pub fn as_str(&self) -> &str {
         match self {
-            PublicKeyMaterialType::X509 => "x509",
-            PublicKeyMaterialType::Revocation => "revocation",
+            Self::X509 => "x509",
+            Self::Revocation => "revocation",
+            Self::OpenPgpCert => "openpgp",
         }
     }
 }
@@ -709,8 +713,9 @@ mod tests {
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
-        assert_eq!(2, public_key_material_types.len());
+        assert_eq!(3, public_key_material_types.len());
         assert!(public_key_material_types.contains(&PublicKeyMaterialType::X509));
+        assert!(public_key_material_types.contains(&PublicKeyMaterialType::OpenPgpCert));
         assert!(public_key_material_types.contains(&PublicKeyMaterialType::Revocation));
 
         Ok(())

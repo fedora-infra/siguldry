@@ -32,9 +32,11 @@ CREATE TABLE IF NOT EXISTS "keys" (
     -- is the hex-encoded ID attribute of the key within the associated token. That is, it is a human-
     -- readable version of the blob stored in the `pkcs11_key_id` field.
     --
-    -- The scheme is dependent on the type of key, but it will be a text representation (ASCII-armored, PEM-encoded, etc)
+    -- The format used is PEM-encoded PKCS#8 EncryptedPrivateKeyInfo structures. The key is encrypted
+    -- with AES-256-CBC using a 128 byte server-generated secret. This secret is then encrypted per-user
+    -- in the key_accesses table.
     "key_material" TEXT NOT NULL,
-    -- The public key in a text-friendly encoding (ASCII-armored, PEM-encoded, etc)
+    -- The PEM-encoded public key.
     "public_key" TEXT NOT NULL,
     "pkcs11_token_id" INTEGER,
     -- The Id attribute of the key within the token
@@ -66,6 +68,7 @@ CREATE TABLE IF NOT EXISTS "public_key_material_types" (
     "type" TEXT NOT NULL PRIMARY KEY
 );
 INSERT INTO public_key_material_types(type) VALUES ("x509");
+INSERT INTO public_key_material_types(type) VALUES ("openpgp");
 INSERT INTO public_key_material_types(type) VALUES ("revocation");
 
 -- This table contains data associated with a key pair that is meant to be distributed.

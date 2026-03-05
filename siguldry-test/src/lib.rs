@@ -115,11 +115,11 @@ impl Instance {
 pub mod keys {
     pub const PGP_KEY_NAME: &str = "test-gpg-key";
     pub const PGP_KEY_PASSWORD: &str = "🪿🪿🪿";
-    pub const PGP_KEY_EMAIL: &str = "admin@example.com";
+    pub const PGP_KEY_EMAIL: &str = "Test Signing <sign@example.com>";
 
     pub const PGP_EC_KEY_NAME: &str = "test-gpg-ec-key";
     pub const PGP_EC_KEY_PASSWORD: &str = "🐉🐉🐉🐉🐉";
-    pub const PGP_EC_KEY_EMAIL: &str = "admin@example.com";
+    pub const PGP_EC_KEY_EMAIL: &str = "Test Signing <sign@example.com>";
 
     pub const CA_KEY_NAME: &str = "test-ca-key";
     pub const CA_KEY_PASSWORD: &str = "🦀🦀🦀🦀";
@@ -421,13 +421,12 @@ impl InstanceBuilder {
                     &server_config_file,
                     &[
                         "manage",
-                        "pgp",
+                        "key",
                         "create",
-                        "--profile",
+                        "--openpgp-profile",
                         profile,
                         "siguldry-client",
                         keys::PGP_KEY_NAME,
-                        keys::PGP_KEY_EMAIL,
                     ],
                     Some(&format!("{}\n", keys::PGP_KEY_PASSWORD)),
                 )?;
@@ -440,15 +439,14 @@ impl InstanceBuilder {
                     &server_config_file,
                     &[
                         "manage",
-                        "pgp",
+                        "key",
                         "create",
-                        "--profile",
+                        "--openpgp-profile",
                         profile,
                         "--algorithm",
                         "p256",
                         "siguldry-client",
                         keys::PGP_EC_KEY_NAME,
-                        keys::PGP_EC_KEY_EMAIL,
                     ],
                     Some(&format!("{}\n", keys::PGP_EC_KEY_PASSWORD)),
                 )?;
@@ -456,7 +454,7 @@ impl InstanceBuilder {
             }
 
             if self.with_ca_key {
-                Self::create_ca_key(&server_bin, self.with_pkcs11_binding, &server_config_file)?;
+                Self::create_ca_key(&server_bin, &server_config_file)?;
                 maybe_auto_unlock.push((keys::CA_KEY_NAME, keys::CA_KEY_PASSWORD));
             }
 
@@ -794,11 +792,7 @@ impl InstanceBuilder {
         Ok(())
     }
 
-    fn create_ca_key(
-        server_bin: &Path,
-        with_pkcs11_binding: bool,
-        server_config_file: &Path,
-    ) -> anyhow::Result<()> {
+    fn create_ca_key(server_bin: &Path, server_config_file: &Path) -> anyhow::Result<()> {
         Self::run_server_command(
             server_bin,
             server_config_file,
@@ -806,35 +800,11 @@ impl InstanceBuilder {
                 "manage",
                 "key",
                 "create",
+                "--x509-usage=certificate-authority",
                 "siguldry-client",
                 keys::CA_KEY_NAME,
             ],
             Some(&format!("{}\n", keys::CA_KEY_PASSWORD)),
-        )?;
-
-        let input = if with_pkcs11_binding {
-            format!("{}\n{}\n", keys::HSM_PIN, keys::CA_KEY_PASSWORD)
-        } else {
-            format!("{}\n", keys::CA_KEY_PASSWORD)
-        };
-        Self::run_server_command(
-            server_bin,
-            server_config_file,
-            &[
-                "manage",
-                "key",
-                "x509",
-                "--user-name",
-                "siguldry-client",
-                "--key-name",
-                keys::CA_KEY_NAME,
-                "--common-name",
-                keys::CA_KEY_NAME,
-                "--validity-days",
-                "30",
-                "certificate-authority",
-            ],
-            Some(&input),
         )
     }
 
@@ -846,32 +816,16 @@ impl InstanceBuilder {
                 "manage",
                 "key",
                 "create",
+                "--x509-usage=code-signing",
+                format!("--x509-ca-key-name={}", keys::CA_KEY_NAME).as_str(),
                 "siguldry-client",
                 keys::CODESIGNING_KEY_NAME,
             ],
-            Some(&format!("{}\n", keys::CODESIGNING_KEY_PASSWORD)),
-        )?;
-
-        Self::run_server_command(
-            server_bin,
-            server_config_file,
-            &[
-                "manage",
-                "key",
-                "x509",
-                "--user-name",
-                "siguldry-client",
-                "--key-name",
-                keys::CODESIGNING_KEY_NAME,
-                "--common-name",
-                keys::CODESIGNING_KEY_NAME,
-                "--validity-days",
-                "30",
-                "--certificate-authority",
-                keys::CA_KEY_NAME,
-                "code-signing",
-            ],
-            Some(&format!("{}\n", keys::CA_KEY_PASSWORD)),
+            Some(&format!(
+                "{}\n{}\n",
+                keys::CODESIGNING_KEY_PASSWORD,
+                keys::CA_KEY_PASSWORD
+            )),
         )
     }
 
@@ -884,32 +838,16 @@ impl InstanceBuilder {
                 "key",
                 "create",
                 "--algorithm=p256",
+                "--x509-usage=code-signing",
+                format!("--x509-ca-key-name={}", keys::CA_KEY_NAME).as_str(),
                 "siguldry-client",
                 keys::EC_KEY_NAME,
             ],
-            Some(&format!("{}\n", keys::EC_KEY_PASSWORD)),
-        )?;
-
-        Self::run_server_command(
-            server_bin,
-            server_config_file,
-            &[
-                "manage",
-                "key",
-                "x509",
-                "--user-name",
-                "siguldry-client",
-                "--key-name",
-                keys::EC_KEY_NAME,
-                "--common-name",
-                keys::EC_KEY_NAME,
-                "--validity-days",
-                "30",
-                "--certificate-authority",
-                keys::CA_KEY_NAME,
-                "code-signing",
-            ],
-            Some(&format!("{}\n", keys::CA_KEY_PASSWORD)),
+            Some(&format!(
+                "{}\n{}\n",
+                keys::EC_KEY_PASSWORD,
+                keys::CA_KEY_PASSWORD
+            )),
         )
     }
 

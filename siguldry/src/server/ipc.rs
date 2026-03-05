@@ -39,7 +39,6 @@ type KeyMap = HashMap<String, UnlockedKey>;
 enum UnlockedKey {
     Private {
         key: PKey<openssl::pkey::Private>,
-        password: Password,
     },
     Pkcs11 {
         // Used to track if we've already loaded the module
@@ -469,13 +468,7 @@ async fn unlock(
             &key_access.encrypted_passphrase,
         )
         .await?;
-        key_passwords.insert(
-            key.name,
-            UnlockedKey::Private {
-                key: private_key,
-                password,
-            },
-        );
+        key_passwords.insert(key.name, UnlockedKey::Private { key: private_key });
     }
     return Ok(());
 }
@@ -493,10 +486,9 @@ async fn sign(
         .ok_or_else(|| anyhow::anyhow!("You need to unlock the key"))?;
 
     let signatures = match unlocked_key {
-        UnlockedKey::Private {
-            key: private_key,
-            password: _,
-        } => crypto::signing::sign_with_softkey(&key, private_key, digests),
+        UnlockedKey::Private { key: private_key } => {
+            crypto::signing::sign_with_softkey(&key, private_key, digests)
+        }
         UnlockedKey::Pkcs11 {
             module: _,
             pkcs11,
@@ -524,8 +516,8 @@ async fn pgp_sign(
     let unlocked_key = keystore
         .get(key_name)
         .ok_or_else(|| anyhow::anyhow!("Key must be unlocked before signing"))?;
-    let password = match unlocked_key {
-        UnlockedKey::Private { key: _, password } => Ok(password),
+    let openssl_key = match unlocked_key {
+        UnlockedKey::Private { key } => Ok(key),
         UnlockedKey::Pkcs11 {
             module: _,
             pkcs11: _,
@@ -533,7 +525,12 @@ async fn pgp_sign(
             pin: _,
         } => Err(anyhow::anyhow!("Wrong key type for this call")),
     }?;
-    let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material)?;
+    let cert = db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::OpenPgpCert)
+        .await?
+        .pop()
+        .unwrap();
+    let cert = sequoia_openpgp::Cert::from_bytes(&cert.data)?;
+    let cert = crypto::openssl_key_to_pgp(&cert, openssl_key)?;
     let policy = &StandardPolicy::new();
     let signing_key = cert
         .keys()
@@ -545,7 +542,6 @@ async fn pgp_sign(
         .ok_or_else(|| anyhow::anyhow!("No signing-capable key found in certificate"))?
         .key()
         .clone()
-        .decrypt_secret(password)?
         .into_keypair()?;
     let key_handle: KeyHandle = key.handle.parse()?;
     tracing::debug!(handle=?key_handle, "keystore found key");

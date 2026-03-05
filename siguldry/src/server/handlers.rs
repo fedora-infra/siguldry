@@ -14,7 +14,7 @@ use crate::{
     protocol::{self, DigestAlgorithm, PgpSignatureType, Response, ServerError, json},
     server::{
         Config,
-        db::{self, KeyPurpose, User},
+        db::{self, User},
         ipc,
     },
 };
@@ -65,24 +65,29 @@ impl Handler {
     ) -> Result<Response, ServerError> {
         let mut keys = vec![];
         for key in db::Key::list(conn).await? {
-            let certificates = if key.key_purpose == KeyPurpose::PGP {
-                let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material.as_bytes())?;
-                let version = cert.primary_key().key().version();
-                let fingerprint = cert.fingerprint().to_hex();
-                vec![crate::protocol::Certificate::Pgp {
-                    version,
-                    fingerprint,
-                    certificate: key.public_key.clone(),
-                }]
-            } else {
-                db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
+            let certificates = {
+                let x509 = db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
                     .await?
                     .into_iter()
                     .map(|cert| crate::protocol::Certificate::X509 {
                         name: cert.name,
                         certificate: cert.data,
-                    })
-                    .collect()
+                    });
+                let pgp =
+                    db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::OpenPgpCert)
+                        .await?
+                        .into_iter()
+                        .filter_map(|cert| {
+                            sequoia_openpgp::Cert::from_bytes(cert.data.as_bytes())
+                                .ok()
+                                .map(|parsed_cert| crate::protocol::Certificate::Pgp {
+                                    version: parsed_cert.primary_key().key().version(),
+                                    certificate: cert.data,
+                                    fingerprint: parsed_cert.fingerprint().to_hex(),
+                                })
+                        });
+
+                x509.chain(pgp).collect()
             };
             keys.push(protocol::Key {
                 name: key.name,
@@ -125,24 +130,29 @@ impl Handler {
         key_name: String,
     ) -> Result<Response, ServerError> {
         let key = db::Key::get(conn, &key_name).await?;
-        let certificates = if key.key_purpose == KeyPurpose::PGP {
-            let cert = sequoia_openpgp::Cert::from_bytes(&key.key_material.as_bytes())?;
-            let version = cert.primary_key().key().version();
-            let fingerprint = cert.fingerprint().to_hex();
-            vec![crate::protocol::Certificate::Pgp {
-                version,
-                fingerprint,
-                certificate: key.public_key.clone(),
-            }]
-        } else {
-            db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
+        let certificates = {
+            let x509 = db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
                 .await?
                 .into_iter()
                 .map(|cert| crate::protocol::Certificate::X509 {
                     name: cert.name,
                     certificate: cert.data,
-                })
-                .collect()
+                });
+            let pgp =
+                db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::OpenPgpCert)
+                    .await?
+                    .into_iter()
+                    .filter_map(|cert| {
+                        sequoia_openpgp::Cert::from_bytes(cert.data.as_bytes())
+                            .ok()
+                            .map(|parsed_cert| crate::protocol::Certificate::Pgp {
+                                version: parsed_cert.primary_key().key().version(),
+                                certificate: cert.data,
+                                fingerprint: parsed_cert.fingerprint().to_hex(),
+                            })
+                    });
+
+            x509.chain(pgp).collect()
         };
 
         Ok(json::Response::GetKey {
