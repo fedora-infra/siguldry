@@ -6,6 +6,10 @@
 //! This includes functions for signing using PGP, or using various key algorithms (RSA PKCS #1
 //! v1.5, ECDSA, etc).
 
+// asn1::Asn1Read results in large errors (~136 bytes). Worth checking dropping this allow
+// on asn1 upgrades.
+#![allow(clippy::result_large_err)]
+
 use anyhow::Context;
 use asn1::{ObjectIdentifier, oid};
 use cryptoki::{mechanism::Mechanism, session::Session};
