@@ -102,8 +102,6 @@ impl User {
 pub enum PublicKeyMaterialType {
     /// An X509 certificate.
     X509,
-    /// A signed revocation for a key.
-    Revocation,
     /// An OpenPGP certificate.
     OpenPgpCert,
 }
@@ -114,7 +112,6 @@ impl TryFrom<&str> for PublicKeyMaterialType {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "x509" => Ok(Self::X509),
-            "revocation" => Ok(Self::Revocation),
             "openpgp" => Ok(Self::OpenPgpCert),
             _ => Err(anyhow::anyhow!(
                 "The database contains public key material types the application \
@@ -129,7 +126,6 @@ impl PublicKeyMaterialType {
     pub fn as_str(&self) -> &str {
         match self {
             Self::X509 => "x509",
-            Self::Revocation => "revocation",
             Self::OpenPgpCert => "openpgp",
         }
     }
@@ -322,12 +318,7 @@ pub struct Key {
 
 impl std::fmt::Display for Key {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "\"{}\" ({} key)",
-            self.name,
-            self.key_algorithm.as_str(),
-        )
+        write!(f, "\"{}\" ({} key)", self.name, self.key_algorithm.as_str(),)
     }
 }
 
@@ -636,10 +627,9 @@ mod tests {
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
-        assert_eq!(3, public_key_material_types.len());
+        assert_eq!(2, public_key_material_types.len());
         assert!(public_key_material_types.contains(&PublicKeyMaterialType::X509));
         assert!(public_key_material_types.contains(&PublicKeyMaterialType::OpenPgpCert));
-        assert!(public_key_material_types.contains(&PublicKeyMaterialType::Revocation));
 
         Ok(())
     }

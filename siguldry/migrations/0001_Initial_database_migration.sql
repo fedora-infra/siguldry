@@ -58,7 +58,6 @@ CREATE TABLE IF NOT EXISTS "public_key_material_types" (
 );
 INSERT INTO public_key_material_types(type) VALUES ("x509");
 INSERT INTO public_key_material_types(type) VALUES ("openpgp");
-INSERT INTO public_key_material_types(type) VALUES ("revocation");
 
 -- This table contains data associated with a key pair that is meant to be distributed.
 -- This includes the public key itself, X509 certificates for the key, and key revocations.
