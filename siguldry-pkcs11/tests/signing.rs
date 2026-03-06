@@ -429,8 +429,6 @@ async fn openssl_provider_sign_and_verify(
         .arg("-rawin")
         .arg("-provider")
         .arg("pkcs11")
-        .arg("-provider")
-        .arg("default")
         .arg("-inkey")
         .arg(&key_uri)
         .arg("-in")
