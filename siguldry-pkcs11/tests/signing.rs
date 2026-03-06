@@ -740,7 +740,11 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
         .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
     let certificate_path = instance.state_dir.path().join("signing_key.asc");
-    let cert = expected_pubkey.certificates.first().cloned().unwrap();
+    let cert = expected_pubkey
+        .openpgp_certificates()
+        .first()
+        .cloned()
+        .unwrap();
     let fingerprint = match cert {
         siguldry::protocol::Certificate::Pgp {
             version: _,
