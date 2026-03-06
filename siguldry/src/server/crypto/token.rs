@@ -268,7 +268,6 @@ async fn import_pkcs11_token_private(
                 &key_info.label,
                 &handle,
                 key_algorithm,
-                db::KeyPurpose::Signing,
                 &key_material,
                 &pubkey_pem,
                 Some(&token),

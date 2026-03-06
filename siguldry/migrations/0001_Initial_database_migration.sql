@@ -11,20 +11,10 @@ INSERT INTO key_algorithms(type) VALUES ("rsa4k");
 -- NIST-P256 ECC keys
 INSERT INTO key_algorithms(type) VALUES ("P256");
 
-CREATE TABLE IF NOT EXISTS "key_purpose" (
-    purpose TEXT NOT NULL PRIMARY KEY
-);
--- GPG keys for use with Sequoia's softkey keystore; they are encrypted by a server-generated password.
-INSERT INTO key_purpose(purpose) VALUES ("PGP");
--- Keys accessible via PKCS11; it's assumed p11-kit is being used to manage pkcs11 modules.
--- These keys are only for signatures created via OpenSSL
-INSERT INTO key_purpose(purpose) VALUES ("Signing");
-
 CREATE TABLE IF NOT EXISTS "keys" (
     "id" INTEGER NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL UNIQUE,
     "key_algorithm" TEXT NOT NULL,
-    "key_purpose" TEXT NOT NULL,
     -- This uniquely identifies a key. For example, the GPG key fingerprint, or the SHA256 sum of
     -- the public key.
     "handle" TEXT NOT NULL UNIQUE,
@@ -43,7 +33,6 @@ CREATE TABLE IF NOT EXISTS "keys" (
     "pkcs11_key_id" BLOB,
     CHECK ( (pkcs11_token_id IS NULL) = (pkcs11_key_id IS NULL) ),
     FOREIGN KEY(key_algorithm) REFERENCES key_algorithms(type) ON DELETE RESTRICT,
-    FOREIGN KEY(key_purpose) REFERENCES key_purpose(purpose) ON DELETE RESTRICT,
     -- If a token is removed, delete all associated keys.
     FOREIGN KEY(pkcs11_token_id) REFERENCES pkcs11_tokens(id) ON DELETE CASCADE
 );

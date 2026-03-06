@@ -209,7 +209,6 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     &name,
                     &encrypted_key.handle,
                     algorithm,
-                    db::KeyPurpose::Signing,
                     &encrypted_key.private_key_pem,
                     &encrypted_key.public_key_pem,
                     None,
@@ -331,12 +330,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
             }
             KeyCommands::List {} => {
                 for key in db::Key::list(&mut conn).await? {
-                    match key.key_purpose {
-                        db::KeyPurpose::PGP => {}
-                        db::KeyPurpose::Signing => {
-                            println!("{key}");
-                        }
-                    }
+                    println!("{key}");
                 }
             }
         },
