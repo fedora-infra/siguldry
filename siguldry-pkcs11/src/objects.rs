@@ -5,18 +5,20 @@ use core::slice;
 use std::collections::HashMap;
 
 use asn1::ObjectIdentifier;
+use openssl::hash::MessageDigest;
 use sequoia_openpgp::parse::Parse;
 use siguldry::protocol::{Certificate, Key, KeyAlgorithm};
 
 use cryptoki_sys::{
     CK_ATTRIBUTE, CK_ATTRIBUTE_TYPE, CK_BBOOL, CK_FALSE, CK_OBJECT_CLASS, CK_OBJECT_HANDLE, CK_RV,
     CK_TRUE, CK_ULONG, CK_UNAVAILABLE_INFORMATION, CKA_ALLOWED_MECHANISMS, CKA_ALWAYS_AUTHENTICATE,
-    CKA_ALWAYS_SENSITIVE, CKA_CLASS, CKA_COPYABLE, CKA_DECRYPT, CKA_EC_PARAMS, CKA_EC_POINT,
-    CKA_ENCRYPT, CKA_EXTRACTABLE, CKA_ID, CKA_KEY_TYPE, CKA_LABEL, CKA_MODULUS, CKA_MODULUS_BITS,
-    CKA_NEVER_EXTRACTABLE, CKA_PUBLIC_EXPONENT, CKA_PUBLIC_KEY_INFO, CKA_SENSITIVE, CKA_SIGN,
-    CKA_SIGN_RECOVER, CKA_TOKEN, CKA_TRUSTED, CKA_UNWRAP, CKA_VERIFY, CKA_WRAP, CKK_EC, CKK_RSA,
-    CKO_CERTIFICATE, CKO_PRIVATE_KEY, CKO_PUBLIC_KEY, CKR_ATTRIBUTE_TYPE_INVALID,
-    CKR_BUFFER_TOO_SMALL, CKR_OK,
+    CKA_ALWAYS_SENSITIVE, CKA_CERTIFICATE_TYPE, CKA_CHECK_VALUE, CKA_CLASS, CKA_COPYABLE,
+    CKA_DECRYPT, CKA_EC_PARAMS, CKA_EC_POINT, CKA_ENCRYPT, CKA_EXTRACTABLE, CKA_ID, CKA_ISSUER,
+    CKA_KEY_TYPE, CKA_LABEL, CKA_MODULUS, CKA_MODULUS_BITS, CKA_NEVER_EXTRACTABLE,
+    CKA_PUBLIC_EXPONENT, CKA_PUBLIC_KEY_INFO, CKA_SENSITIVE, CKA_SERIAL_NUMBER, CKA_SIGN,
+    CKA_SIGN_RECOVER, CKA_SUBJECT, CKA_TOKEN, CKA_TRUSTED, CKA_UNWRAP, CKA_VALUE, CKA_VERIFY,
+    CKA_WRAP, CKC_X_509, CKK_EC, CKK_RSA, CKO_CERTIFICATE, CKO_PRIVATE_KEY, CKO_PUBLIC_KEY,
+    CKR_ATTRIBUTE_TYPE_INVALID, CKR_BUFFER_TOO_SMALL, CKR_OK,
 };
 
 #[derive(Debug, Clone)]
@@ -45,7 +47,7 @@ impl Object {
             },
         );
 
-        for (i, cert) in key.certificates.iter().enumerate() {
+        for (i, cert) in key.x509_certificates().iter().enumerate() {
             let handle = Self::CERT_BASE_HANDLE + i as u64;
             objects.insert(
                 handle,
@@ -221,7 +223,7 @@ impl Attribute {
         Ok(attrs)
     }
 
-    fn from_certificate(key: &Key, _cert: &Certificate) -> anyhow::Result<HashMap<u64, Attribute>> {
+    fn from_certificate(key: &Key, cert: &Certificate) -> anyhow::Result<HashMap<u64, Attribute>> {
         let mut attrs = Self::common_attributes(key)?;
         let class = (CKO_CERTIFICATE as CK_OBJECT_CLASS).to_ne_bytes().to_vec();
         attrs.insert(
@@ -235,9 +237,80 @@ impl Attribute {
             CKA_TRUSTED,
             Attribute {
                 attribute_type: CKA_TRUSTED,
-                value: vec![CK_FALSE as CK_BBOOL],
+                value: vec![CK_TRUE as CK_BBOOL],
             },
         );
+
+        // This _should_ always be true
+        if let Certificate::X509 { name, certificate } = cert {
+            if let Ok(cert) = openssl::x509::X509::from_pem(certificate.as_bytes()) {
+                let value = cert.to_der()?;
+                let issuer = cert.issuer_name().to_der()?;
+                let subject = cert.subject_name().to_der()?;
+                let serial_number = cert.serial_number().to_bn()?.to_vec();
+                let pubkey_info = cert.public_key()?.public_key_to_der()?;
+
+                attrs.insert(
+                    CKA_CERTIFICATE_TYPE,
+                    Attribute {
+                        attribute_type: CKA_CERTIFICATE_TYPE,
+                        value: CKC_X_509.to_ne_bytes().to_vec(),
+                    },
+                );
+                if let Some(check_value) = openssl::hash::hash(MessageDigest::sha1(), &value)?
+                    .get(..3)
+                    .map(Vec::from)
+                {
+                    attrs.insert(
+                        CKA_CHECK_VALUE,
+                        Attribute {
+                            attribute_type: CKA_CHECK_VALUE,
+                            value: check_value,
+                        },
+                    );
+                }
+                attrs.insert(
+                    CKA_VALUE,
+                    Attribute {
+                        attribute_type: CKA_VALUE,
+                        value,
+                    },
+                );
+                attrs.insert(
+                    CKA_ISSUER,
+                    Attribute {
+                        attribute_type: CKA_ISSUER,
+                        value: issuer,
+                    },
+                );
+                attrs.insert(
+                    CKA_SUBJECT,
+                    Attribute {
+                        attribute_type: CKA_SUBJECT,
+                        value: subject,
+                    },
+                );
+                attrs.insert(
+                    CKA_SERIAL_NUMBER,
+                    Attribute {
+                        attribute_type: CKA_SERIAL_NUMBER,
+                        value: serial_number,
+                    },
+                );
+                attrs.insert(
+                    CKA_PUBLIC_KEY_INFO,
+                    Attribute {
+                        attribute_type: CKA_PUBLIC_KEY_INFO,
+                        value: pubkey_info,
+                    },
+                );
+            } else {
+                tracing::error!(
+                    cert_name = name,
+                    "Server sent malformed PEM-encoded X509 certificate"
+                );
+            }
+        }
 
         Ok(attrs)
     }
@@ -245,7 +318,7 @@ impl Attribute {
     fn common_attributes(key: &Key) -> anyhow::Result<HashMap<u64, Attribute>> {
         let mut attrs = HashMap::new();
 
-        match key.certificates.first() {
+        match key.openpgp_certificates().first() {
             Some(Certificate::Pgp {
                 version,
                 certificate,
@@ -292,6 +365,8 @@ impl Attribute {
                 );
             }
             _other => {
+                // If there are no OpenPGP certificates, we can use a simple Id; each key is
+                // mapped to a token so we can comfortably use 1 as there's no fear of conflicting
                 attrs.insert(
                     CKA_ID,
                     Attribute {
