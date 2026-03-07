@@ -61,6 +61,11 @@ pub struct Config {
     /// The rest of the certificate's subject is specified here.
     pub certificate_subject: X509SubjectName,
 
+    /// The user ID to use when creating OpenPGP keys.
+    ///
+    /// This is typically an email like "Signing Key <signing@example.com>".
+    pub openpgp_user_id: String,
+
     /// The set of certificates to encrypt passwords with.
     ///
     /// At least one entry should include a PKCS#11 URI for a private key. Passwords are encrypted
@@ -92,8 +97,8 @@ impl Default for X509SubjectName {
             country: "US".to_string(),
             state_or_province: "Massachusetts".to_string(),
             locality: "Cambridge".to_string(),
-            organization: "The Uncoöperative Organization".to_string(),
-            organizational_unit: "Department of the Unmanageable".to_string(),
+            organization: "An Example Organization".to_string(),
+            organizational_unit: "Example Department of the Organization".to_string(),
         }
     }
 }
@@ -154,6 +159,7 @@ impl Default for Config {
             },
             pkcs11_bindings: vec![],
             certificate_subject: Default::default(),
+            openpgp_user_id: "Test Signing <sign@example.com>".to_string(),
         }
     }
 }

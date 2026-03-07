@@ -97,59 +97,13 @@ impl User {
     }
 }
 
-/// Possible key locations.
-///
-/// This enumeration matches the values in the database's `key_locations` table.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(clippy::exhaustive_enums)]
-#[doc(hidden)]
-pub enum KeyPurpose {
-    /// The key is meant to be used for OpenPGP signatures
-    PGP,
-    /// The key is intended to be used for signing using its algorithm-specific signing scheme.
-    Signing,
-}
-
-impl KeyPurpose {
-    pub fn as_str(&self) -> &str {
-        match self {
-            KeyPurpose::PGP => "PGP",
-            KeyPurpose::Signing => "Signing",
-        }
-    }
-}
-
-impl TryFrom<&str> for KeyPurpose {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "PGP" => Ok(Self::PGP),
-            "Signing" => Ok(Self::Signing),
-            _ => Err(anyhow::anyhow!("Unknown key purpose '{value}'!")),
-        }
-    }
-}
-
-impl From<String> for KeyPurpose {
-    fn from(value: String) -> Self {
-        // In the event that the database we're working from has been migrated to a different level
-        // than the application, it's possible there's a variant we're not aware of. It's not great
-        // but we really should panic and stop.
-        let msg = "The database contains key purposes the application is unaware \
-            of; this is either an application bug, or the database migration level does not match \
-            the application";
-        Self::try_from(value.as_str()).expect(msg)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PublicKeyMaterialType {
     /// An X509 certificate.
     X509,
-    /// A signed revocation for a key.
-    Revocation,
+    /// An OpenPGP certificate.
+    OpenPgpCert,
 }
 
 impl TryFrom<&str> for PublicKeyMaterialType {
@@ -158,7 +112,7 @@ impl TryFrom<&str> for PublicKeyMaterialType {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "x509" => Ok(Self::X509),
-            "revocation" => Ok(Self::Revocation),
+            "openpgp" => Ok(Self::OpenPgpCert),
             _ => Err(anyhow::anyhow!(
                 "The database contains public key material types the application \
             is unaware of; this is either an application bug, or the database migration level does \
@@ -171,8 +125,8 @@ impl TryFrom<&str> for PublicKeyMaterialType {
 impl PublicKeyMaterialType {
     pub fn as_str(&self) -> &str {
         match self {
-            PublicKeyMaterialType::X509 => "x509",
-            PublicKeyMaterialType::Revocation => "revocation",
+            Self::X509 => "x509",
+            Self::OpenPgpCert => "openpgp",
         }
     }
 }
@@ -342,9 +296,6 @@ pub struct Key {
     pub name: String,
     /// Indicates the key type.
     pub key_algorithm: KeyAlgorithm,
-    /// The key location indicates where the key is stored. Keys may be stored on the filesystem
-    /// or in a hardware security module.
-    pub key_purpose: KeyPurpose,
     /// This uniquely identifies a key. For example, the OpenPGP key fingerprint, or the SHA256 sum of
     /// the public key.
     pub handle: String,
@@ -367,13 +318,7 @@ pub struct Key {
 
 impl std::fmt::Display for Key {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "\"{}\" ({} key in {})",
-            self.name,
-            self.key_algorithm.as_str(),
-            self.key_purpose.as_str()
-        )
+        write!(f, "\"{}\" ({} key)", self.name, self.key_algorithm.as_str(),)
     }
 }
 
@@ -420,25 +365,22 @@ impl Key {
         name: &str,
         handle: &str,
         key_algorithm: KeyAlgorithm,
-        key_purpose: KeyPurpose,
         key_material: &str,
         public_key: &str,
         pkcs11_token: Option<&Pkcs11Token>,
         pkcs11_key_id: Option<Vec<u8>>,
     ) -> Result<Key, sqlx::Error> {
         let key_algorithm_str = key_algorithm.as_str();
-        let key_purpose_str = key_purpose.as_str();
         let pkcs11_token_id = pkcs11_token.map(|t| t.id);
         sqlx::query!(
-            "INSERT INTO keys (name, key_algorithm, key_purpose, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-            name, key_algorithm_str, key_purpose_str, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id)
+            "INSERT INTO keys (name, key_algorithm, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            name, key_algorithm_str, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id)
             .fetch_one(&mut *conn)
             .await
             .map(|record| Key {
                 id: record.id,
                 name: name.to_string(),
                 key_algorithm,
-                key_purpose,
                 handle: handle.to_string(),
                 key_material: key_material.to_string(),
                 public_key: public_key.to_string(),
@@ -668,30 +610,6 @@ mod tests {
         Ok(())
     }
 
-    // Assert the KeyLocation enum aligns with the database enumeration.
-    #[tokio::test]
-    async fn key_purposes_match_db() -> Result<()> {
-        let db_pool = pool("sqlite::memory:", false).await?;
-        migrate(&db_pool).await?;
-        let mut conn = db_pool.begin().await?;
-
-        let key_purposes = sqlx::query("SELECT * FROM key_purpose;")
-            .fetch_all(&mut *conn)
-            .await?
-            .into_iter()
-            .map(|row| {
-                let purpose: &str = row.get("purpose");
-                KeyPurpose::try_from(purpose)
-            })
-            .collect::<Result<Vec<_>, anyhow::Error>>()?;
-
-        assert_eq!(2, key_purposes.len());
-        assert!(key_purposes.contains(&KeyPurpose::PGP));
-        assert!(key_purposes.contains(&KeyPurpose::Signing));
-
-        Ok(())
-    }
-
     // Assert the PublicKeyMaterialType enum aligns with the database enumeration.
     #[tokio::test]
     async fn public_key_material_types() -> Result<()> {
@@ -711,7 +629,7 @@ mod tests {
 
         assert_eq!(2, public_key_material_types.len());
         assert!(public_key_material_types.contains(&PublicKeyMaterialType::X509));
-        assert!(public_key_material_types.contains(&PublicKeyMaterialType::Revocation));
+        assert!(public_key_material_types.contains(&PublicKeyMaterialType::OpenPgpCert));
 
         Ok(())
     }
@@ -727,7 +645,6 @@ mod tests {
             "test-name",
             "unique-handle",
             KeyAlgorithm::P256,
-            KeyPurpose::Signing,
             "pkcs11://something",
             "public-key",
             None,
@@ -745,51 +662,17 @@ mod tests {
         Ok(())
     }
 
-    // Keys should only be allowed to have purposes from the key_purpose table.
-    #[tokio::test]
-    async fn key_constraint_on_purpose() -> Result<()> {
-        let db_pool = pool("sqlite::memory:", false).await?;
-        migrate(&db_pool).await?;
-        let mut conn = db_pool.begin().await?;
-        let key_algorithm_str = KeyAlgorithm::P256.as_str();
-        let result = sqlx::query(
-            "INSERT INTO keys (name, key_algorithm, key_purpose, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind("test-name")
-        .bind(key_algorithm_str)
-        .bind("not-valid")
-        .bind("unique")
-        .bind("some-encrypted-key")
-        .bind("some-public-key")
-        .bind("NULL")
-        .bind("NULL")
-        .fetch_one(&mut *conn)
-        .await;
-
-        match result {
-            Ok(_) => panic!("Database missing foreign key contraint on key_purpose"),
-            Err(sqlx::Error::Database(error)) => {
-                assert_eq!(error.kind(), ErrorKind::ForeignKeyViolation);
-            }
-            _ => panic!("Unexpected error"),
-        };
-
-        Ok(())
-    }
-
     // Keys should only be allowed to have types from the key_algorithms table.
     #[tokio::test]
     async fn key_constraint_on_algorithm_type() -> Result<()> {
         let db_pool = pool("sqlite::memory:", false).await?;
         migrate(&db_pool).await?;
         let mut conn = db_pool.begin().await?;
-        let key_location_str = KeyPurpose::PGP.as_str();
         let result = sqlx::query(
-            "INSERT INTO keys (name, key_algorithm, key_purpose, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO keys (name, key_algorithm, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind("test-name")
         .bind("not-valid")
-        .bind(key_location_str)
         .bind("unique")
         .bind("key-material")
         .bind("public-key")

@@ -575,9 +575,44 @@ pub struct Key {
     /// This uniquely identifies a key. For example, the OpenPGP key fingerprint, or the SHA256 sum of
     /// the public key.
     pub handle: String,
-    /// The public key in a text-friendly encoding (ASCII-armored, PEM-encoded, etc).
+    /// The PEM-encoded public key.
     pub public_key: String,
     pub certificates: Vec<Certificate>,
+}
+
+impl Key {
+    pub fn x509_certificates(&self) -> Vec<Certificate> {
+        self.certificates
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    Certificate::X509 {
+                        name: _,
+                        certificate: _
+                    }
+                )
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn openpgp_certificates(&self) -> Vec<Certificate> {
+        self.certificates
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    Certificate::Pgp {
+                        version: _,
+                        certificate: _,
+                        fingerprint: _
+                    }
+                )
+            })
+            .cloned()
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

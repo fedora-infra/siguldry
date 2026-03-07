@@ -83,6 +83,7 @@ jobs:
           dnf install -y \
             capnproto \
             clang \
+            gnupg-pkcs11-scd \
             kryoptic \
             sequoia-sq \
             sequoia-keystore-server \
@@ -175,6 +176,7 @@ jobs:
           dnf install -y \
             capnproto \
             clang \
+            gnupg-pkcs11-scd \
             kryoptic \
             sequoia-sq \
             sequoia-keystore-server \

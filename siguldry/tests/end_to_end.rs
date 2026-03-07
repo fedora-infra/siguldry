@@ -240,12 +240,12 @@ async fn gpg_sign_inline() -> anyhow::Result<()> {
             keys::PGP_KEY_PASSWORD.to_string(),
         )
         .await?;
-    let mut key = instance
+    let key = instance
         .client
         .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
-    assert_eq!(1, key.certificates.len());
-    let certificate = key.certificates.pop().unwrap();
+    assert_eq!(1, key.openpgp_certificates().len());
+    let certificate = key.openpgp_certificates().pop().unwrap();
     let signature = instance
         .client
         .gpg_sign(
@@ -278,12 +278,15 @@ async fn gpg_sign_inline() -> anyhow::Result<()> {
             let stdout = String::from_utf8(output.stdout)?;
             let stderr = String::from_utf8(output.stderr)?;
             assert_eq!(stdout, "🦡🦡🦡🦡🍄🍄");
-            assert!(stderr.contains(&format!(
-                "Authenticated signature made by {} ({} <{}>)",
-                fingerprint,
-                keys::PGP_KEY_NAME,
-                keys::PGP_KEY_EMAIL
-            )));
+            assert!(
+                stderr.contains(&format!(
+                    "Authenticated signature made by {} ({})",
+                    fingerprint,
+                    keys::PGP_KEY_EMAIL
+                )),
+                "Expected to find the key fingerprint and user id, but got {}",
+                stderr
+            );
         }
         _ => panic!("unexpected key type"),
     }
@@ -305,7 +308,7 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
             keys::PGP_KEY_PASSWORD.to_string(),
         )
         .await?;
-    let mut key = instance
+    let key = instance
         .client
         .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
@@ -314,8 +317,8 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
         "Expected key algorithm to be RSA-4096, but it was {:?}",
         key.key_algorithm
     );
-    assert_eq!(1, key.certificates.len());
-    let certificate = key.certificates.pop().unwrap();
+    assert_eq!(1, key.openpgp_certificates().len());
+    let certificate = key.openpgp_certificates().pop().unwrap();
     let signature = instance
         .client
         .gpg_sign(
@@ -350,12 +353,15 @@ async fn gpg_sign_detached() -> anyhow::Result<()> {
                 .await?;
             let stderr = String::from_utf8(output.stderr)?;
             assert!(output.status.success());
-            assert!(stderr.contains(&format!(
-                "Authenticated signature made by {} ({} <{}>)",
-                fingerprint,
-                keys::PGP_KEY_NAME,
-                keys::PGP_KEY_EMAIL
-            )));
+            assert!(
+                stderr.contains(&format!(
+                    "Authenticated signature made by {} ({})",
+                    fingerprint,
+                    keys::PGP_KEY_EMAIL
+                )),
+                "Expected to find the key fingerprint and user id, but got {}",
+                stderr
+            );
         }
         _ => panic!("unexpected key type"),
     }
@@ -381,7 +387,7 @@ async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
             keys::PGP_EC_KEY_PASSWORD.to_string(),
         )
         .await?;
-    let mut key = instance
+    let key = instance
         .client
         .get_key(keys::PGP_EC_KEY_NAME.to_string())
         .await?;
@@ -390,8 +396,8 @@ async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
         "Expected key algorithm to be P256, but it was {:?}",
         key.key_algorithm
     );
-    assert_eq!(1, key.certificates.len());
-    let certificate = key.certificates.pop().unwrap();
+    assert_eq!(1, key.openpgp_certificates().len());
+    let certificate = key.openpgp_certificates().pop().unwrap();
     let signature = instance
         .client
         .gpg_sign(
@@ -427,12 +433,15 @@ async fn gpg_sign_detached_rfc9580() -> anyhow::Result<()> {
                 .await?;
             let stderr = String::from_utf8(output.stderr)?;
             assert!(output.status.success());
-            assert!(stderr.contains(&format!(
-                "Authenticated signature made by {} ({} <{}>)",
-                fingerprint,
-                keys::PGP_EC_KEY_NAME,
-                keys::PGP_EC_KEY_EMAIL
-            )));
+            assert!(
+                stderr.contains(&format!(
+                    "Authenticated signature made by {} ({})",
+                    fingerprint,
+                    keys::PGP_EC_KEY_EMAIL
+                )),
+                "Expected to find the key fingerprint and user id, but got {}",
+                stderr
+            );
             let mut command = tokio::process::Command::new("sq");
             let output = command.arg("inspect").arg(keyring_path).output().await?;
             let stdout = String::from_utf8(output.stdout)?;
@@ -460,7 +469,7 @@ async fn gpg_sign_detached_p256() -> anyhow::Result<()> {
             keys::PGP_EC_KEY_PASSWORD.to_string(),
         )
         .await?;
-    let mut key = instance
+    let key = instance
         .client
         .get_key(keys::PGP_EC_KEY_NAME.to_string())
         .await?;
@@ -469,8 +478,8 @@ async fn gpg_sign_detached_p256() -> anyhow::Result<()> {
         "Expected key algorithm to be P256, but it was {:?}",
         key.key_algorithm
     );
-    assert_eq!(1, key.certificates.len());
-    let certificate = key.certificates.pop().unwrap();
+    assert_eq!(1, key.openpgp_certificates().len());
+    let certificate = key.openpgp_certificates().pop().unwrap();
     let signature = instance
         .client
         .gpg_sign(
@@ -506,12 +515,15 @@ async fn gpg_sign_detached_p256() -> anyhow::Result<()> {
                 .await?;
             let stderr = String::from_utf8(output.stderr)?;
             assert!(output.status.success());
-            assert!(stderr.contains(&format!(
-                "Authenticated signature made by {} ({} <{}>)",
-                fingerprint,
-                keys::PGP_EC_KEY_NAME,
-                keys::PGP_EC_KEY_EMAIL
-            )));
+            assert!(
+                stderr.contains(&format!(
+                    "Authenticated signature made by {} ({})",
+                    fingerprint,
+                    keys::PGP_EC_KEY_EMAIL
+                )),
+                "Expected to find the key fingerprint and user id, but got {}",
+                stderr
+            );
             let mut command = tokio::process::Command::new("sq");
             let output = command.arg("inspect").arg(keyring_path).output().await?;
             let stdout = String::from_utf8(output.stdout)?;
@@ -539,12 +551,12 @@ async fn gpg_sign_cleartext() -> anyhow::Result<()> {
             keys::PGP_KEY_PASSWORD.to_string(),
         )
         .await?;
-    let mut key = instance
+    let key = instance
         .client
         .get_key(keys::PGP_KEY_NAME.to_string())
         .await?;
-    assert_eq!(1, key.certificates.len());
-    let key = key.certificates.pop().unwrap();
+    assert_eq!(1, key.openpgp_certificates().len());
+    let key = key.openpgp_certificates().pop().unwrap();
 
     let signature = instance
         .client
@@ -586,12 +598,15 @@ Hash: SHA512
             let stdout = String::from_utf8(output.stdout)?;
             let stderr = String::from_utf8(output.stderr)?;
             assert_eq!(stdout, "🦡🦡🦡🦡🍄🍄");
-            assert!(stderr.contains(&format!(
-                "Authenticated signature made by {} ({} <{}>)",
-                fingerprint,
-                keys::PGP_KEY_NAME,
-                keys::PGP_KEY_EMAIL
-            )));
+            assert!(
+                stderr.contains(&format!(
+                    "Authenticated signature made by {} ({})",
+                    fingerprint,
+                    keys::PGP_KEY_EMAIL
+                )),
+                "Expected to find the key fingerprint and user id, but got {}",
+                stderr
+            );
         }
         _ => panic!("unexpected key type"),
     }
@@ -608,17 +623,17 @@ async fn check_x509_certs() -> anyhow::Result<()> {
         .build()
         .await?;
 
-    let mut ca_key = instance
+    let ca_key = instance
         .client
         .get_key(keys::CA_KEY_NAME.to_string())
         .await?;
-    let mut codesigning_key = instance
+    let codesigning_key = instance
         .client
         .get_key(keys::CODESIGNING_KEY_NAME.to_string())
         .await?;
     match (
-        ca_key.certificates.pop().unwrap(),
-        codesigning_key.certificates.pop().unwrap(),
+        ca_key.x509_certificates().pop().unwrap(),
+        codesigning_key.x509_certificates().pop().unwrap(),
     ) {
         (
             siguldry::protocol::Certificate::X509 {

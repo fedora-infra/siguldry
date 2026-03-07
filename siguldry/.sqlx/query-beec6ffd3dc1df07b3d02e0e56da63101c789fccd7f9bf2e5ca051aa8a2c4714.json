@@ -19,33 +19,28 @@
         "type_info": "Text"
       },
       {
-        "name": "key_purpose",
+        "name": "handle",
         "ordinal": 3,
         "type_info": "Text"
       },
       {
-        "name": "handle",
+        "name": "key_material",
         "ordinal": 4,
         "type_info": "Text"
       },
       {
-        "name": "key_material",
+        "name": "public_key",
         "ordinal": 5,
         "type_info": "Text"
       },
       {
-        "name": "public_key",
-        "ordinal": 6,
-        "type_info": "Text"
-      },
-      {
         "name": "pkcs11_token_id",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Integer"
       },
       {
         "name": "pkcs11_key_id",
-        "ordinal": 8,
+        "ordinal": 7,
         "type_info": "Blob"
       }
     ],
@@ -53,7 +48,6 @@
       "Right": 0
     },
     "nullable": [
-      false,
       false,
       false,
       false,

@@ -11,20 +11,10 @@ INSERT INTO key_algorithms(type) VALUES ("rsa4k");
 -- NIST-P256 ECC keys
 INSERT INTO key_algorithms(type) VALUES ("P256");
 
-CREATE TABLE IF NOT EXISTS "key_purpose" (
-    purpose TEXT NOT NULL PRIMARY KEY
-);
--- GPG keys for use with Sequoia's softkey keystore; they are encrypted by a server-generated password.
-INSERT INTO key_purpose(purpose) VALUES ("PGP");
--- Keys accessible via PKCS11; it's assumed p11-kit is being used to manage pkcs11 modules.
--- These keys are only for signatures created via OpenSSL
-INSERT INTO key_purpose(purpose) VALUES ("Signing");
-
 CREATE TABLE IF NOT EXISTS "keys" (
     "id" INTEGER NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL UNIQUE,
     "key_algorithm" TEXT NOT NULL,
-    "key_purpose" TEXT NOT NULL,
     -- This uniquely identifies a key. For example, the GPG key fingerprint, or the SHA256 sum of
     -- the public key.
     "handle" TEXT NOT NULL UNIQUE,
@@ -32,16 +22,17 @@ CREATE TABLE IF NOT EXISTS "keys" (
     -- is the hex-encoded ID attribute of the key within the associated token. That is, it is a human-
     -- readable version of the blob stored in the `pkcs11_key_id` field.
     --
-    -- The scheme is dependent on the type of key, but it will be a text representation (ASCII-armored, PEM-encoded, etc)
+    -- The format used is PEM-encoded PKCS#8 EncryptedPrivateKeyInfo structures. The key is encrypted
+    -- with AES-256-CBC using a 128 byte server-generated secret. This secret is then encrypted per-user
+    -- in the key_accesses table.
     "key_material" TEXT NOT NULL,
-    -- The public key in a text-friendly encoding (ASCII-armored, PEM-encoded, etc)
+    -- The PEM-encoded public key.
     "public_key" TEXT NOT NULL,
     "pkcs11_token_id" INTEGER,
     -- The Id attribute of the key within the token
     "pkcs11_key_id" BLOB,
     CHECK ( (pkcs11_token_id IS NULL) = (pkcs11_key_id IS NULL) ),
     FOREIGN KEY(key_algorithm) REFERENCES key_algorithms(type) ON DELETE RESTRICT,
-    FOREIGN KEY(key_purpose) REFERENCES key_purpose(purpose) ON DELETE RESTRICT,
     -- If a token is removed, delete all associated keys.
     FOREIGN KEY(pkcs11_token_id) REFERENCES pkcs11_tokens(id) ON DELETE CASCADE
 );
@@ -66,7 +57,7 @@ CREATE TABLE IF NOT EXISTS "public_key_material_types" (
     "type" TEXT NOT NULL PRIMARY KEY
 );
 INSERT INTO public_key_material_types(type) VALUES ("x509");
-INSERT INTO public_key_material_types(type) VALUES ("revocation");
+INSERT INTO public_key_material_types(type) VALUES ("openpgp");
 
 -- This table contains data associated with a key pair that is meant to be distributed.
 -- This includes the public key itself, X509 certificates for the key, and key revocations.

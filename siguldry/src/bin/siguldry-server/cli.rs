@@ -118,11 +118,7 @@ impl From<OpenPgpProfile> for sequoia_openpgp::Profile {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ManagementCommands {
-    /// Manage OpenPGP signing keys.
-    #[command(subcommand)]
-    Pgp(PgpCommands),
-
-    /// Manage non-GPG signing keys and certificates.
+    /// Manage signing keys and certificates.
     #[command(subcommand)]
     Key(KeyCommands),
 
@@ -158,36 +154,6 @@ pub enum ManagementCommands {
     /// This should be run on first use to create an empty database. This should also be run after
     /// upgrading to a new version; it is a no-op if no new migrations are available.
     Migrate {},
-}
-
-#[derive(clap::Subcommand, Debug)]
-pub enum PgpCommands {
-    /// Generate a new signing key.
-    Create {
-        /// The key algorithm to use.
-        #[arg(short, long, value_enum, default_value_t)]
-        algorithm: KeyAlgorithm,
-        /// The OpenPGP standard to use; until you're certain all clients support the modern
-        /// RFC9580 profile, it's best to stick with the default RFC4880 profile.
-        #[arg(short, long, value_enum, default_value_t)]
-        profile: OpenPgpProfile,
-        /// A file containing the password needed to unlock and use the key.
-        ///
-        /// The file should include the password on the first line and the file should include a newline.
-        /// If this option is not provided, input is read from stdin.
-        ///
-        /// Additional users can be granted access to this key with different passwords.
-        #[arg(long, default_value = None)]
-        password_file: Option<PathBuf>,
-        /// The Siguldy username of the key administrator. This user can grant access to other users.
-        admin: String,
-        /// The name of the key in Siguldry.
-        name: String,
-        /// The email to use for the OpenPGP user id.
-        email: String,
-    },
-    /// List available OpenPGP keys.
-    List {},
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -232,10 +198,66 @@ pub enum Pkcs11Commands {
 #[derive(clap::Subcommand, Debug)]
 pub enum KeyCommands {
     /// Generate a new signing key.
+    ///
+    /// Note that all keys are created with an OpenPGP certificate and an X509 certificate. If you
+    /// only plan to use the key for OpenPGP signatures you can safely use the default X509
+    /// settings; similarly if you don't plan on using the key for OpenPGP you can safely use the
+    /// default OpenPGP settings.
+    ///
+    /// For OpenPGP certificates, the server configuration file contains the user ID (email,
+    /// typically) to use. Similarly, the X509 subject is configured in the server configuration
+    /// file except for the common name.
     Create {
         /// The key algorithm to use.
         #[arg(short, long, value_enum, default_value_t)]
         algorithm: KeyAlgorithm,
+
+        /// The OpenPGP standard to use; until you're certain all clients support the modern
+        /// RFC9580 profile, it's best to stick with the default RFC4880 profile.
+        ///
+        /// Note that all keys are created with an OpenPGP certificate. If you don't plan to use this key
+        /// for OpenPGP signatures the defaults are fine.
+        #[arg(long, value_enum, default_value_t)]
+        openpgp_profile: OpenPgpProfile,
+
+        /// The length of time the X509 certificate is valid for in days (starts from the current time).
+        #[arg(long, default_value = "730", value_parser = clap::value_parser!(u32).range(1..))]
+        x509_validity_days: u32,
+
+        /// The Common Name field to use in the certificate; the remaining portions of the subject are
+        /// specified in the server configuration.
+        ///
+        /// If not provided, the default is the key's name.
+        #[arg(long, default_value = None)]
+        x509_common_name: Option<String>,
+
+        /// The name of the key to use when signing the key's x509 certificate.
+        ///
+        /// If this is not provided, the certificate will be self-signed.
+        #[arg(long, default_value = None)]
+        x509_ca_key_name: Option<String>,
+
+        /// The name of the certificate associated with the --x509-ca-key-name.
+        ///
+        /// Keys may have multiple certificates associated with them. If unspecified, the
+        /// most recently created certificate associated with the key is used.
+        #[arg(long, default_value = None)]
+        x509_ca_cert_name: Option<String>,
+
+        /// A file containing the password needed to unlock and use the certificate authority's key.
+        ///
+        /// This is not needed for self-signed certificates.
+        ///
+        /// The file should include the password on the first line and the file should include a newline.
+        /// If this option is not provided AND the --x509-certificate-authority argument has been provided,
+        /// The user is prompted to provide the password via stdin.
+        #[arg(long, default_value = None)]
+        x509_ca_password_file: Option<PathBuf>,
+
+        /// The planned usage of the key.
+        #[arg(long, value_enum, default_value_t)]
+        x509_usage: siguldry::server::crypto::KeyUsage,
+
         /// A file containing the password needed to unlock and use the key.
         ///
         /// The file should include the password on the first line and the file should include a newline.
@@ -244,13 +266,15 @@ pub enum KeyCommands {
         /// Additional users can be granted access to this key with different passwords.
         #[arg(long, default_value = None)]
         password_file: Option<PathBuf>,
+
         /// The Siguldy username of the key administrator. This user can grant access to other users.
         admin: String,
+
         /// The name of the key in Siguldry.
         name: String,
     },
 
-    /// Create an x509 certificate for a key.
+    /// Create additional x509 certificates for a key.
     X509 {
         /// The user to authenticate as; this user must have access to the key used to sign the certificate.
         #[arg(short, long)]
@@ -278,18 +302,10 @@ pub enum KeyCommands {
         ca_password_file: Option<PathBuf>,
         /// The purpose of the key.
         #[arg(value_enum)]
-        usage: KeyUsage,
+        usage: siguldry::server::crypto::KeyUsage,
     },
     /// List available keys.
     List {},
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, clap::ValueEnum)]
-#[non_exhaustive]
-pub enum KeyUsage {
-    #[default]
-    CodeSigning,
-    CertificateAuthority,
 }
 
 #[derive(clap::Subcommand, Debug)]
