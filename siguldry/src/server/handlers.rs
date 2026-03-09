@@ -179,7 +179,7 @@ impl Handler {
     }
 
     #[instrument(skip_all, err, fields(key = key_name))]
-    pub(crate) async fn sign_prehashed(
+    pub(crate) async fn sign_all(
         &mut self,
         key_name: &str,
         digests: Vec<(DigestAlgorithm, String)>,

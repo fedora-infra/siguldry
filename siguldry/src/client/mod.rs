@@ -342,7 +342,7 @@ impl Client {
         digests: Vec<(DigestAlgorithm, String)>,
     ) -> Result<Vec<Signature>, ClientError> {
         let request = Request {
-            message: protocol::json::Request::SignPrehashed { key, digests },
+            message: protocol::json::Request::SignAll { key, digests },
             binary: None,
         };
 

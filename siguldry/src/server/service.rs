@@ -271,9 +271,7 @@ async fn handle(
             Request::ListKeys {} => request_handler.list_keys(&mut db_transaction).await,
             Request::Unlock { key, password } => request_handler.unlock(key, password).await,
             Request::Sign { key, digest } => request_handler.sign(&key, digest, binary_bytes).await,
-            Request::SignPrehashed { key, digests } => {
-                request_handler.sign_prehashed(&key, digests).await
-            }
+            Request::SignAll { key, digests } => request_handler.sign_all(&key, digests).await,
             Request::GetKey { key } => request_handler.public_key(&mut db_transaction, key).await,
         };
 

@@ -396,7 +396,7 @@ pub mod json {
             key: String,
             digest: super::DigestAlgorithm,
         },
-        SignPrehashed {
+        SignAll {
             key: String,
             /// The set of digests to sign. Digests should be hex-encoded.
             digests: Vec<(super::DigestAlgorithm, String)>,
