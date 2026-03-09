@@ -385,15 +385,6 @@ pub mod json {
             /// The password to unlock the key with.
             password: String,
         },
-        /// Request a OpenPGP signature.
-        ///
-        /// The content to be signed should be sent in the binary section of the request.
-        PgpSign {
-            /// The key to use for signing. The request will fail if this is not a OpenPGP key.
-            key: String,
-            /// The format of the signature to produce.
-            signature_type: super::PgpSignatureType,
-        },
         /// Request an RSA or ECDSA signature.
         ///
         /// The type of signature is dependant on the type of the given key.
@@ -613,30 +604,6 @@ impl Key {
             .cloned()
             .collect()
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum PgpSignatureType {
-    /// Create a detached signature as described in [Section 10.4 of RFC 9580].
-    ///
-    /// Detached signatures are one or more Signature packets stored separately from the
-    /// data for which they are a signature.
-    ///
-    /// [Section 10.4 of RFC 9580]: https://www.rfc-editor.org/rfc/rfc9580.html#section-10.4
-    Detached,
-
-    /// Create a cleartext signature as described in [Section 7 of RFC 9580].
-    ///
-    /// [Section 7 of RFC 9580]: https://www.rfc-editor.org/rfc/rfc9580.html#section-7
-    Cleartext,
-
-    /// Create an inline signature. The signature includes the data signed, but it is not
-    /// cleartext.
-    ///
-    /// However, this mode also does not alter the signed data like the cleartext mode
-    /// does. Note that the output of this is _not_ ASCII-armored.
-    Inline,
 }
 
 /// Possible key types.

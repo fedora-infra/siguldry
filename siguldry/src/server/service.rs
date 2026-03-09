@@ -270,14 +270,6 @@ async fn handle(
             Request::ListUsers {} => request_handler.list_users(&mut db_transaction).await,
             Request::ListKeys {} => request_handler.list_keys(&mut db_transaction).await,
             Request::Unlock { key, password } => request_handler.unlock(key, password).await,
-            Request::PgpSign {
-                key,
-                signature_type,
-            } => {
-                request_handler
-                    .pgp_sign(key, signature_type, binary_bytes)
-                    .await
-            }
             Request::Sign { key, digest } => request_handler.sign(&key, digest, binary_bytes).await,
             Request::SignPrehashed { key, digests } => {
                 request_handler.sign_prehashed(&key, digests).await

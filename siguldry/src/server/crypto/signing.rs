@@ -6,12 +6,7 @@
 //! This includes functions for signing using PGP, or using various key algorithms (RSA PKCS #1
 //! v1.5, ECDSA, etc).
 
-// asn1::Asn1Read results in large errors (~136 bytes). Worth checking dropping this allow
-// on asn1 upgrades.
-#![allow(clippy::result_large_err)]
-
 use anyhow::Context;
-use asn1::{ObjectIdentifier, oid};
 use cryptoki::{mechanism::Mechanism, session::Session};
 use openssl::{ec::EcKey, pkey::PKey, pkey_ctx::PkeyCtx, rsa::Rsa};
 use sequoia_openpgp::crypto::Password;
@@ -20,63 +15,6 @@ use crate::{
     protocol::{self, DigestAlgorithm, KeyAlgorithm, json::SignaturePayload},
     server::{Pkcs11Binding, db},
 };
-
-// Algorithm identifiers for RSA PKCS v1.5 DigestInfo structures.
-// SHA OID references: https://www.ietf.org/rfc/rfc4055.html#section-6
-// SHA3 OID references: https://www.ietf.org/rfc/rfc9688.html#name-message-digest-algorithms
-const OID_SHA256: ObjectIdentifier = oid!(2, 16, 840, 1, 101, 3, 4, 2, 1);
-const OID_SHA512: ObjectIdentifier = oid!(2, 16, 840, 1, 101, 3, 4, 2, 3);
-const OID_SHA3_256: ObjectIdentifier = oid!(2, 16, 840, 1, 101, 3, 4, 2, 8);
-const OID_SHA3_512: ObjectIdentifier = oid!(2, 16, 840, 1, 101, 3, 4, 2, 10);
-
-/// Used for RSA PKCS1 v1.5 signatures.
-/// Reference: https://www.ietf.org/rfc/rfc8017.html#section-9.2
-#[derive(asn1::Asn1Write, asn1::Asn1Read)]
-struct DigestInfo<'a> {
-    digest_algorithm: AlgorithmIdentifier,
-    digest: &'a [u8],
-}
-
-#[derive(asn1::Asn1Write, asn1::Asn1Read)]
-struct AlgorithmIdentifier {
-    algorithm: ObjectIdentifier,
-    parameters: (),
-}
-
-/// Encode a hash into DigestInfo structure for RSA PKCS#1 v1.5 signatures.
-fn encode_digest_info(algorithm: DigestAlgorithm, hash: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let algorithm_oid = match algorithm {
-        DigestAlgorithm::Sha256 => OID_SHA256,
-        DigestAlgorithm::Sha512 => OID_SHA512,
-        DigestAlgorithm::Sha3_256 => OID_SHA3_256,
-        DigestAlgorithm::Sha3_512 => OID_SHA3_512,
-    };
-
-    let digest_info = DigestInfo {
-        digest_algorithm: AlgorithmIdentifier {
-            algorithm: algorithm_oid,
-            parameters: (),
-        },
-        digest: hash,
-    };
-
-    asn1::write_single(&digest_info)
-        .map_err(|e| anyhow::anyhow!("Failed to encode DigestInfo: {e}"))
-}
-
-/// Decode a DER-encoded DigestInfo structure into the digest algorithm and digest itself.
-pub fn decode_digest_info(digest_info: &[u8]) -> anyhow::Result<(DigestAlgorithm, Vec<u8>)> {
-    let digest_info = asn1::parse_single::<DigestInfo<'_>>(digest_info)?;
-    let algorithm = match digest_info.digest_algorithm.algorithm {
-        OID_SHA256 => DigestAlgorithm::Sha256,
-        OID_SHA3_256 => DigestAlgorithm::Sha3_256,
-        OID_SHA512 => DigestAlgorithm::Sha512,
-        OID_SHA3_512 => DigestAlgorithm::Sha3_512,
-        _ => return Err(anyhow::anyhow!("Unknown digest algorithm in DigestInfo")),
-    };
-    let hash = digest_info.digest.to_vec();
-    Ok((algorithm, hash))
-}
 
 /// Get a decrypted OpenSSL private key object.
 ///
@@ -175,7 +113,7 @@ pub fn sign_with_pkcs11(
             KeyAlgorithm::Rsa4K | KeyAlgorithm::Rsa2K => {
                 // For RSA PKCS#1 v1.5 with CKM_RSA_PKCS, we need to provide DigestInfo
                 // structure (DER-encoded hash algorithm OID + hash value)
-                let digest_info = encode_digest_info(algorithm, &hash)?;
+                let digest_info = crate::der::encode_digest_info(algorithm, &hash)?;
                 (Mechanism::RsaPkcs, digest_info)
             }
             KeyAlgorithm::P256 => {
@@ -228,6 +166,7 @@ mod tests {
     use zerocopy::IntoBytes;
 
     use super::*;
+    use crate::der::{decode_digest_info, encode_digest_info};
     use crate::protocol::DigestAlgorithm;
     use crate::server::crypto;
     use crate::server::crypto::test_utils::setup_hsm;

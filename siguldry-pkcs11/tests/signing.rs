@@ -3,10 +3,7 @@
 
 //! Tests for the supported signing mechanisms.
 
-use std::path::PathBuf;
-
 use cryptoki::{
-    context::{CInitializeArgs, CInitializeFlags, Pkcs11},
     mechanism::Mechanism,
     object::{Attribute, AttributeType, ObjectClass},
     session::UserType,
@@ -16,27 +13,8 @@ use cryptoki::{
 use siguldry::protocol::{DigestAlgorithm, KeyAlgorithm};
 use siguldry_test::{InstanceBuilder, keys};
 
-// TODO escargo?
-fn module_path() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.join("../target/debug/libsiguldry_pkcs11.so")
-}
-
-fn initialize_module() -> anyhow::Result<Pkcs11> {
-    let pkcs11 = Pkcs11::new(module_path())?;
-    let args = CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK);
-    pkcs11.initialize(args)?;
-    Ok(pkcs11)
-}
-
-/// Convert a raw PKCS#11 ECDSA signature (r || s) to DER format for verification with openssl.
-fn raw_ecdsa_to_der(raw: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let half = raw.len() / 2;
-    let r = openssl::bn::BigNum::from_slice(raw.get(..half).unwrap())?;
-    let s = openssl::bn::BigNum::from_slice(raw.get(half..).unwrap())?;
-    let sig = openssl::ecdsa::EcdsaSig::from_private_components(r, s)?;
-    Ok(sig.to_der()?)
-}
+mod common;
+use common::{initialize_module, module_path, raw_ecdsa_to_der};
 
 #[tokio::test]
 #[tracing_test::traced_test]

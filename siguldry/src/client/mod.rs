@@ -9,8 +9,8 @@ use std::{sync::Arc, time::Duration};
 use bytes::Bytes;
 use tokio::sync::Mutex;
 
+use crate::protocol::DigestAlgorithm;
 use crate::protocol::json::Signature;
-use crate::protocol::{DigestAlgorithm, PgpSignatureType};
 use crate::{
     error::{ClientError, ConnectionError},
     nestls::Nestls,
@@ -311,30 +311,6 @@ impl Client {
         let response = self.reconnecting_send(request).await?;
         match response.json {
             Response::GetKey { key } => Ok(key),
-            Response::Error { reason } => Err(reason.into()),
-            _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
-        }
-    }
-
-    pub async fn gpg_sign(
-        &self,
-        key: String,
-        signature_type: PgpSignatureType,
-        data: Bytes,
-    ) -> Result<Bytes, ClientError> {
-        let request = Request {
-            message: protocol::json::Request::PgpSign {
-                key,
-                signature_type,
-            },
-            binary: Some(data),
-        };
-
-        let response = self.reconnecting_send(request).await?;
-        match response.json {
-            Response::GpgSign {} => response.binary.ok_or_else(|| {
-                anyhow::anyhow!("Server response didn't include a signature").into()
-            }),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
         }

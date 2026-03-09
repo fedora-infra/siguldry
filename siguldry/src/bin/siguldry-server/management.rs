@@ -453,7 +453,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
             };
             crate::import_sigul::migrate_sigul(
                 &mut conn,
-                &config.pkcs11_bindings,
+                &config,
                 sigul_data_directory,
                 sigul_binding,
             )

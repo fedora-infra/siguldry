@@ -401,6 +401,7 @@ impl InstanceBuilder {
         let mut maybe_auto_unlock = vec![];
         if let Some(answers) = &self.with_sigul_import {
             Self::import_sigul_data(&server_bin, tempdir.path(), &server_config_file, answers)?;
+            maybe_auto_unlock.push((keys::SIGUL_GPG_KEY_NAME, keys::SIGUL_GPG_KEY_PASSWORD));
         } else {
             Self::run_server_command(
                 &server_bin,

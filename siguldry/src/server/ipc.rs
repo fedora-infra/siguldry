@@ -1,33 +1,26 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::{collections::HashMap, io::Write};
 
 use anyhow::Context;
-use bytes::Bytes;
 use cryptoki::context::Pkcs11;
 use cryptoki::session::UserType;
 use cryptoki::slot::Slot;
 use cryptoki::types::AuthPin;
 use openssl::pkey::PKey;
-use sequoia_openpgp::{
-    KeyHandle,
-    crypto::Password,
-    parse::Parse,
-    policy::StandardPolicy,
-    serialize::stream::{LiteralWriter, Message, Signer as PgpSigner},
-};
+use sequoia_openpgp::crypto::Password;
 use serde::{Deserialize, Serialize};
 use sqlx::SqliteConnection;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::ServerError;
 use crate::ipc_common::IpcClient;
-use crate::protocol::{self, PgpSignatureType};
+use crate::protocol;
 use crate::server::config::Pkcs11Binding;
 use crate::{
     protocol::{DigestAlgorithm, json::Signature},
@@ -87,11 +80,6 @@ enum Request {
     Sign {
         key: String,
         digests: Vec<(DigestAlgorithm, String)>,
-    },
-    PgpSign {
-        key: String,
-        signature_type: PgpSignatureType,
-        payload_size: usize,
     },
 }
 
@@ -209,43 +197,6 @@ impl Client {
         }
     }
 
-    #[instrument(skip_all, err, fields(key, signature_type))]
-    pub(crate) async fn pgp_sign_request(
-        &mut self,
-        key: String,
-        signature_type: PgpSignatureType,
-        blob: Bytes,
-    ) -> anyhow::Result<protocol::Response> {
-        let payload_size = blob.len();
-        let response = self
-            .inner
-            .request(
-                &Request::PgpSign {
-                    key,
-                    signature_type,
-                    payload_size,
-                },
-                Some(&blob),
-            )
-            .await
-            .map_err(|_| ServerError::Internal)?;
-        let response: Response = serde_json::from_value(response)?;
-        let payload_size = match response {
-            Response::PgpSign { payload_size } => Ok(payload_size),
-            Response::Failure { reason } => Err(anyhow::anyhow!("failed to unlock key: {reason}")),
-            _ => Err(anyhow::anyhow!("helper returned invalid response")),
-        }?;
-        tracing::trace!(payload_size, "helper response received");
-        let binary = self.inner.read_bytes(payload_size).await?;
-
-        let response = protocol::Response {
-            json: protocol::json::Response::GpgSign {},
-            binary: Some(binary),
-        };
-
-        Ok(response)
-    }
-
     /// Shut down the IPC client.
     pub(crate) async fn shutdown(self) -> anyhow::Result<()> {
         self.inner.shutdown().await?;
@@ -353,33 +304,6 @@ pub async fn serve<
                         reason: error.to_string(),
                     },
                 }
-            }
-            Request::PgpSign {
-                key,
-                signature_type,
-                payload_size,
-            } => {
-                let mut inner = requests.into_inner();
-                let mut buffer = vec![0; payload_size];
-                inner.read_exact(&mut buffer).await?;
-                requests = inner.lines();
-
-                let mut conn = db_pool.begin().await?;
-                let (response, signature) =
-                    pgp_sign(&mut conn, &key_passwords, &key, signature_type, buffer).await?;
-                tracing::trace!("Finished signing request");
-
-                let mut response = serde_json::to_string(&response)?;
-                response.push('\n');
-                responses.write_all(response.as_bytes()).await?;
-                tracing::trace!("Finished writing pgp_sign json response");
-                responses.write_all(&signature).await?;
-                responses.flush().await?;
-                tracing::trace!(
-                    payload_len = signature.len(),
-                    "Finished writing pgp_sign signature"
-                );
-                continue;
             }
         };
         tracing::trace!("About to write response");
@@ -502,68 +426,4 @@ async fn sign(
     }?;
 
     Ok(signatures)
-}
-
-#[instrument(skip_all, err, fields(key = key_name))]
-async fn pgp_sign(
-    conn: &mut SqliteConnection,
-    keystore: &HashMap<String, UnlockedKey>,
-    key_name: &str,
-    signature_type: PgpSignatureType,
-    blob: Vec<u8>,
-) -> anyhow::Result<(Response, Vec<u8>)> {
-    let key = db::Key::get(conn, key_name).await?;
-    let unlocked_key = keystore
-        .get(key_name)
-        .ok_or_else(|| anyhow::anyhow!("Key must be unlocked before signing"))?;
-    let openssl_key = match unlocked_key {
-        UnlockedKey::Private { key } => Ok(key),
-        UnlockedKey::Pkcs11 {
-            module: _,
-            pkcs11: _,
-            slot: _,
-            pin: _,
-        } => Err(anyhow::anyhow!("Wrong key type for this call")),
-    }?;
-    let cert = db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::OpenPgpCert)
-        .await?
-        .pop()
-        .unwrap();
-    let cert = sequoia_openpgp::Cert::from_bytes(&cert.data)?;
-    let cert = crypto::openssl_key_to_pgp(&cert, openssl_key)?;
-    let policy = &StandardPolicy::new();
-    let signing_key = cert
-        .keys()
-        .secret()
-        .with_policy(policy, None)
-        .supported()
-        .for_signing()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No signing-capable key found in certificate"))?
-        .key()
-        .clone()
-        .into_keypair()?;
-    let key_handle: KeyHandle = key.handle.parse()?;
-    tracing::debug!(handle=?key_handle, "keystore found key");
-
-    let signature = {
-        let mut sink = vec![];
-        let signer = PgpSigner::new(Message::new(&mut sink), signing_key)?;
-        let mut message = match signature_type {
-            PgpSignatureType::Detached => signer.detached().build()?,
-            PgpSignatureType::Cleartext => signer.cleartext().build()?,
-            PgpSignatureType::Inline => LiteralWriter::new(signer.build()?).build()?,
-        };
-
-        message.write_all(&blob)?;
-        message.finalize()?;
-        tracing::trace!("Successfully signed message");
-        Ok::<_, anyhow::Error>(sink)
-    }?;
-
-    let response = Response::PgpSign {
-        payload_size: signature.len(),
-    };
-
-    Ok((response, signature))
 }

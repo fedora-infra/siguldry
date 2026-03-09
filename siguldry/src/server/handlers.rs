@@ -11,7 +11,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
-    protocol::{self, DigestAlgorithm, PgpSignatureType, Response, ServerError, json},
+    protocol::{self, DigestAlgorithm, Response, ServerError, json},
     server::{
         Config,
         db::{self, User},
@@ -108,19 +108,6 @@ impl Handler {
         password: String,
     ) -> Result<Response, ServerError> {
         self.ipc_helper.unlock_request(key, password).await
-    }
-
-    #[instrument(skip_all, err, fields(key))]
-    pub(crate) async fn pgp_sign(
-        &mut self,
-        key: String,
-        signature_type: PgpSignatureType,
-        blob: Bytes,
-    ) -> Result<Response, ServerError> {
-        self.ipc_helper
-            .pgp_sign_request(key, signature_type, blob)
-            .await
-            .map_err(|_e| protocol::ServerError::Internal)
     }
 
     #[instrument(skip_all, err, fields(key = key_name))]

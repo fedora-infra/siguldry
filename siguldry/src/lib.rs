@@ -60,6 +60,8 @@ pub mod v1;
 pub mod bridge;
 pub mod client;
 pub mod config;
+#[doc(hidden)]
+pub mod der;
 pub mod error;
 mod ipc_common;
 pub(crate) mod nestls;

@@ -104,7 +104,7 @@ use anyhow::Context;
 use sequoia_openpgp::crypto::Password;
 use siguldry::{
     protocol::KeyAlgorithm,
-    server::{Pkcs11Binding, crypto, db},
+    server::{Config, Pkcs11Binding, crypto, db},
 };
 use sqlx::{Pool, Row, Sqlite, SqliteConnection, SqlitePool, sqlite::SqliteConnectOptions};
 use tracing::instrument;
@@ -346,6 +346,8 @@ impl SigulKey {
     async fn import_gnupg(
         &self,
         conn: &mut SqliteConnection,
+        config: &Config,
+        key_name: &str,
         sigul_key_password: Password,
     ) -> anyhow::Result<db::Key> {
         // It's annoying to use tokio's Command with a protected password
@@ -378,7 +380,12 @@ impl SigulKey {
                 String::from_utf8_lossy(&secret_output.stderr)
             ));
         }
-        let imported_key = crypto::sigul::check_gpg_key(&secret_output.stdout, sigul_key_password)?;
+        let imported_key = crypto::sigul::check_gpg_key(
+            config,
+            key_name,
+            &secret_output.stdout,
+            sigul_key_password,
+        )?;
         let key = db::Key::create(
             conn,
             &self.name,
@@ -393,9 +400,17 @@ impl SigulKey {
         db::PublicKeyMaterial::create(
             conn,
             &key,
-            self.name.clone(),
+            format!("{}-openpgp", self.name),
             db::PublicKeyMaterialType::OpenPgpCert,
             imported_key.openpgp_cert,
+        )
+        .await?;
+        db::PublicKeyMaterial::create(
+            conn,
+            &key,
+            format!("{}-x509", self.name),
+            db::PublicKeyMaterialType::X509,
+            imported_key.x509_cert,
         )
         .await?;
 
@@ -405,10 +420,15 @@ impl SigulKey {
     async fn as_siguldry_key(
         &self,
         conn: &mut SqliteConnection,
+        config: &Config,
+        key_name: &str,
         sigul_key_password: Password,
     ) -> anyhow::Result<db::Key> {
         match self.keytype {
-            SigulKeyType::Gnupg => self.import_gnupg(conn, sigul_key_password).await,
+            SigulKeyType::Gnupg => {
+                self.import_gnupg(conn, config, key_name, sigul_key_password)
+                    .await
+            }
             SigulKeyType::Ecc | SigulKeyType::Rsa => {
                 self.import_keypair(conn, sigul_key_password).await
             }
@@ -466,7 +486,7 @@ fn prompt_yes_no(prompt: &str) -> anyhow::Result<bool> {
 
 pub async fn migrate_sigul(
     siguldry_conn: &mut SqliteConnection,
-    siguldry_bindings: &[Pkcs11Binding],
+    siguldry_config: &Config,
     sigul_data_directory: PathBuf,
     sigul_binding: Option<Pkcs11Binding>,
 ) -> anyhow::Result<()> {
@@ -558,7 +578,7 @@ pub async fn migrate_sigul(
                 {
                     Ok(sigul_key_password) => {
                         let encrypted_password = crypto::binding::encrypt_key_password(
-                            siguldry_bindings,
+                            &siguldry_config.pkcs11_bindings,
                             user_password.clone(),
                             sigul_key_password.clone(),
                         )
@@ -579,7 +599,12 @@ pub async fn migrate_sigul(
             } else {
                 tracing::debug!(sigul_key.name, "Importing key material");
                 match sigul_key
-                    .as_siguldry_key(siguldry_conn, sigul_key_password)
+                    .as_siguldry_key(
+                        siguldry_conn,
+                        siguldry_config,
+                        &sigul_key.name,
+                        sigul_key_password,
+                    )
                     .await
                 {
                     Ok(key) => {

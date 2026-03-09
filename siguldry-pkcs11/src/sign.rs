@@ -273,9 +273,7 @@ pub extern "C" fn C_Sign(
             // structure. The maximum input size is the key modulus in bits minus 11, but we
             // introduce some restrictions here due to the current Siguldry API: the input _MUST_
             // be a DigestInfo structure which we unpack, send to the server, and repack.
-            if let Ok((algorithm, digest)) =
-                siguldry::server::crypto::signing::decode_digest_info(data)
-            {
+            if let Ok((algorithm, digest)) = siguldry::der::decode_digest_info(data) {
                 (algorithm, hex::encode(digest))
             } else {
                 tracing::error!("Failed to parse DigestInfo");

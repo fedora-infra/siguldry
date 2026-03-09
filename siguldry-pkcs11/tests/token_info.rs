@@ -4,8 +4,6 @@
 //! Tests for all the non-signing bits of the PKCS #11 module; version information,
 //! token info, mechanism listing, etc.
 
-use std::path::PathBuf;
-
 use cryptoki::{
     context::{CInitializeArgs, CInitializeFlags, Pkcs11},
     error::{Error, RvError},
@@ -14,18 +12,8 @@ use cryptoki::{
 
 use siguldry_test::{InstanceBuilder, keys};
 
-// TODO escargo?
-fn module_path() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.join("../target/debug/libsiguldry_pkcs11.so")
-}
-
-fn initialize_module() -> anyhow::Result<Pkcs11> {
-    let pkcs11 = Pkcs11::new(module_path())?;
-    let args = CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK);
-    pkcs11.initialize(args)?;
-    Ok(pkcs11)
-}
+mod common;
+use common::{initialize_module, module_path};
 
 #[tokio::test]
 #[tracing_test::traced_test]

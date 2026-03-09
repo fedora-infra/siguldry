@@ -8,10 +8,7 @@
 use std::path::Path;
 
 use anyhow::Context;
-use bytes::Bytes;
-use tokio::io::{
-    AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines, ReadHalf, WriteHalf,
-};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines, ReadHalf, WriteHalf};
 use tokio::net::UnixStream;
 use tracing::{Level, instrument};
 
@@ -67,25 +64,6 @@ impl IpcClient {
         self.reader = Some(reader);
 
         response
-    }
-
-    /// Only use this for OpenPGP signing to read the payload back after the response.
-    ///
-    /// Delete this if we can use PKCS#11 client-side for all signing.
-    #[instrument(skip(self), level = Level::DEBUG)]
-    pub async fn read_bytes(&mut self, payload_size: usize) -> std::io::Result<Bytes> {
-        let mut reader = self
-            .reader
-            .take()
-            .expect("Programmer error: replace read half")
-            .into_inner();
-        let mut buffer = vec![0; payload_size];
-        tracing::trace!(len = buffer.len(), "trying to read into buf");
-        let result = reader.read_exact(&mut buffer).await;
-        self.reader = Some(reader.lines());
-        result?;
-
-        Ok(Bytes::from(buffer))
     }
 
     pub async fn shutdown(mut self) -> std::io::Result<()> {

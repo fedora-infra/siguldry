@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use siguldry::{client, protocol::PgpSignatureType};
+use siguldry::client;
 use tokio::task::JoinSet;
 
 use siguldry_test::InstanceBuilder;
@@ -156,96 +156,6 @@ fn bench_command_throughput(c: &mut Criterion) {
     _ = runtime.block_on(instance.halt());
 }
 
-fn gpg_sign_detached(criterion: &mut Criterion) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let instance = runtime
-        .block_on(async {
-            let instance = InstanceBuilder::new().with_pgp_key().build().await?;
-            instance
-                .client
-                .unlock("test-gpg-key".to_string(), "🪿🪿🪿".to_string())
-                .await?;
-            Ok::<_, anyhow::Error>(instance)
-        })
-        .unwrap();
-    let mut payload = vec![0_u8; 1024 * 32];
-    openssl::rand::rand_bytes(&mut payload).unwrap();
-
-    criterion.bench_function("gpg_sign_detached_rsa4k_32kb", |b| {
-        b.iter(|| {
-            runtime.block_on(async {
-                instance
-                    .client
-                    .gpg_sign(
-                        "test-gpg-key".to_string(),
-                        PgpSignatureType::Detached,
-                        bytes::Bytes::from(payload.clone()),
-                    )
-                    .await
-                    .unwrap()
-            });
-        });
-    });
-
-    _ = runtime.block_on(instance.halt());
-}
-
-fn gpg_sign_throughput(c: &mut Criterion) {
-    let mut group = c.benchmark_group("gpg_sign_throughput");
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let instance = runtime
-        .block_on(async {
-            let instance = InstanceBuilder::new().with_pgp_key().build().await?;
-            instance
-                .client
-                .unlock("test-gpg-key".to_string(), "🪿🪿🪿".to_string())
-                .await?;
-            Ok::<_, anyhow::Error>(instance)
-        })
-        .unwrap();
-    let mut payload = vec![0_u8; 1024 * 32];
-    openssl::rand::rand_bytes(&mut payload).unwrap();
-
-    for batch_size in [128, 512_usize].iter() {
-        group.throughput(criterion::Throughput::Elements(*batch_size as u64));
-
-        group.bench_with_input(
-            BenchmarkId::new("gpg_sign", *batch_size),
-            batch_size,
-            |b, size| {
-                b.iter(|| {
-                    runtime.block_on(async {
-                        let mut joinset = JoinSet::new();
-                        for _ in 0..*size {
-                            let client = instance.client.clone();
-                            let payload = payload.clone();
-                            joinset.spawn(async move {
-                                client
-                                    .gpg_sign(
-                                        "test-gpg-key".to_string(),
-                                        PgpSignatureType::Detached,
-                                        bytes::Bytes::from(payload),
-                                    )
-                                    .await
-                                    .unwrap()
-                            });
-                        }
-                        _ = joinset.join_all().await;
-                    });
-                });
-            },
-        );
-    }
-
-    _ = runtime.block_on(instance.halt());
-}
-
 criterion_group!(
     name = base_benches;
     config = Criterion::default().measurement_time(Duration::from_secs(30));
@@ -256,9 +166,4 @@ criterion_group!(
     config = Criterion::default().measurement_time(Duration::from_secs(30));
     targets = bench_command_throughput
 );
-criterion_group!(
-    name = signing_benches;
-    config = Criterion::default().measurement_time(Duration::from_secs(30));
-    targets = gpg_sign_detached, gpg_sign_throughput
-);
-criterion_main!(base_benches, command_benches, signing_benches);
+criterion_main!(base_benches, command_benches);
