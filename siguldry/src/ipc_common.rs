@@ -14,7 +14,7 @@ use tracing::{Level, instrument};
 
 pub struct IpcClient {
     writer: WriteHalf<UnixStream>,
-    reader: Option<Lines<BufReader<ReadHalf<UnixStream>>>>,
+    reader: Lines<BufReader<ReadHalf<UnixStream>>>,
 }
 
 impl IpcClient {
@@ -25,7 +25,7 @@ impl IpcClient {
         let (reader, writer) = tokio::io::split(stream);
         Ok(Self {
             writer,
-            reader: Some(BufReader::new(reader).lines()),
+            reader: BufReader::new(reader).lines(),
         })
     }
 
@@ -49,21 +49,14 @@ impl IpcClient {
         }
         self.writer.flush().await?;
 
-        let mut reader = self
-            .reader
-            .take()
-            .expect("Programmer error: replace read half");
-        let response = match reader.next_line().await {
+        match self.reader.next_line().await {
             Ok(Some(response)) => serde_json::from_str(&response)
                 .map_err(|error| anyhow::anyhow!("Failed to deserialize response: {error:?}")),
             Ok(None) => Err(anyhow::anyhow!("Unexpected EOF from IPC server")),
             Err(error) => Err(anyhow::anyhow!(
                 "Unexpected error reading from IPC server: {error:?}"
             )),
-        };
-        self.reader = Some(reader);
-
-        response
+        }
     }
 
     pub async fn shutdown(mut self) -> std::io::Result<()> {
