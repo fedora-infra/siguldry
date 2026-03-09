@@ -236,7 +236,7 @@ async fn handle(
         }
         let mut request_bytes = request_buffer.into_inner().freeze();
 
-        let binary_bytes = request_bytes.split_off(json_size);
+        let _binary_bytes = request_bytes.split_off(json_size);
         let request_value = serde_json::from_slice::<serde_json::Value>(&request_bytes)?;
         let outer_request =
             match serde_json::from_value::<protocol::json::OuterRequest>(request_value) {
@@ -270,7 +270,11 @@ async fn handle(
             Request::ListUsers {} => request_handler.list_users(&mut db_transaction).await,
             Request::ListKeys {} => request_handler.list_keys(&mut db_transaction).await,
             Request::Unlock { key, password } => request_handler.unlock(key, password).await,
-            Request::Sign { key, digest } => request_handler.sign(&key, digest, binary_bytes).await,
+            Request::Sign {
+                key,
+                digest_algorithm,
+                digest,
+            } => request_handler.sign(&key, digest_algorithm, digest).await,
             Request::SignAll { key, digests } => request_handler.sign_all(&key, digests).await,
             Request::GetKey { key } => request_handler.public_key(&mut db_transaction, key).await,
         };

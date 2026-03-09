@@ -393,8 +393,13 @@ pub mod json {
         ///
         /// For RSA key types, the PKCS #1 padding mode is used.
         Sign {
+            /// The signing key to use. This key must be unlocked.
             key: String,
-            digest: super::DigestAlgorithm,
+            /// The digest algorithm used on the data; some signing algorithms
+            /// embed this in the signature structure.
+            digest_algorithm: super::DigestAlgorithm,
+            /// The hex-encoded digest to sign.
+            digest: String,
         },
         SignAll {
             key: String,

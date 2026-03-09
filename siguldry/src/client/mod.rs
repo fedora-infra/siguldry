@@ -6,7 +6,6 @@
 use std::path::PathBuf;
 use std::{sync::Arc, time::Duration};
 
-use bytes::Bytes;
 use tokio::sync::Mutex;
 
 use crate::protocol::DigestAlgorithm;
@@ -319,12 +318,16 @@ impl Client {
     pub async fn sign(
         &self,
         key: String,
-        digest: DigestAlgorithm,
-        data: Bytes,
+        digest_algorithm: DigestAlgorithm,
+        digest: String,
     ) -> Result<Signature, ClientError> {
         let request = Request {
-            message: protocol::json::Request::Sign { key, digest },
-            binary: Some(data),
+            message: protocol::json::Request::Sign {
+                key,
+                digest_algorithm,
+                digest,
+            },
+            binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;

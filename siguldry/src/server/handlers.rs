@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-use std::{io::Write, sync::Arc};
+use std::sync::Arc;
 
-use anyhow::Context;
-use bytes::Bytes;
 use sequoia_openpgp::parse::Parse;
 use sqlx::SqliteConnection;
 use tracing::instrument;
@@ -158,16 +156,12 @@ impl Handler {
     pub(crate) async fn sign(
         &mut self,
         key_name: &str,
-        digest: DigestAlgorithm,
-        blob: Bytes,
+        digest_algorithm: DigestAlgorithm,
+        digest: String,
     ) -> Result<Response, ServerError> {
-        let mut hash = openssl::hash::Hasher::new(digest.into())
-            .context("OpenSSL missing support for digest")?;
-        hash.write_all(&blob)?;
-        let hash = hex::encode(hash.finish().context("Unable to hash payload")?);
         let mut response = self
             .ipc_helper
-            .sign_request(key_name.to_string(), vec![(digest, hash)])
+            .sign_request(key_name.to_string(), vec![(digest_algorithm, digest)])
             .await?;
 
         Ok(Response {

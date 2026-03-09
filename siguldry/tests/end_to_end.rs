@@ -323,12 +323,14 @@ async fn digest_signature() -> anyhow::Result<()> {
         .get_key(keys::CODESIGNING_KEY_NAME.to_string())
         .await?;
 
+    let hash = openssl::hash::hash(DigestAlgorithm::Sha256.into(), data)?;
+    let digest = hex::encode(hash);
     let signature = instance
         .client
         .sign(
             keys::CODESIGNING_KEY_NAME.to_string(),
             DigestAlgorithm::Sha256,
-            bytes::Bytes::from(data),
+            digest,
         )
         .await?;
 
@@ -697,12 +699,15 @@ async fn hsm_rsa_prehashed_signature_with_pkcs11_binding() -> anyhow::Result<()>
         .get_key(keys::HSM_RSA_KEY_NAME.to_string())
         .await?;
 
+    let hash = openssl::hash::hash(DigestAlgorithm::Sha256.into(), data)?;
+    let digest = hex::encode(hash);
+
     let signature = instance
         .client
         .sign(
             keys::HSM_RSA_KEY_NAME.to_string(),
             DigestAlgorithm::Sha256,
-            bytes::Bytes::from(data),
+            digest,
         )
         .await?;
 
