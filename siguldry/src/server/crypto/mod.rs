@@ -55,7 +55,7 @@ fn encrypt_key(key_password: Password, private_key: PKey<Private>) -> anyhow::Re
 pub struct EncryptedKey {
     pub handle: String,
     pub encrypted_password: Vec<u8>,
-    pub private_key_pem: String,
+    pub key_material: String,
     pub public_key_pem: String,
     pub openpgp_certificate: String,
     pub x509_certificate: String,
@@ -82,8 +82,16 @@ pub fn create_encrypted_key(
         )?)?,
     };
     let (signing_key, issuer) = if let Some((ca_key, key_password, issuer)) = x509_ca {
+        let key_material = if let Some(material) = &ca_key.key_material {
+            material
+        } else {
+            return Err(anyhow::anyhow!(
+                "CA keys in a PKCS#11 token aren't yet supported"
+            ));
+        };
+        let ca_pem = binding::unbind_with_pkcs11(&config.pkcs11_bindings, key_material)?;
         let signing_key = key_password.map(|passphrase| {
-            PKey::private_key_from_pem_passphrase(ca_key.key_material.as_bytes(), passphrase)
+            PKey::private_key_from_pem_passphrase(ca_pem.as_bytes(), passphrase)
         })?;
         let issuer = x509::X509::from_pem(issuer.data.as_bytes())?;
         (signing_key, Some(issuer))
@@ -120,13 +128,14 @@ pub fn create_encrypted_key(
         &key.public_key_to_der()?,
     )?);
     let private_key_pem = encrypt_key(key_password.clone(), key)?;
+    let key_material = binding::bind_with_pkcs11(&config.pkcs11_bindings, &private_key_pem)?;
     let encrypted_password =
         binding::encrypt_key_password(&config.pkcs11_bindings, user_password, key_password)?;
 
     Ok(EncryptedKey {
         handle,
         encrypted_password,
-        private_key_pem,
+        key_material,
         public_key_pem,
         openpgp_certificate,
         x509_certificate,
@@ -349,10 +358,10 @@ fn x509_certificate_for_key_private(
 /// The `key_password` is for the _signing key_, so the certificate authority if it's Some,
 /// or the key if this will be a self-signed certificate.
 pub fn x509_certificate_for_key(
+    config: &crate::server::Config,
     key: db::Key,
     certificate_authority: Option<(db::Key, db::PublicKeyMaterial)>,
     key_password: Password,
-    subject_config: &crate::server::config::X509SubjectName,
     usage: KeyUsage,
     common_name: &str,
     validity_days: NonZeroU32,
@@ -364,19 +373,25 @@ pub fn x509_certificate_for_key(
         (key.clone(), None)
     };
 
+    let key_material = if let Some(material) = &signing_key.key_material {
+        material
+    } else {
+        return Err(anyhow::anyhow!(
+            "CA keys in a PKCS#11 token aren't yet supported"
+        ));
+    };
+
     let pubkey = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+    let signing_key_pem = binding::unbind_with_pkcs11(&config.pkcs11_bindings, key_material)?;
     let signing_key = key_password.map(|passphrase| {
-        openssl::pkey::PKey::private_key_from_pem_passphrase(
-            signing_key.key_material.as_bytes(),
-            passphrase,
-        )
+        openssl::pkey::PKey::private_key_from_pem_passphrase(signing_key_pem.as_bytes(), passphrase)
     })?;
 
     let certificate = x509_certificate_for_key_private(
         pubkey,
         signing_key,
         issuer,
-        subject_config,
+        &config.certificate_subject,
         usage,
         common_name,
         validity_days,

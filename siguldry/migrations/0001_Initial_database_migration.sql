@@ -21,13 +21,18 @@ CREATE TABLE IF NOT EXISTS "keys" (
     -- the public key.
     "handle" TEXT NOT NULL UNIQUE,
     -- The encrypted key material if this is not a PKCS#11-backed key. For PKCS#11-backed keys, this
-    -- is the hex-encoded ID attribute of the key within the associated token. That is, it is a human-
-    -- readable version of the blob stored in the `pkcs11_key_id` field.
+    -- is NULL.
     --
-    -- The format used is PEM-encoded PKCS#8 EncryptedPrivateKeyInfo structures. The key is encrypted
-    -- with AES-256-CBC using a 128 byte server-generated secret. This secret is then encrypted per-user
-    -- in the key_accesses table.
-    "key_material" TEXT NOT NULL,
+    -- The format used is PEM-encoded PKCS#8 EncryptedPrivateKeyInfo which is optionally bound with
+    -- X509 certificates associated with keys in a PKCS#11 token. The PKCS#8 structure is encrypted
+    -- with AES-256-CBC using a 128 byte server-generated secret. That is, if bindings are enabled,
+    -- encrypted with AES-256-GCM in a PEM-encoded CMS structure for each available certificate. The
+    -- result is stored as a JSON array using the same format as the "encrypted_passphrase" field of
+    -- the key_accesses table.
+    --
+    -- The server-generated secret is encrypted using a user-provided password which is stored in
+    -- the key_accesses table.
+    "key_material" TEXT,
     -- The PEM-encoded public key.
     "public_key" TEXT NOT NULL,
     "pkcs11_token_id" INTEGER,
@@ -35,6 +40,8 @@ CREATE TABLE IF NOT EXISTS "keys" (
     "pkcs11_key_id" BLOB,
     CHECK ( (pkcs11_token_id IS NULL) = (pkcs11_key_id IS NULL) ),
     CHECK (hybrid_pair_id != id),
+    -- Either the key material is set, or the pkcs11 token is set, but not both.
+    CHECK ( (key_material IS NOT NULL) != (pkcs11_token_id IS NOT NULL) )
     FOREIGN KEY(key_algorithm) REFERENCES key_algorithms(type) ON DELETE RESTRICT,
     -- If a token is removed, delete all associated keys.
     FOREIGN KEY(pkcs11_token_id) REFERENCES pkcs11_tokens(id) ON DELETE CASCADE
@@ -117,6 +124,18 @@ CREATE TABLE IF NOT EXISTS "key_accesses" (
     "id" INTEGER NOT NULL PRIMARY KEY,
     "key_id" INTEGER NOT NULL,
     "user_id" INTEGER NOT NULL,
+    -- The passphrase to decrypt the key referenced in key_id, encrypted with a user password
+    -- as an OpenPGP message which has been ASCII-armored. You can, for example, take the value
+    -- of this field and pass it to "sq decrypt" with the user password.
+    --
+    -- If the server is not configured to use PKCS#11 binding, the resulting message will be
+    -- a JSON array in the format "[{"None": {"secret": "key-password-here"}}]".
+    --
+    -- If, on the other hand, PKCS#11 binding is configured, the array will contain an entry
+    -- for each binding in the format:
+    --   {"Pkcs11WithCMS": {"key_fingerprint": "AABBCC...", "secret": "-----BEGIN CMS-----"}}
+    --
+    -- The PEM-encoded CMS structure can be decrypted with, for example, openssl-cms.
     "encrypted_passphrase" BLOB NOT NULL,
     "key_admin" BOOLEAN NOT NULL,
     -- Foreign key constraints that require all key_accesses referencing a user or key

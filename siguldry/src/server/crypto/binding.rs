@@ -16,6 +16,7 @@ use std::{
 };
 
 use anyhow::Context;
+use openssl::pkey::PKey;
 use openssl::{
     cms::{CMSOptions, CmsContentInfo},
     hash::MessageDigest,
@@ -35,25 +36,28 @@ use sequoia_openpgp::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::server::config::Pkcs11Binding;
+use crate::server::{config::Pkcs11Binding, db};
 
-/// The intermediate data format for passwords.
+/// The intermediate data format for secrets.
 ///
-/// A key password, used to decrypt the actual signing key, never leaves the server. Instead,
-/// it's encrypted using a set of server-side RSA keys which are stored in a PKCS#11 token,
-/// which is then encrypted with a user's access password.
+/// This structure is serialized and, depending on what type of secret it is, futher encrypted.
+/// Private keys which have been encrypted with a server-generated secret can be bound with
+/// PKCS11 tokens before being serialized and written to the database.
 ///
-/// This is serialized to JSON, which looks like:
+/// The key password used to encrypt the private key can be bound with PKCS11 tokens, then encrypted
+/// with the user-provided password before being written to the database.
 ///
-/// `{"None": {"password": "my-password"}}`
+/// The serialized JSON looks like:
+///
+/// `{"None": {"secret": "my-password"}}`
 ///
 /// or
 ///
-/// `{"Pkcs11": {"key_fingerprint": "hexencodedsha256sum", "password": "-----BEGIN PKCS7-----..." `
+/// `{"Pkcs11WithCMS": {"fingerprint": "hexencodedsha256sum", "secret": "-----BEGIN CMS-----..." `
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum BoundPassword {
+enum BoundSecret {
     /// No binding was used.
-    None { password: String },
+    None { secret: String },
     /// Secrets bound by asymmetric keys stored in a device accessible via PKCS#11.
     ///
     /// Secrets of this variant have been encrypted using OpenSSL's CMS interface and the
@@ -64,11 +68,144 @@ enum BoundPassword {
     /// libtpm2_pkcs11 library. Creating and managing the key pairs is up to the administrator.
     Pkcs11WithCMS {
         /// The SHA256 digest of the DER-encoded X509 certificate used in this binding.
-        key_fingerprint: String,
-        /// The key password that's been encrypted by the X509 certificate identified in
+        fingerprint: String,
+        /// The secret that's been encrypted by the X509 certificate identified in
         /// `key_fingerprint`. The string contains a PEM-encoded CMS structure.
-        password: String,
+        secret: String,
     },
+}
+
+impl BoundSecret {
+    /// Encrypt some data using a [`Binding`] configuration.
+    ///
+    /// The data is typically the password used to encrypt a private key, or the private key itself.
+    ///
+    /// The data is encrypted with the X509 certificate in the provided binding to a CMS (RFC 5652)
+    /// structure which is PEM-encoded. AES-256-GCM is used for the cipher.
+    ///
+    /// If there are no bindings configured, the secret is returned, wrapped in a structure suitable
+    /// to be serialized and encrypted with a user-provided password.
+    pub(crate) fn bind(bindings: &[Pkcs11Binding], secret: &[u8]) -> anyhow::Result<Vec<Self>> {
+        let secret_str = str::from_utf8(secret)
+            .map_err(|_| anyhow::anyhow!("Secrets that are bound must be encoded with UTF-8"))?;
+        let mut bound_secrets = bindings
+            .iter()
+            .map(|binding| {
+                tracing::info!(certificate=?binding.certificate, "binding secret");
+
+                let certificate = std::fs::read_to_string(&binding.certificate)?;
+                let certificate = X509::from_pem(certificate.as_bytes())?;
+                let mut cert_stack = Stack::new()?;
+                cert_stack.push(certificate)?;
+                let encrypted = CmsContentInfo::encrypt(
+                    &cert_stack,
+                    secret,
+                    Cipher::aes_256_gcm(),
+                    CMSOptions::empty(),
+                )?;
+                let pem = encrypted.to_pem()?;
+                let certificate = cert_stack.pop().expect("we just pushed a cert");
+                let fingerprint = hex::encode_upper(certificate.digest(MessageDigest::sha256())?);
+                Ok::<_, anyhow::Error>(BoundSecret::Pkcs11WithCMS {
+                    fingerprint,
+                    secret: String::from_utf8(pem)?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if bound_secrets.is_empty() {
+            tracing::trace!("binding isn't enabled for this secret");
+            bound_secrets.push(BoundSecret::None {
+                secret: secret_str.to_string(),
+            });
+        }
+
+        tracing::debug!(
+            tokens_bound = bindings.len(),
+            "secret has been successfully bound"
+        );
+
+        Ok(bound_secrets)
+    }
+
+    pub(crate) fn unbind(&self, bindings: &[Pkcs11Binding]) -> anyhow::Result<Password> {
+        match self {
+            BoundSecret::None { secret } => return Ok(Password::from(secret.as_bytes())),
+            BoundSecret::Pkcs11WithCMS {
+                fingerprint,
+                secret,
+            } => {
+                for binding in bindings.iter().filter(|binding| binding.can_unbind()) {
+                    if let Ok(secret) =
+                        binding_decrypt(binding.clone(), secret.clone().into_bytes())
+                            .map(Password::from)
+                    {
+                        return Ok(secret);
+                    } else {
+                        tracing::debug!(
+                            certificate = fingerprint,
+                            key_uri = binding.private_key,
+                            "Failed to unbind key password"
+                        );
+                    }
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!("Unable to unbind key password"))
+    }
+}
+
+/// Decrypt a bound password using a PIN-protected private key in a PKCS11 token.
+fn binding_decrypt(binding: Pkcs11Binding, data: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    let private_key = binding.private_key.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Binding configuration is missing the 'private_key' field and can't be used to decrypt"
+        )
+    })?;
+    // In the future maybe we'll get openssl provider APIs? Alternatively, if Sequioa gets
+    // PKCS#11 support, we could switch to using it in a migration.
+    let mut command = std::process::Command::new("openssl");
+    let mut child = command
+        .args([
+            "cms",
+            "-decrypt",
+            "-inform",
+            "pem",
+            "-provider",
+            "pkcs11",
+            "-passin",
+            "stdin",
+            "-inkey",
+        ])
+        .arg(private_key)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("openssl-cms command missing stdin"))?;
+
+    binding
+        .pin
+        .ok_or_else(|| anyhow::anyhow!("Binding must include a PIN"))?
+        .map(|pin| stdin.write_all(pin))?;
+    stdin.write_all(b"\n")?;
+    stdin.write_all(&data)?;
+    drop(stdin);
+
+    let output = child.wait_with_output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to decrypt data via PKCS#11 using openssl-cms (exited {:?}): {stderr}",
+            output.status.code()
+        ));
+    }
+
+    Ok(output.stdout)
 }
 
 /// Decrypt a key password to enable access to the key itself.
@@ -77,38 +214,17 @@ pub async fn decrypt_key_password(
     user_password: Password,
     data: &[u8],
 ) -> anyhow::Result<Password> {
-    let key_bindings: Vec<BoundPassword> = symmetric_decrypt(user_password, data)
+    let key_bindings: Vec<BoundSecret> = symmetric_decrypt(user_password, data)
         .map(|data| serde_json::from_slice(&data))
         .context("User password is invalid")?
         .map_err(|_e| anyhow::anyhow!("JSON content in database could not be deserialized!"))?;
 
-    for bound_password in key_bindings {
-        match bound_password {
-            BoundPassword::None { password } => return Ok(Password::from(password)),
-            BoundPassword::Pkcs11WithCMS {
-                key_fingerprint,
-                password,
-            } => {
-                for binding in bindings.iter().filter(|binding| binding.can_unbind()) {
-                    if let Ok(password) =
-                        binding_decrypt(binding.clone(), password.clone().into_bytes())
-                            .await
-                            .map(Password::from)
-                    {
-                        return Ok(password);
-                    } else {
-                        tracing::debug!(
-                            certificate = key_fingerprint,
-                            key_uri = binding.private_key,
-                            "Failed to unbind key password"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    Err(anyhow::anyhow!("Unable to unbind key password"))
+    key_bindings
+        .iter()
+        .map(|s| s.unbind(bindings).ok())
+        .find(|result| result.is_some())
+        .flatten()
+        .ok_or_else(|| anyhow::anyhow!("Unable to unbind key password"))
 }
 
 /// Encrypt a key password for storage.
@@ -117,29 +233,7 @@ pub fn encrypt_key_password(
     user_password: Password,
     key_password: Password,
 ) -> anyhow::Result<Vec<u8>> {
-    let mut bound_passwords = bindings
-        .iter()
-        .map(|binding| {
-            tracing::info!(certificate=?binding.certificate, "Binding key password");
-            key_password.map(|key| {
-                binding_encrypt(binding, key).with_context(|| {
-                    format!(
-                        "Failed to bind key password with {}",
-                        &binding.certificate.display()
-                    )
-                })
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // If no bindings are configured, the key is only encrypted with the user password
-    if bound_passwords.is_empty() {
-        let none_binding = key_password.map(|p| {
-            let password = String::from_utf8(p.to_vec())?;
-            Ok::<_, anyhow::Error>(BoundPassword::None { password })
-        })?;
-        bound_passwords.push(none_binding);
-    }
+    let bound_passwords = key_password.map(|password| BoundSecret::bind(bindings, password))?;
 
     tracing::debug!(
         tokens_bound = bindings.len(),
@@ -150,6 +244,55 @@ pub fn encrypt_key_password(
         serde_json::to_vec(&bound_passwords)?.as_slice(),
     )
     .context("Failed to PGP-encrypt the bound password")
+}
+
+/// Bind a string with the provided [`Pkcs11Binding`] and serialize it to JSON for database storage.
+///
+/// If there are no bindings (e.g. an empty slice) the string is wrapped in [`BoundSecret::None`].
+pub(crate) fn bind_with_pkcs11(bindings: &[Pkcs11Binding], secret: &str) -> anyhow::Result<String> {
+    let bound = BoundSecret::bind(bindings, secret.as_bytes())?;
+    serde_json::to_string(&bound).context("Failed to serialize bound secret")
+}
+
+/// Unbind key material to recover the encrypted PEM string.
+///
+/// This is the inverse of [`bind_key_material`].
+pub(crate) fn unbind_with_pkcs11(
+    bindings: &[Pkcs11Binding],
+    bound_secret: &str,
+) -> anyhow::Result<String> {
+    let bound_secrets: Vec<BoundSecret> =
+        serde_json::from_str(bound_secret).context("Failed to deserialize bound key material")?;
+    bound_secrets
+        .iter()
+        .find_map(|s| s.unbind(bindings).ok())
+        .ok_or_else(|| anyhow::anyhow!("Unable to unbind key material"))
+        .and_then(|password| {
+            password
+                .map(|p| String::from_utf8(p.to_vec()))
+                .map_err(|e| anyhow::anyhow!("Unbound key material is not valid UTF-8: {e}"))
+        })
+}
+
+/// Decrypt a soft key's private key material.
+pub(crate) async fn decrypt_private_key(
+    key: &db::Key,
+    encrypted_password: &[u8],
+    bindings: &[Pkcs11Binding],
+    user_password: Password,
+) -> anyhow::Result<PKey<openssl::pkey::Private>> {
+    let key_material = if let Some(material) = &key.key_material {
+        material
+    } else {
+        return Err(anyhow::anyhow!(
+            "Can't decrypt private key for a PKCS#11 token"
+        ));
+    };
+    let key_password = decrypt_key_password(bindings, user_password, encrypted_password).await?;
+    let encrypted_pem = unbind_with_pkcs11(bindings, key_material)?;
+    Ok(key_password.map(|passphrase| {
+        PKey::private_key_from_pem_passphrase(encrypted_pem.as_bytes(), passphrase)
+    })?)
 }
 
 /// Implement a helper for unsigned, symmetrically encrypted data for Sequoia.
@@ -228,86 +371,6 @@ fn symmetric_decrypt(password: Password, data: &[u8]) -> anyhow::Result<Vec<u8>>
     decryptor.read_to_end(&mut user_passphrase)?;
 
     Ok(user_passphrase)
-}
-
-/// Encrypt some data using a [`Binding`] configuration.
-///
-/// The data is typically the password used to encrypt a private key.
-///
-/// The data is encrypted with the X509 certificate in the provided binding to a CMS (RFC 5652)
-/// structure which is PEM-encoded. AES-256-GCM is used for the symmetric cipher.
-fn binding_encrypt(binding: &Pkcs11Binding, data: &[u8]) -> anyhow::Result<BoundPassword> {
-    let certificate = std::fs::read_to_string(&binding.certificate)?;
-    let certificate = X509::from_pem(certificate.as_bytes())?;
-    let mut cert_stack = Stack::new()?;
-    cert_stack.push(certificate)?;
-    let encrypted = CmsContentInfo::encrypt(
-        &cert_stack,
-        data,
-        Cipher::aes_256_gcm(),
-        CMSOptions::empty(),
-    )?;
-    let pem = encrypted.to_pem()?;
-    let certificate = cert_stack.pop().expect("we just pushed a cert");
-    let key_fingerprint = format!("{:X?}", &certificate.digest(MessageDigest::sha256())?);
-    Ok(BoundPassword::Pkcs11WithCMS {
-        key_fingerprint,
-        password: String::from_utf8(pem)?,
-    })
-}
-
-/// Decrypt a bound password using a PIN-protected private key in a PKCS11 token.
-async fn binding_decrypt(binding: Pkcs11Binding, data: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    let output = tokio::task::spawn_blocking(move || {
-        let private_key = binding.private_key.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Binding configuration is missing the 'private_key' field and can't be used to decrypt"
-            )
-        })?;
-        // In the future maybe we'll get openssl provider APIs? Alternatively, if Sequioa gets
-        // PKCS#11 support, we could switch to using it in a migration.
-        let mut command = std::process::Command::new("openssl");
-        let mut child = command
-            .args([
-                "cms",
-                "-decrypt",
-                "-inform",
-                "pem",
-                "-provider",
-                "pkcs11",
-                "-passin",
-                "stdin",
-                "-inkey",
-            ])
-            .arg(private_key)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("openssl-cms command missing stdin"))?;
-
-        binding.pin.ok_or_else(||anyhow::anyhow!("Binding must include a PIN"))?.map(|pin| {
-            stdin.write_all(pin)
-        })?;
-        stdin.write_all(b"\n")?;
-        stdin.write_all(&data)?;
-        drop(stdin);
-
-        let output = child.wait_with_output()?;
-        Ok::<_, anyhow::Error>(output)
-    }).await??;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Failed to decrypt data via PKCS#11 using openssl-cms (exited {:?}): {stderr}",
-            output.status.code()
-        ));
-    }
-
-    Ok(output.stdout)
 }
 
 /// This module contains functions for working with Sigul-bound keys.
@@ -407,8 +470,7 @@ pub mod sigul {
                         let inner = super::binding_decrypt(
                             sigul_binding.clone(),
                             pkcs11_binding.value.as_bytes().to_vec(),
-                        )
-                        .await?;
+                        )?;
                         bound_key_password = String::from_utf8(inner)?;
                     } else {
                         return Err(anyhow::anyhow!(
@@ -427,8 +489,7 @@ pub mod sigul {
                                 let inner = super::binding_decrypt(
                                     sigul_binding.clone(),
                                     pkcs11_binding.value.as_bytes().to_vec(),
-                                )
-                                .await;
+                                );
                                 if let Ok(inner) = inner {
                                     bound_key_password = String::from_utf8(inner)?;
                                     break;
@@ -535,18 +596,22 @@ mod tests {
     async fn encrypt_decrypt_binding() -> Result<()> {
         let softhsm = setup_hsm()?;
 
-        let binding = softhsm.bindings.first().unwrap();
-        let bound_password = binding_encrypt(binding, b"some data")?;
-        let decrypted_data = match bound_password {
-            BoundPassword::None { password: _ } => {
-                panic!("We should have encrypted it with a certificate")
-            }
-            BoundPassword::Pkcs11WithCMS {
-                key_fingerprint: _,
-                password,
-            } => binding_decrypt(binding.to_owned(), password.into_bytes()).await,
-        }?;
+        let bound_secrets = BoundSecret::bind(&softhsm.bindings, b"some data")?;
+        let bound_password = bound_secrets.first().unwrap();
 
+        assert!(
+            matches!(
+                &bound_password,
+                &BoundSecret::Pkcs11WithCMS {
+                    fingerprint: _,
+                    secret: _
+                }
+            ),
+            "Expected PKCS11 binding"
+        );
+        let decrypted_data = bound_password
+            .unbind(&softhsm.bindings)?
+            .map(|p| p.to_vec());
         assert_eq!(b"some data".as_slice(), decrypted_data);
 
         Ok(())

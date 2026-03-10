@@ -307,13 +307,19 @@ pub struct Key {
     /// This uniquely identifies a key. For example, the OpenPGP key fingerprint, or the SHA256 sum of
     /// the public key.
     pub handle: String,
-    /// The encrypted key material, or in the case of keys stored in hardware, information on how
-    /// to access the key (e.g. the key's ID within the referenced [`Pkcs11Token`]).
+    /// The encrypted key material if this is not a PKCS#11-backed key. For PKCS#11-backed keys, this
+    /// is [`Option::None`].
     ///
-    /// The scheme is dependent on the type of key, but it will be a text representation
-    /// (ASCII-armored, PEM-encoded, etc).
-    pub key_material: String,
-    /// The public key in a text-friendly encoding (ASCII-armored, PEM-encoded, etc).
+    /// The format used is PEM-encoded PKCS#8 EncryptedPrivateKeyInfo which is optionally bound with
+    /// X509 certificates associated with keys in a PKCS#11 token. The PKCS#8 structure is encrypted
+    /// with AES-256-CBC using a 128 byte server-generated secret. That is, if bindings are enabled,
+    /// encrypted with AES-256-GCM in a PEM-encoded CMS structure for each available certificate. The
+    /// result is stored as a JSON blob
+    ///
+    /// The server-generated secret is encrypted using a user-provided password which is stored in
+    /// the key_accesses table.
+    pub key_material: Option<String>,
+    /// The PEM-encoded public key.
     pub public_key: String,
     /// The foreign key to the PKCS#11 token this key is stored in; if this is None the key
     /// is stored in the SQLite database itself (encrypted, of course).
@@ -373,7 +379,7 @@ impl Key {
         name: &str,
         handle: &str,
         key_algorithm: KeyAlgorithm,
-        key_material: &str,
+        key_material: Option<&str>,
         public_key: &str,
         pkcs11_token: Option<&Pkcs11Token>,
         pkcs11_key_id: Option<Vec<u8>>,
@@ -391,7 +397,7 @@ impl Key {
                 name: name.to_string(),
                 key_algorithm,
                 handle: handle.to_string(),
-                key_material: key_material.to_string(),
+                key_material: key_material.map(|k| k.to_string()),
                 public_key: public_key.to_string(),
                 pkcs11_token_id,
                 pkcs11_key_id,
@@ -442,13 +448,11 @@ pub struct KeyAccess {
     pub user_id: i64,
     /// The encrypted secret required to access the key referenced by `key_id`.
     ///
-    /// This secret may be used to encrypt the key on the filesystem, or it may be the PIN needed
-    /// to access a PKCS#11 token.
-    ///
     /// The key secret is encrypted with the user-supplied secret. If the server has been configured
-    /// to use it, the encrypted secret may be further encrypted using clevis.
+    /// to use it, the encrypted secret may be further encrypted using X509 certificates associated
+    /// with keys stored in a secure PKCS#11 module.
     ///
-    /// If Clevis is not in use, the value stored in this field is constructed as follows:
+    /// If PKCS#11 binding is not in use, the value stored in this field is constructed as follows:
     ///
     ///         ------------------------------
     ///         | Secret used to encrypt key |
@@ -461,17 +465,17 @@ pub struct KeyAccess {
     ///            | encrypted_passphrase |
     ///            ------------------------
     ///
-    /// If Clevis *is* in use, the value stored in this field is contructed like this:
+    /// If PKCS#11 *is* in use, the value stored in this field is contructed like this:
     ///
     ///         ------------------------------
     ///         | Secret used to encrypt key |
     ///         ------------------------------
     ///                       |
-    ///                       | Encrypted with Clevis configuration
+    ///                       | Encrypt a copy for each certificate
     ///                       |
     ///                       v
     ///         -------------------------------
-    ///         | First pass encrypted secret |
+    ///         |   Array of CMS structures   |
     ///         -------------------------------
     ///                       |
     ///                       | User passphrase
@@ -654,7 +658,7 @@ mod tests {
             "test-name",
             "unique-handle",
             KeyAlgorithm::P256,
-            "pkcs11://something",
+            Some("secret"),
             "public-key",
             None,
             None,
@@ -671,6 +675,60 @@ mod tests {
         Ok(())
     }
 
+    // Test the CHECK constraint on key material with pkcs11_token_id
+    #[tokio::test]
+    async fn key_needs_either_material_or_pkcs11() -> Result<()> {
+        let db_pool = pool("sqlite::memory:", false).await?;
+        migrate(&db_pool).await?;
+        let mut conn = db_pool.begin().await?;
+        let token = Pkcs11Token::create(
+            &mut conn,
+            PathBuf::from("some/path.so"),
+            "label".to_string(),
+            None,
+            None,
+            "abc".to_string(),
+            None,
+        )
+        .await?;
+
+        // Neither key nor pkcs11 token
+        let result = Key::create(
+            &mut conn,
+            "test-name",
+            "unique-handle",
+            KeyAlgorithm::P256,
+            None,
+            "public-key",
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            result.is_err_and(|e| e.as_database_error().unwrap().is_check_violation()),
+            "Expected a CHECK violation"
+        );
+
+        // Both key and pkcs11 token
+        let result = Key::create(
+            &mut conn,
+            "test-name",
+            "unique-handle",
+            KeyAlgorithm::P256,
+            Some("secret"),
+            "public-key",
+            Some(&token),
+            Some(b"huh".to_vec()),
+        )
+        .await;
+        assert!(
+            result.is_err_and(|e| e.as_database_error().unwrap().is_check_violation()),
+            "Expected a CHECK violation"
+        );
+
+        Ok(())
+    }
+
     // Assert the hybrid_pair_id field can be set and unset
     #[tokio::test]
     async fn key_associate_hybrid_key() -> Result<()> {
@@ -682,7 +740,7 @@ mod tests {
             "test-name",
             "unique-handle",
             KeyAlgorithm::P256,
-            "secret",
+            Some("secret"),
             "public-key",
             None,
             None,
@@ -693,7 +751,7 @@ mod tests {
             "another-test-name",
             "another-unique-handle",
             KeyAlgorithm::P256,
-            "secret",
+            Some("secret"),
             "public-key",
             None,
             None,
@@ -704,7 +762,7 @@ mod tests {
             "yet-another-test-name",
             "yet-another-unique-handle",
             KeyAlgorithm::P256,
-            "secret",
+            Some("secret"),
             "public-key",
             None,
             None,
@@ -768,15 +826,13 @@ mod tests {
         migrate(&db_pool).await?;
         let mut conn = db_pool.begin().await?;
         let result = sqlx::query(
-            "INSERT INTO keys (name, key_algorithm, handle, key_material, public_key, pkcs11_token_id, pkcs11_key_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO keys (name, key_algorithm, handle, key_material, public_key) VALUES (?, ?, ?, ?, ?)",
         )
         .bind("test-name")
         .bind("not-valid")
         .bind("unique")
         .bind("key-material")
         .bind("public-key")
-        .bind("NULL")
-        .bind("NULL")
         .fetch_one(&mut *conn)
         .await;
 

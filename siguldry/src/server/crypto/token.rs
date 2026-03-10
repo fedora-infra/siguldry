@@ -270,13 +270,12 @@ async fn import_pkcs11_token_private(
                 openssl::hash::MessageDigest::sha256(),
                 &public_key.public_key_to_der()?,
             )?);
-            let key_material = hex::encode_upper(key_id);
             let key = db::Key::create(
                 conn,
                 &key_info.label,
                 &handle,
                 key_algorithm,
-                &key_material,
+                None,
                 &pubkey_pem,
                 Some(&token),
                 Some(key_id.clone()),

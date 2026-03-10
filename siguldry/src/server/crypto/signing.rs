@@ -8,42 +8,12 @@
 
 use anyhow::Context;
 use cryptoki::{mechanism::Mechanism, session::Session};
-use openssl::{ec::EcKey, pkey::PKey, pkey_ctx::PkeyCtx, rsa::Rsa};
-use sequoia_openpgp::crypto::Password;
+use openssl::{pkey::PKey, pkey_ctx::PkeyCtx};
 
 use crate::{
     protocol::{self, DigestAlgorithm, KeyAlgorithm, SignaturePayload},
-    server::{Pkcs11Binding, db},
+    server::db,
 };
-
-/// Get a decrypted OpenSSL private key object.
-///
-/// This supports OpenPGP keys as well, allowing them to be used for non-PGP signatures
-/// or, more commonly, OpenPGP signatures through the PKCS11 module.
-pub async fn openssl_private_key(
-    key: &db::Key,
-    pkcs11_bindings: &[Pkcs11Binding],
-    user_password: Password,
-    encrypted_passphrase: &[u8],
-) -> anyhow::Result<PKey<openssl::pkey::Private>> {
-    let password =
-        super::binding::decrypt_key_password(pkcs11_bindings, user_password, encrypted_passphrase)
-            .await?;
-    let pkey = match key.key_algorithm {
-        KeyAlgorithm::Rsa4K | KeyAlgorithm::Rsa2K => password
-            .map(|password| {
-                Rsa::private_key_from_pem_passphrase(key.key_material.as_bytes(), password)
-            })
-            .and_then(PKey::from_rsa),
-        KeyAlgorithm::P256 => password
-            .map(|password| {
-                EcKey::private_key_from_pem_passphrase(key.key_material.as_bytes(), password)
-            })
-            .and_then(PKey::from_ec_key),
-    }?;
-
-    Ok(pkey)
-}
 
 /// Sign a set of digests with a key stored in the database protected by a password.
 pub fn sign_with_softkey(
@@ -160,6 +130,7 @@ mod tests {
     use std::process::Command;
 
     use anyhow::Result;
+    use sequoia_openpgp::crypto::Password;
     use tempfile::TempDir;
     use zerocopy::IntoBytes;
 
@@ -167,6 +138,7 @@ mod tests {
     use crate::der::{decode_digest_info, encode_digest_info};
     use crate::protocol::DigestAlgorithm;
     use crate::server::crypto;
+    use crate::server::crypto::binding::decrypt_private_key;
     use crate::server::crypto::test_utils::setup_hsm;
     use crate::server::crypto::token::import_pkcs11_token;
 
@@ -355,7 +327,7 @@ mod tests {
             name: "test-rsa-softkey".to_string(),
             key_algorithm,
             handle: encrypted_key.handle,
-            key_material: encrypted_key.private_key_pem,
+            key_material: Some(encrypted_key.key_material),
             public_key: encrypted_key.public_key_pem,
             pkcs11_token_id: None,
             pkcs11_key_id: None,
@@ -365,9 +337,8 @@ mod tests {
         let digest = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), data)?;
         let hex_hash = hex::encode(digest);
 
-        let pkey =
-            super::openssl_private_key(&key, &[], user_password, &encrypted_key.encrypted_password)
-                .await?;
+        let pkey = decrypt_private_key(&key, &encrypted_key.encrypted_password, &[], user_password)
+            .await?;
         let signatures = super::sign_with_softkey(
             &key,
             &pkey,
@@ -435,7 +406,7 @@ mod tests {
             name: "test-ecc-softkey".to_string(),
             key_algorithm,
             handle: encrypted_key.handle,
-            key_material: encrypted_key.private_key_pem,
+            key_material: Some(encrypted_key.key_material),
             public_key: encrypted_key.public_key_pem,
             pkcs11_token_id: None,
             pkcs11_key_id: None,
@@ -445,9 +416,8 @@ mod tests {
         let digest = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), data)?;
         let hex_hash = hex::encode(digest);
 
-        let pkey =
-            super::openssl_private_key(&key, &[], user_password, &encrypted_key.encrypted_password)
-                .await?;
+        let pkey = decrypt_private_key(&key, &encrypted_key.encrypted_password, &[], user_password)
+            .await?;
         let signatures = super::sign_with_softkey(
             &key,
             &pkey,

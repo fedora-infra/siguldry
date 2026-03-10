@@ -282,6 +282,7 @@ impl SigulKey {
     async fn import_keypair(
         &self,
         conn: &mut SqliteConnection,
+        config: &Config,
         sigul_key_password: Password,
     ) -> anyhow::Result<db::Key> {
         let pubkey_pem = self.public_key_pem()?;
@@ -317,7 +318,7 @@ impl SigulKey {
             openssl::pkey::PKey::private_key_from_pem_passphrase(privkey_pem.as_bytes(), password)
         })?;
         tracing::debug!("Successfully decrypted private key");
-        let key_material = crypto::sigul::encrypt_key(sigul_key_password, privkey)?;
+        let key_material = crypto::sigul::encrypt_key(config, sigul_key_password, privkey)?;
         let handle = hex::encode_upper(openssl::hash::hash(
             openssl::hash::MessageDigest::sha256(),
             &pubkey.public_key_to_der()?,
@@ -327,7 +328,7 @@ impl SigulKey {
             &self.name,
             &handle,
             key_algorithm,
-            &key_material,
+            Some(&key_material),
             &pubkey_pem,
             None,
             None,
@@ -380,7 +381,7 @@ impl SigulKey {
                 String::from_utf8_lossy(&secret_output.stderr)
             ));
         }
-        let imported_key = crypto::sigul::check_gpg_key(
+        let imported_key = crypto::sigul::convert_gpg_key(
             config,
             key_name,
             &secret_output.stdout,
@@ -391,7 +392,7 @@ impl SigulKey {
             &self.name,
             &imported_key.handle,
             imported_key.algorithm,
-            &imported_key.private_key_pem,
+            Some(&imported_key.key_material),
             &imported_key.public_key_pem,
             None,
             None,
@@ -430,7 +431,7 @@ impl SigulKey {
                     .await
             }
             SigulKeyType::Ecc | SigulKeyType::Rsa => {
-                self.import_keypair(conn, sigul_key_password).await
+                self.import_keypair(conn, config, sigul_key_password).await
             }
             SigulKeyType::Pkcs11 => Err(anyhow::anyhow!(
                 "Skipping PKCS11 key {}; enroll it later",

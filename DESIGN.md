@@ -40,12 +40,13 @@ no key derivation function applied to these personal access keys. Fedora uses 64
 strings.
 
 Optionally, the server can be configured with "bindings", which are used to encrypt the key
-passphrase. With this scheme, the passphrase is encrypted using a list of X509 certificates provided
-in the server configuration. These certificates should correspond to private keys stored in a
-hardware token accessible via PKCS#11. For each certificate in the list, the passphrase is encrypted
-to a [CMS](https://www.rfc-editor.org/rfc/rfc5652) structure using AES-256-GCM. The list of
-encrypted passphrases is then serialized to JSON and the result is encrypted with the user's
-personal access key as described above.
+passphrase and key itself. With this scheme, the passphrase is encrypted using a list of X509
+certificates provided in the server configuration. These certificates should correspond to private
+keys stored in a hardware token accessible via PKCS#11. For each certificate in the list, the
+passphrase is encrypted to a [CMS](https://www.rfc-editor.org/rfc/rfc5652) structure using
+AES-256-GCM. The list of encrypted passphrases is then serialized to JSON and the result is
+encrypted with the user's personal access key as described above. The EncryptedPrivateKeyInfo
+structure is encrypted using the same manner.
 
 #### PKCS#11 Keys
 

@@ -23,22 +23,32 @@ use sequoia_openpgp::{
     serialize::SerializeInto,
 };
 
-use crate::{protocol::KeyAlgorithm, server::crypto::KeyUsage};
+use crate::{
+    protocol::KeyAlgorithm,
+    server::crypto::{KeyUsage, binding::bind_with_pkcs11},
+};
 
 /// This encrypts an OpenSSL private key.
 ///
 /// This takes an existing, unencrypted private key and encrypts it to a PEM-encoded
-/// PKCS#8 structure. It does _not_ bind the password.
+/// PKCS#8 structure, which it then binds with the PKCS#11 bindings. It does _not_ bind
+/// the password.
 ///
 /// NOTE: This is only useful externally to the sigul import command; do not use it
 /// for any other purpose; see [`siguldry::server::crypto::create_encrypted_key`].
-pub fn encrypt_key(key_password: Password, private_key: PKey<Private>) -> anyhow::Result<String> {
-    super::encrypt_key(key_password, private_key)
+pub fn encrypt_key(
+    config: &crate::server::Config,
+    key_password: Password,
+    private_key: PKey<Private>,
+) -> anyhow::Result<String> {
+    let private_key_pem = super::encrypt_key(key_password, private_key)?;
+    bind_with_pkcs11(&config.pkcs11_bindings, &private_key_pem)
 }
 
 pub struct ImportedPgpKey {
     pub handle: String,
-    pub private_key_pem: String,
+    /// The private key, encrypted with the key password and possibly bound with certs
+    pub key_material: String,
     pub public_key_pem: String,
     pub openpgp_cert: String,
     pub x509_cert: String,
@@ -124,7 +134,7 @@ fn pgp_key_to_openssl(
     Ok(key)
 }
 
-pub fn check_gpg_key(
+pub fn convert_gpg_key(
     config: &crate::server::Config,
     key_name: &str,
     bytes: &[u8],
@@ -181,12 +191,12 @@ pub fn check_gpg_key(
         &private_key.public_key_to_der()?,
     )?);
     let public_key_pem = String::from_utf8(private_key.public_key_to_pem()?)?;
-    let private_key_pem = super::encrypt_key(key_password, private_key)?;
+    let key_material = encrypt_key(config, key_password, private_key)?;
     let openpgp_cert = String::from_utf8(cert.strip_secret_key_material().armored().to_vec()?)?;
 
     Ok(ImportedPgpKey {
         handle,
-        private_key_pem,
+        key_material,
         public_key_pem,
         openpgp_cert,
         x509_cert,

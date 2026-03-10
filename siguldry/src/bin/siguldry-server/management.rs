@@ -209,7 +209,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     &name,
                     &encrypted_key.handle,
                     algorithm,
-                    &encrypted_key.private_key_pem,
+                    Some(&encrypted_key.key_material),
                     &encrypted_key.public_key_pem,
                     None,
                     None,
@@ -309,10 +309,10 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                 .await?;
 
                 let certificate = crypto::x509_certificate_for_key(
+                    &config,
                     key.clone(),
                     certificate_authority,
                     key_password,
-                    &config.certificate_subject,
                     usage,
                     &common_name,
                     validity_days,

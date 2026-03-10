@@ -385,11 +385,11 @@ async fn unlock(
 
         key_passwords.insert(key.name, unlocked_key);
     } else {
-        let private_key = crypto::signing::openssl_private_key(
+        let private_key = crypto::binding::decrypt_private_key(
             &key,
+            &key_access.encrypted_passphrase,
             pkcs11_bindings,
             user_password,
-            &key_access.encrypted_passphrase,
         )
         .await?;
         key_passwords.insert(key.name, UnlockedKey::Private { key: private_key });
