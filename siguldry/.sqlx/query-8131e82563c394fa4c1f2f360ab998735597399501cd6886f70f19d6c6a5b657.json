@@ -32,6 +32,11 @@
         "name": "serial_number",
         "ordinal": 5,
         "type_info": "Text"
+      },
+      {
+        "name": "concurrent_requests",
+        "ordinal": 6,
+        "type_info": "Integer"
       }
     ],
     "parameters": {
@@ -43,6 +48,7 @@
       false,
       true,
       true,
+      false,
       false
     ]
   },

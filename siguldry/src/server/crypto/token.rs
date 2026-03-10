@@ -84,8 +84,16 @@ async fn import_pkcs11_token_private(
     } else {
         token_info.serial_number().to_string()
     };
-    let token =
-        db::Pkcs11Token::create(conn, module, label, manufacturer_id, model, serial_number).await?;
+    let token = db::Pkcs11Token::create(
+        conn,
+        module,
+        label,
+        manufacturer_id,
+        model,
+        serial_number,
+        None,
+    )
+    .await?;
 
     // Look through the private keys, then match them up with related public key and certificates
     // using the Id attribute. Once all the bits are collect them, add them to the database.

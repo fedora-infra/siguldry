@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-use std::{path::PathBuf, str::FromStr};
+use std::{num::NonZeroU32, path::PathBuf, str::FromStr};
 
 use anyhow::Context;
 use cryptoki::{
@@ -214,6 +214,9 @@ pub struct Pkcs11Token {
     /// The token's serial number; used to find the token among all available
     /// PKCS#11 slots managed by the given module.
     pub serial_number: String,
+    /// The number of concurrent signing requests; this translates to the number of open sessions
+    /// and signing operations. Some tokens have limits. The default, 0, means no limit.
+    pub concurrent_requests: i64,
 }
 
 impl Pkcs11Token {
@@ -225,11 +228,13 @@ impl Pkcs11Token {
         manufacturer_id: Option<String>,
         model: Option<String>,
         serial_number: String,
+        concurrent_requests: Option<NonZeroU32>,
     ) -> Result<Self, sqlx::Error> {
         let module_path_str = format!("{}", module_path.display());
+        let concurrent_requests = concurrent_requests.map_or(0, |c| c.get());
         sqlx::query!(
-            "INSERT INTO pkcs11_tokens (module_path, label, manufacturer_id, model, serial_number) VALUES (?, ?, ?, ?, ?) RETURNING id",
-            module_path_str, label, manufacturer_id, model, serial_number)
+            "INSERT INTO pkcs11_tokens (module_path, label, manufacturer_id, model, serial_number, concurrent_requests) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+            module_path_str, label, manufacturer_id, model, serial_number, concurrent_requests)
             .fetch_one(&mut *conn)
             .await
             .map(|record| Self {
@@ -239,6 +244,7 @@ impl Pkcs11Token {
                 manufacturer_id,
                 model,
                 serial_number,
+                concurrent_requests: concurrent_requests.into(),
             })
     }
 

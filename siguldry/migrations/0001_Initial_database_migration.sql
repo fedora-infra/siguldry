@@ -50,7 +50,11 @@ CREATE TABLE IF NOT EXISTS "pkcs11_tokens" (
     "label" TEXT NOT NULL UNIQUE,
     "manufacturer_id" TEXT,
     "model" TEXT,
-    "serial_number" TEXT NOT NULL UNIQUE
+    "serial_number" TEXT NOT NULL UNIQUE,
+    -- The number of concurrent signing requests; this translates to the number of open
+    -- sessions and signing operations. Some tokens have limits. The default, 0, means no
+    -- limit.
+    "concurrent_requests" INTEGER DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS "public_key_material_types" (
