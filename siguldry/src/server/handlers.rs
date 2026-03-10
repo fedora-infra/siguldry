@@ -168,7 +168,6 @@ impl Handler {
             json: json::Response::Sign {
                 signature: response.pop().unwrap(),
             },
-            binary: None,
         })
     }
 
@@ -185,7 +184,6 @@ impl Handler {
 
         Ok(Response {
             json: json::Response::SignPrehashed { signatures },
-            binary: None,
         })
     }
 

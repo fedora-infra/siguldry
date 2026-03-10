@@ -148,7 +148,6 @@ impl Client {
                     key: key.key_name.clone(),
                     password: key.password(),
                 },
-                binary: None,
             };
             match tokio::time::timeout(self.config.request_timeout, client.send(request)).await {
                 Ok(Ok(pending_response)) => {
@@ -216,10 +215,7 @@ impl Client {
     /// Returns the username you successfully authenticated as.
     pub async fn who_am_i(&self) -> Result<String, ClientError> {
         let request = protocol::json::Request::WhoAmI {};
-        let request = Request {
-            message: request,
-            binary: None,
-        };
+        let request = Request { message: request };
         let response = self.reconnecting_send(request).await?;
         match response.json {
             Response::WhoAmI { user } => Ok(user),
@@ -231,7 +227,6 @@ impl Client {
     pub async fn list_users(&self) -> Result<Vec<String>, ClientError> {
         let request = Request {
             message: protocol::json::Request::ListUsers {},
-            binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;
@@ -245,7 +240,6 @@ impl Client {
     pub async fn list_keys(&self) -> Result<Vec<protocol::Key>, ClientError> {
         let request = Request {
             message: protocol::json::Request::ListKeys {},
-            binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;
@@ -275,7 +269,6 @@ impl Client {
                 key: key.clone(),
                 password: password.clone(),
             },
-            binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;
@@ -304,7 +297,6 @@ impl Client {
     pub async fn get_key(&self, key: String) -> Result<crate::protocol::Key, ClientError> {
         let request = Request {
             message: protocol::json::Request::GetKey { key },
-            binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;
@@ -327,7 +319,6 @@ impl Client {
                 digest_algorithm,
                 digest,
             },
-            binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;
@@ -346,7 +337,6 @@ impl Client {
     ) -> Result<Vec<Signature>, ClientError> {
         let request = Request {
             message: protocol::json::Request::SignAll { key, digests },
-            binary: None,
         };
 
         let response = self.reconnecting_send(request).await?;

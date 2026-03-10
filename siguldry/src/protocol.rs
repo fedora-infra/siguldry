@@ -268,15 +268,13 @@ pub enum Error {
 pub(crate) struct Frame {
     /// The
     pub(crate) json_size: U64,
-    pub(crate) binary_size: U64,
 }
 
 impl Frame {
     /// Create a new frame.
-    pub fn new(json_size: u64, binary_size: u64) -> Self {
+    pub fn new(json_size: u64) -> Self {
         Self {
             json_size: U64::new(json_size),
-            binary_size: U64::new(binary_size),
         }
     }
 
@@ -284,12 +282,11 @@ impl Frame {
     pub fn empty() -> Self {
         Self {
             json_size: U64::new(0),
-            binary_size: U64::new(0),
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.json_size.get() == 0 && self.binary_size.get() == 0
+        self.json_size.get() == 0
     }
 }
 
@@ -728,19 +725,17 @@ impl From<DigestAlgorithm> for &'static openssl::md::MdRef {
 #[derive(Debug, Clone)]
 pub(crate) struct Request {
     pub message: json::Request,
-    pub binary: Option<bytes::Bytes>,
 }
 
 /// A response sent from the server.
 #[derive(Debug, Clone)]
 pub(crate) struct Response {
     pub json: json::Response,
-    pub binary: Option<bytes::Bytes>,
 }
 
 impl From<json::Response> for Response {
     fn from(json: json::Response) -> Self {
-        Self { json, binary: None }
+        Self { json }
     }
 }
 

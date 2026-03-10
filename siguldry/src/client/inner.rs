@@ -65,11 +65,6 @@ impl Client {
         let mut incoming_frame_bytes;
         let mut incoming_frame: Option<&Frame> = None;
 
-        // Reference to the buffer containing the complete JSON portion of the current response.
-        // This is only set to a value if the response includes a binary payload and it's not yet
-        // arrived.
-        let mut incoming_json: Option<Bytes> = None;
-
         // Tracks the responses we're expecting to receive from the server and where to send
         // them when they arrive.
         let mut pending_responses = VecDeque::new();
@@ -169,61 +164,24 @@ impl Client {
             };
 
             let json_size: usize = current_frame.json_size.get().try_into()?;
-            let binary_size: usize = current_frame.binary_size.get().try_into()?;
 
             // Next, determine if we're done with the JSON section of the frame.
-            match &incoming_json {
-                None if json_size > incoming_buffer.len() => {
-                    tracing::trace!("Waiting for more data to complete the JSON response");
-                }
-                // We've finished receiving the data for the JSON section, and it's possible
-                // we've got everything we need for the response at this point.
-                None => {
-                    let json = incoming_buffer.split_to(json_size).freeze();
-                    if binary_size > incoming_buffer.len() {
-                        tracing::debug!("Received JSON response; awaiting binary payload");
-                        incoming_json = Some(json);
-                    } else {
-                        let respond_to = pending_responses
-                            .pop_front()
-                            .ok_or_else(|| anyhow::anyhow!("Unexpected response received!"))?;
-                        let json_response: OuterResponse = serde_json::from_slice(&json)?;
-                        tracing::debug!(
-                            request_id = json_response.request_id,
-                            "Full server response received"
-                        );
-                        let mut response: protocol::Response = json_response.response.into();
-                        if binary_size > 0 {
-                            response.binary = Some(incoming_buffer.split_to(binary_size).freeze());
-                        }
-                        let _ = respond_to.send(response);
-                        incoming_frame = None;
-                    }
-                }
-                // We're done with the JSON, but we're waiting for some more bytes to complete the
-                // binary section of the response.
-                Some(_) if binary_size > incoming_buffer.len() => {
-                    tracing::trace!("Waiting for more data to complete the binary response");
-                }
-                // We're definitely done at this point.
-                Some(json) => {
-                    let respond_to = pending_responses
-                        .pop_front()
-                        .ok_or_else(|| anyhow::anyhow!("Unexpected response received!"))?;
-                    let json_response: OuterResponse = serde_json::from_slice(json)?;
-                    tracing::debug!(
-                        request_id = json_response.request_id,
-                        "Full server response received"
-                    );
-                    let mut response: protocol::Response = json_response.response.into();
-                    if binary_size > 0 {
-                        response.binary = Some(incoming_buffer.split_to(binary_size).freeze());
-                    }
-                    let _ = respond_to.send(response);
-                    incoming_json = None;
-                    incoming_frame = None;
-                }
-            };
+            if json_size > incoming_buffer.len() {
+                tracing::trace!("Waiting for more data to complete the JSON response");
+            } else {
+                let json = incoming_buffer.split_to(json_size).freeze();
+                let respond_to = pending_responses
+                    .pop_front()
+                    .ok_or_else(|| anyhow::anyhow!("Unexpected response received!"))?;
+                let json_response: OuterResponse = serde_json::from_slice(&json)?;
+                tracing::debug!(
+                    request_id = json_response.request_id,
+                    "Full server response received"
+                );
+                let response: protocol::Response = json_response.response.into();
+                let _ = respond_to.send(response);
+                incoming_frame = None;
+            }
         }
 
         connection.shutdown().await?;
@@ -243,23 +201,15 @@ impl Client {
         self.request_id += 1;
         let json = serde_json::to_string(&json)?;
         let json = Bytes::from_owner(json);
-        let binary = request.binary.unwrap_or_default();
         let json_size: u64 = json
             .as_bytes()
             .len()
             .try_into()
             .context("JSON payload larger than a u64")?;
-        let binary_size: u64 = binary
-            .as_bytes()
-            .len()
-            .try_into()
-            .context("Binary payload larger than a u64")?;
-        let request_frame = protocol::Frame::new(json_size, binary_size);
-        let mut payload =
-            BytesMut::with_capacity(request_frame.as_bytes().len() + json.len() + binary.len());
+        let request_frame = protocol::Frame::new(json_size);
+        let mut payload = BytesMut::with_capacity(request_frame.as_bytes().len() + json.len());
         payload.put(request_frame.as_bytes());
         payload.put(json);
-        payload.put(binary);
         let payload = payload.freeze();
 
         let (response_tx, response_rx) = oneshot::channel();

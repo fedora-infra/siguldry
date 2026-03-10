@@ -25,9 +25,8 @@ use crate::{
     server::{config::Config, db, handlers},
 };
 
-// These should both be configurable and 100MB is probably too big as a default.
+// The maximum request size; this should be configurable.
 const MAX_JSON_SIZE: usize = 1024 * 32;
-const MAX_BINARY_SIZE: usize = 1024 * 1024 * 100;
 
 /// A sigul server.
 pub struct Server {
@@ -208,35 +207,23 @@ async fn handle(
             tracing::debug!(?frame, "New request frame received");
         }
 
-        let json_size: usize = frame
+        let frame_size: usize = frame
             .json_size
             .get()
             .try_into()
             .context("frame size must fit in usize")?;
         // TODO: configurable size limits
-        if json_size > MAX_JSON_SIZE {
+        if frame_size > MAX_JSON_SIZE {
             return Err(anyhow::anyhow!(
                 "JSON payload larger than {MAX_JSON_SIZE} bytes"
             ));
         }
-        let binary_size: usize = frame
-            .binary_size
-            .get()
-            .try_into()
-            .context("frame size must fit in usize")?;
-        if binary_size > MAX_BINARY_SIZE {
-            return Err(anyhow::anyhow!(
-                "BINARY payload larger than {MAX_BINARY_SIZE} bytes"
-            ));
-        }
-        let frame_size = json_size + binary_size;
         let mut request_buffer = BytesMut::with_capacity(frame_size).limit(frame_size);
         while request_buffer.remaining_mut() != 0 {
             conn.read_buf(&mut request_buffer).await?;
         }
-        let mut request_bytes = request_buffer.into_inner().freeze();
+        let request_bytes = request_buffer.into_inner().freeze();
 
-        let _binary_bytes = request_bytes.split_off(json_size);
         let request_value = serde_json::from_slice::<serde_json::Value>(&request_bytes)?;
         let outer_request =
             match serde_json::from_value::<protocol::json::OuterRequest>(request_value) {
@@ -257,7 +244,7 @@ async fn handle(
                         response: protocol::json::Response::Unsupported,
                     };
                     let json_response = serde_json::to_string(&json_response)?;
-                    let response_frame = protocol::Frame::new(json_response.len().try_into()?, 0);
+                    let response_frame = protocol::Frame::new(json_response.len().try_into()?);
                     conn.write_all(response_frame.as_bytes()).await?;
                     conn.write_all(json_response.as_bytes()).await?;
                     continue;
@@ -288,15 +275,10 @@ async fn handle(
                     response: response.json,
                 };
                 let json_response = serde_json::to_string(&json_response)?;
-                let binary_size = response.binary.as_ref().map_or(0, |b| b.len());
 
-                let response_frame =
-                    protocol::Frame::new(json_response.len().try_into()?, binary_size.try_into()?);
+                let response_frame = protocol::Frame::new(json_response.len().try_into()?);
                 conn.write_all(response_frame.as_bytes()).await?;
                 conn.write_all(json_response.as_bytes()).await?;
-                if let Some(binary) = &response.binary {
-                    conn.write_all(binary).await?;
-                }
             }
             Err(reason) => {
                 db_transaction.rollback().await?;
@@ -306,7 +288,7 @@ async fn handle(
                     response: protocol::json::Response::Error { reason },
                 };
                 let json_response = serde_json::to_string(&json_response)?;
-                let response_frame = protocol::Frame::new(json_response.len().try_into()?, 0);
+                let response_frame = protocol::Frame::new(json_response.len().try_into()?);
                 conn.write_all(response_frame.as_bytes()).await?;
                 conn.write_all(json_response.as_bytes()).await?;
             }
