@@ -316,8 +316,8 @@ impl Client {
         }
     }
 
-    /// Sign prehashed content.
-    pub async fn sign_prehashed(
+    /// Sign multiple digests in a single request
+    pub async fn sign_all(
         &self,
         key: String,
         digests: Vec<(DigestAlgorithm, String)>,

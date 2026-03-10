@@ -380,7 +380,7 @@ async fn ec_prehashed_signature() -> anyhow::Result<()> {
         .await?;
     let signature = instance
         .client
-        .sign_prehashed(
+        .sign_all(
             keys::EC_KEY_NAME.to_string(),
             vec![(DigestAlgorithm::Sha256, data_hex)],
         )
@@ -518,7 +518,7 @@ async fn hsm_ec_prehashed_signature() -> anyhow::Result<()> {
         .await?;
     let signature = instance
         .client
-        .sign_prehashed(
+        .sign_all(
             keys::HSM_EC_KEY_NAME.to_string(),
             vec![(DigestAlgorithm::Sha256, data_hex)],
         )
@@ -590,7 +590,7 @@ async fn prehashed_signature() -> anyhow::Result<()> {
         .await?;
     let signature = instance
         .client
-        .sign_prehashed(
+        .sign_all(
             keys::CODESIGNING_KEY_NAME.to_string(),
             vec![(DigestAlgorithm::Sha256, data_hex)],
         )
@@ -644,7 +644,7 @@ async fn hsm_rsa_prehashed_signature() -> anyhow::Result<()> {
         .await?;
     let signature = instance
         .client
-        .sign_prehashed(
+        .sign_all(
             keys::HSM_RSA_KEY_NAME.to_string(),
             vec![(DigestAlgorithm::Sha256, data_hex)],
         )
