@@ -13,6 +13,8 @@ INSERT INTO key_algorithms(type) VALUES ("P256");
 
 CREATE TABLE IF NOT EXISTS "keys" (
     "id" INTEGER NOT NULL PRIMARY KEY,
+    -- If set, this references the id of another key which is the second part of a hybrid key pair.
+    "hybrid_pair_id" INTEGER UNIQUE REFERENCES keys(id) ON DELETE SET NULL,
     "name" TEXT NOT NULL UNIQUE,
     "key_algorithm" TEXT NOT NULL,
     -- This uniquely identifies a key. For example, the GPG key fingerprint, or the SHA256 sum of
@@ -32,10 +34,37 @@ CREATE TABLE IF NOT EXISTS "keys" (
     -- The Id attribute of the key within the token
     "pkcs11_key_id" BLOB,
     CHECK ( (pkcs11_token_id IS NULL) = (pkcs11_key_id IS NULL) ),
+    CHECK (hybrid_pair_id != id),
     FOREIGN KEY(key_algorithm) REFERENCES key_algorithms(type) ON DELETE RESTRICT,
     -- If a token is removed, delete all associated keys.
     FOREIGN KEY(pkcs11_token_id) REFERENCES pkcs11_tokens(id) ON DELETE CASCADE
 );
+
+-- Setting the hybrid_pair_id on either key updates the target; keys that are already in a pair cause
+-- an error.
+CREATE TRIGGER IF NOT EXISTS keys_hybrid_pair_id_set
+AFTER UPDATE OF hybrid_pair_id ON keys
+WHEN NEW.hybrid_pair_id IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'Target key already has a hybrid pair id set')
+    WHERE EXISTS (
+        SELECT 1 FROM keys
+        WHERE id = NEW.hybrid_pair_id
+          AND hybrid_pair_id IS NOT NULL
+          AND hybrid_pair_id != NEW.id
+    );
+    UPDATE keys SET hybrid_pair_id = NEW.id
+    WHERE id = NEW.hybrid_pair_id AND (hybrid_pair_id IS NULL OR hybrid_pair_id = NEW.id);
+END;
+
+-- Unset the hybrid_pair_id if either key unsets it
+CREATE TRIGGER IF NOT EXISTS keys_hybrid_pair_id_unset
+AFTER UPDATE OF hybrid_pair_id ON keys
+WHEN NEW.hybrid_pair_id IS NULL AND OLD.hybrid_pair_id IS NOT NULL
+BEGIN
+    UPDATE keys SET hybrid_pair_id = NULL
+    WHERE id = OLD.hybrid_pair_id AND hybrid_pair_id = OLD.id;
+END;
 
 -- Tokens registered with Siguldry will have their keys imported.
 --

@@ -298,6 +298,8 @@ impl Pkcs11Token {
 pub struct Key {
     /// The table's primary key.
     pub id: i64,
+    /// If Some, this references the id of another key which is the second part of a hybrid key pair.
+    pub hybrid_pair_id: Option<i64>,
     /// A name that uniquely identifies the key.
     pub name: String,
     /// Indicates the key type.
@@ -385,6 +387,7 @@ impl Key {
             .await
             .map(|record| Key {
                 id: record.id,
+                hybrid_pair_id: None,
                 name: name.to_string(),
                 key_algorithm,
                 handle: handle.to_string(),
@@ -664,6 +667,96 @@ mod tests {
         let keys_deleted = Key::delete(&mut conn, key.name.as_str()).await?;
         assert_eq!(1, keys_deleted);
         assert_eq!(0, Key::list(&mut conn).await?.len());
+
+        Ok(())
+    }
+
+    // Assert the hybrid_pair_id field can be set and unset
+    #[tokio::test]
+    async fn key_associate_hybrid_key() -> Result<()> {
+        let db_pool = pool("sqlite::memory:", false).await?;
+        migrate(&db_pool).await?;
+        let mut conn = db_pool.begin().await?;
+        let key_1 = Key::create(
+            &mut conn,
+            "test-name",
+            "unique-handle",
+            KeyAlgorithm::P256,
+            "secret",
+            "public-key",
+            None,
+            None,
+        )
+        .await?;
+        let key_2 = Key::create(
+            &mut conn,
+            "another-test-name",
+            "another-unique-handle",
+            KeyAlgorithm::P256,
+            "secret",
+            "public-key",
+            None,
+            None,
+        )
+        .await?;
+        let key_3 = Key::create(
+            &mut conn,
+            "yet-another-test-name",
+            "yet-another-unique-handle",
+            KeyAlgorithm::P256,
+            "secret",
+            "public-key",
+            None,
+            None,
+        )
+        .await?;
+
+        let result = sqlx::query("UPDATE keys SET hybrid_pair_id = ? WHERE id = ?")
+            .bind(key_1.id)
+            .bind(key_1.id)
+            .execute(&mut *conn)
+            .await;
+        if let Err(error) = result {
+            let check = error
+                .as_database_error()
+                .map(|e| e.is_check_violation())
+                .unwrap();
+            assert!(
+                check,
+                "Setting hybrid_pair_id to own id should trigger CHECK constraint"
+            );
+        } else {
+            panic!("There's a missing CHECK constraint on hybrid_pair_id")
+        }
+
+        // The database trigger should update key_2's hybrid_pair_id as well.
+        sqlx::query("UPDATE keys SET hybrid_pair_id = ? WHERE id = ?")
+            .bind(key_2.id)
+            .bind(key_1.id)
+            .execute(&mut *conn)
+            .await?;
+        let updated_key_1 = Key::get(&mut conn, "test-name").await?;
+        let updated_key_2 = Key::get(&mut conn, "another-test-name").await?;
+        assert_eq!(updated_key_1.hybrid_pair_id, Some(key_2.id));
+        assert_eq!(updated_key_2.hybrid_pair_id, Some(key_1.id));
+
+        // If a pair is set you can't change just one side
+        let result = sqlx::query("UPDATE keys SET hybrid_pair_id = ? WHERE id = ?")
+            .bind(key_3.id)
+            .bind(key_1.id)
+            .execute(&mut *conn)
+            .await;
+        assert!(result.is_err(), "Trigger allowed hybrid_pair_id update");
+
+        // ... but you can unset the key.
+        sqlx::query("UPDATE keys SET hybrid_pair_id = NULL WHERE id = ?")
+            .bind(key_1.id)
+            .execute(&mut *conn)
+            .await?;
+        let updated_key_1 = Key::get(&mut conn, "test-name").await?;
+        let updated_key_2 = Key::get(&mut conn, "another-test-name").await?;
+        assert_eq!(updated_key_1.hybrid_pair_id, None);
+        assert_eq!(updated_key_2.hybrid_pair_id, None);
 
         Ok(())
     }

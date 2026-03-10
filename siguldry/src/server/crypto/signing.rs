@@ -351,6 +351,7 @@ mod tests {
         )?;
         let key = db::Key {
             id: 1,
+            hybrid_pair_id: None,
             name: "test-rsa-softkey".to_string(),
             key_algorithm,
             handle: encrypted_key.handle,
@@ -430,6 +431,7 @@ mod tests {
         )?;
         let key = db::Key {
             id: 1,
+            hybrid_pair_id: None,
             name: "test-ecc-softkey".to_string(),
             key_algorithm,
             handle: encrypted_key.handle,
