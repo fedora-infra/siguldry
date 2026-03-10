@@ -12,7 +12,7 @@ use openssl::{ec::EcKey, pkey::PKey, pkey_ctx::PkeyCtx, rsa::Rsa};
 use sequoia_openpgp::crypto::Password;
 
 use crate::{
-    protocol::{self, DigestAlgorithm, KeyAlgorithm, json::SignaturePayload},
+    protocol::{self, DigestAlgorithm, KeyAlgorithm, SignaturePayload},
     server::{Pkcs11Binding, db},
 };
 
@@ -50,7 +50,7 @@ pub fn sign_with_softkey(
     key: &db::Key,
     pkey: &PKey<openssl::pkey::Private>,
     digests: Vec<(DigestAlgorithm, String)>,
-) -> anyhow::Result<Vec<protocol::json::Signature>> {
+) -> anyhow::Result<Vec<protocol::Signature>> {
     let mut signatures = Vec::with_capacity(digests.len());
     for (algorithm, hex_hash) in digests {
         let hash = hex::decode(&hex_hash).context("The digest provided was not valid hex")?;
@@ -72,12 +72,10 @@ pub fn sign_with_softkey(
         let mut signature = vec![];
         ctx.sign_to_vec(&hash, &mut signature)?;
         let signature = match key.key_algorithm {
-            KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => {
-                protocol::json::SignaturePayload::RSA(signature)
-            }
-            KeyAlgorithm::P256 => protocol::json::SignaturePayload::P256(signature),
+            KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => protocol::SignaturePayload::RSA(signature),
+            KeyAlgorithm::P256 => protocol::SignaturePayload::P256(signature),
         };
-        signatures.push(protocol::json::Signature {
+        signatures.push(protocol::Signature {
             signature,
             digest: algorithm,
             hash: hex_hash,
@@ -92,7 +90,7 @@ pub fn sign_with_pkcs11(
     key: &db::Key,
     session: &Session,
     digests: Vec<(DigestAlgorithm, String)>,
-) -> anyhow::Result<Vec<protocol::json::Signature>> {
+) -> anyhow::Result<Vec<protocol::Signature>> {
     let private_key = key.get_pkcs11_private_key(session)?;
 
     let mut signatures = Vec::with_capacity(digests.len());
@@ -145,7 +143,7 @@ pub fn sign_with_pkcs11(
             }
         };
 
-        signatures.push(protocol::json::Signature {
+        signatures.push(protocol::Signature {
             signature,
             digest: algorithm,
             hash: hex_hash,

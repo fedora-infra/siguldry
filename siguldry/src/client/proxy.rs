@@ -20,8 +20,7 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
-use crate::protocol::Key;
-use crate::protocol::json::Signature;
+use crate::protocol::{Key, Signature};
 use crate::{
     client::Client,
     ipc_common::IpcClient,
@@ -213,7 +212,7 @@ impl ProxyClient {
         key: String,
         algorithm: DigestAlgorithm,
         digest: String,
-    ) -> anyhow::Result<protocol::json::Signature> {
+    ) -> anyhow::Result<Signature> {
         let request = Request::Sign {
             key,
             algorithm,

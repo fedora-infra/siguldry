@@ -290,248 +290,239 @@ impl Frame {
     }
 }
 
-pub mod json {
+/// The structure used by the client when sending requests to the server.
+///
+/// # Example
+/// ```
+/// # use serde_json::Result;
+/// # use siguldry::protocol::json::OuterRequest;
+/// # fn main() -> Result<()> {
+/// let data = r#"
+///     {
+///         "session_id": "00000000-0000-0000-0000-000000000000",
+///         "request_id": 42,
+///         "request": {
+///             "who_am_i": {}
+///         }
+///     }
+/// "#;
+/// let whoami_response: OuterResponse = serde_json::from_str(data)?;
+///
+/// # Ok(())
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct OuterRequest {
+    /// The session ID this request is a part of.
+    pub(crate) session_id: Uuid,
+    /// The request ID; this should be a unique integer within the session,
+    /// but has no other requirements. The response will include the same ID
+    /// so it can be used to ensure the response matches the request.
+    pub(crate) request_id: u64,
+    /// The actual client request for the server.
+    pub(crate) request: Request,
+}
+
+/// The structure used by the server when sending responses to the client.
+///
+/// # Example
+/// ```
+/// # use serde_json::Result;
+/// # use siguldry::protocol::json::OuterResponse;
+/// # fn main() -> Result<()> {
+/// let data = r#"
+///     {
+///         "session_id": "00000000-0000-0000-0000-000000000000",
+///         "request_id": 42,
+///         "response": {
+///             "who_am_i": {"user": "dadams"}
+///         }
+///     }
+/// "#;
+/// let whoami_response: OuterResponse = serde_json::from_str(data)?;
+///
+/// # Ok(())
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct OuterResponse {
+    /// The session ID this request is a part of.
+    pub(crate) session_id: Uuid,
+    /// The request ID; this should be a unique integer within the session,
+    /// but has no other requirements. The response will include the same ID
+    /// so it can be used to ensure the response matches the request.
+    pub(crate) request_id: u64,
+    /// The serialized [`Request`] or [`Response`].
+    pub(crate) response: Response,
+}
+
+/// The set of requests a client and server must support.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Request {
+    WhoAmI {},
+    ListUsers {},
+    ListKeys {},
+    /// Unlock a key for signing.
+    ///
+    /// This request must be sent on a connection before any signing requests referencing
+    /// the key.
+    Unlock {
+        /// The name of the key to unlock.
+        key: String,
+        /// The password to unlock the key with.
+        password: String,
+    },
+    /// Request an RSA or ECDSA signature.
+    ///
+    /// The type of signature is dependant on the type of the given key.
+    ///
+    /// # RSA
+    ///
+    /// For RSA key types, the PKCS #1 padding mode is used.
+    Sign {
+        /// The signing key to use. This key must be unlocked.
+        key: String,
+        /// The digest algorithm used on the data; some signing algorithms
+        /// embed this in the signature structure.
+        digest_algorithm: DigestAlgorithm,
+        /// The hex-encoded digest to sign.
+        digest: String,
+    },
+    SignAll {
+        key: String,
+        /// The set of digests to sign. Digests should be hex-encoded.
+        digests: Vec<(DigestAlgorithm, String)>,
+    },
+    GetKey {
+        key: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Response {
+    WhoAmI {
+        user: String,
+    },
+    ListUsers {
+        users: Vec<String>,
+    },
+    ListKeys {
+        keys: Vec<Key>,
+    },
+    Unlock {},
+    GetKey {
+        key: Key,
+    },
+    GpgSign {},
+    Sign {
+        signature: Signature,
+    },
+    SignPrehashed {
+        signatures: Vec<Signature>,
+    },
+    Error {
+        reason: ServerError,
+    },
+    /// The client requested a command the server does not support; this could be
+    /// a newer client combined with an older server, or a server that has opted to
+    /// implement only a subset of commands.
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Signature {
+    /// The signature. This is base64-encoded in the JSON objects.
+    pub signature: SignaturePayload,
+    /// The digest algorithm used on the payload.
+    pub digest: DigestAlgorithm,
+    /// The hex-encoded digest value that was signed.
+    pub hash: String,
+}
+
+impl Signature {
+    /// The signature value.
+    ///
+    /// What's contained depends on the key used to sign.
+    pub fn value(&self) -> &[u8] {
+        self.signature.as_ref()
+    }
+
+    /// Get the signature value in the format expected for PKCS #11 signing operations.
+    pub fn pkcs11_value(&self) -> Option<Vec<u8>> {
+        match &self.signature {
+            SignaturePayload::RSA(pkcs1_15_sig) => Some(pkcs1_15_sig.clone()),
+            SignaturePayload::P256(ecdsa_sig) => {
+                // The expected value is the raw r and s values
+                let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_der(ecdsa_sig)
+                    .inspect_err(|error| {
+                        tracing::error!(?error, "Failed to parse DER-encoded ECDSASignature");
+                    })
+                    .ok()?;
+                let r = ecdsa_sig
+                    .r()
+                    .to_vec_padded(32)
+                    .inspect_err(|error| {
+                        tracing::error!(?error, "Failed to pad ECDSA r value");
+                    })
+                    .ok()?;
+                let s = ecdsa_sig
+                    .s()
+                    .to_vec_padded(32)
+                    .inspect_err(|error| {
+                        tracing::error!(?error, "Failed to pad ECDSA s value");
+                    })
+                    .ok()?;
+
+                let mut r_and_s = Vec::with_capacity(64);
+                r_and_s.extend_from_slice(&r);
+                r_and_s.extend_from_slice(&s);
+                Some(r_and_s)
+            }
+        }
+    }
+}
+
+/// Contains the actual signature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum SignaturePayload {
+    /// RSA signatures are DER-encoded PKCS#1 v1.5 structures as described in
+    /// RFC 8017 Section 9.2.
+    #[serde(with = "base64")]
+    RSA(Vec<u8>),
+    /// Signatures with P256 keys are DER-encoded ECDSASignature structures as
+    /// described in RFC 3279 Section 2.2.3.
+    #[serde(with = "base64")]
+    P256(Vec<u8>),
+}
+
+impl std::ops::Deref for SignaturePayload {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            SignaturePayload::RSA(value) | SignaturePayload::P256(value) => value,
+        }
+    }
+}
+
+mod base64 {
     use serde::{Deserialize, Serialize};
-    use uuid::Uuid;
+    use serde::{Deserializer, Serializer};
 
-    use crate::protocol::ServerError;
-
-    /// The structure used by the client when sending requests to the server.
-    ///
-    /// # Example
-    /// ```
-    /// # use serde_json::Result;
-    /// # use siguldry::protocol::json::OuterRequest;
-    /// # fn main() -> Result<()> {
-    /// let data = r#"
-    ///     {
-    ///         "session_id": "00000000-0000-0000-0000-000000000000",
-    ///         "request_id": 42,
-    ///         "request": {
-    ///             "who_am_i": {}
-    ///         }
-    ///     }
-    /// "#;
-    /// let whoami_response: OuterResponse = serde_json::from_str(data)?;
-    ///
-    /// # Ok(())
-    /// }
-    /// ```
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub(crate) struct OuterRequest {
-        /// The session ID this request is a part of.
-        pub(crate) session_id: Uuid,
-        /// The request ID; this should be a unique integer within the session,
-        /// but has no other requirements. The response will include the same ID
-        /// so it can be used to ensure the response matches the request.
-        pub(crate) request_id: u64,
-        /// The actual client request for the server.
-        pub(crate) request: Request,
+    pub fn serialize<S: Serializer>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        String::serialize(&openssl::base64::encode_block(value), serializer)
     }
 
-    /// The structure used by the server when sending responses to the client.
-    ///
-    /// # Example
-    /// ```
-    /// # use serde_json::Result;
-    /// # use siguldry::protocol::json::OuterResponse;
-    /// # fn main() -> Result<()> {
-    /// let data = r#"
-    ///     {
-    ///         "session_id": "00000000-0000-0000-0000-000000000000",
-    ///         "request_id": 42,
-    ///         "response": {
-    ///             "who_am_i": {"user": "dadams"}
-    ///         }
-    ///     }
-    /// "#;
-    /// let whoami_response: OuterResponse = serde_json::from_str(data)?;
-    ///
-    /// # Ok(())
-    /// }
-    /// ```
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub(crate) struct OuterResponse {
-        /// The session ID this request is a part of.
-        pub(crate) session_id: Uuid,
-        /// The request ID; this should be a unique integer within the session,
-        /// but has no other requirements. The response will include the same ID
-        /// so it can be used to ensure the response matches the request.
-        pub(crate) request_id: u64,
-        /// The serialized [`Request`] or [`Response`].
-        pub(crate) response: Response,
-    }
-
-    /// The set of requests a client and server must support.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    #[non_exhaustive]
-    pub enum Request {
-        WhoAmI {},
-        ListUsers {},
-        ListKeys {},
-        /// Unlock a key for signing.
-        ///
-        /// This request must be sent on a connection before any signing requests referencing
-        /// the key.
-        Unlock {
-            /// The name of the key to unlock.
-            key: String,
-            /// The password to unlock the key with.
-            password: String,
-        },
-        /// Request an RSA or ECDSA signature.
-        ///
-        /// The type of signature is dependant on the type of the given key.
-        ///
-        /// # RSA
-        ///
-        /// For RSA key types, the PKCS #1 padding mode is used.
-        Sign {
-            /// The signing key to use. This key must be unlocked.
-            key: String,
-            /// The digest algorithm used on the data; some signing algorithms
-            /// embed this in the signature structure.
-            digest_algorithm: super::DigestAlgorithm,
-            /// The hex-encoded digest to sign.
-            digest: String,
-        },
-        SignAll {
-            key: String,
-            /// The set of digests to sign. Digests should be hex-encoded.
-            digests: Vec<(super::DigestAlgorithm, String)>,
-        },
-        GetKey {
-            key: String,
-        },
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    #[non_exhaustive]
-    pub enum Response {
-        WhoAmI {
-            user: String,
-        },
-        ListUsers {
-            users: Vec<String>,
-        },
-        ListKeys {
-            keys: Vec<super::Key>,
-        },
-        Unlock {},
-        GetKey {
-            key: super::Key,
-        },
-        GpgSign {},
-        Sign {
-            signature: Signature,
-        },
-        SignPrehashed {
-            signatures: Vec<Signature>,
-        },
-        Error {
-            reason: ServerError,
-        },
-        /// The client requested a command the server does not support; this could be
-        /// a newer client combined with an older server, or a server that has opted to
-        /// implement only a subset of commands.
-        Unsupported,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct Signature {
-        /// The signature. This is base64-encoded in the JSON objects.
-        pub signature: SignaturePayload,
-        /// The digest algorithm used on the payload.
-        pub digest: super::DigestAlgorithm,
-        /// The hex-encoded digest value that was signed.
-        pub hash: String,
-    }
-
-    impl Signature {
-        /// The signature value.
-        ///
-        /// What's contained depends on the key used to sign.
-        pub fn value(&self) -> &[u8] {
-            self.signature.as_ref()
-        }
-
-        /// Get the signature value in the format expected for PKCS #11 signing operations.
-        pub fn pkcs11_value(&self) -> Option<Vec<u8>> {
-            match &self.signature {
-                SignaturePayload::RSA(pkcs1_15_sig) => Some(pkcs1_15_sig.clone()),
-                SignaturePayload::P256(ecdsa_sig) => {
-                    // The expected value is the raw r and s values
-                    let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_der(ecdsa_sig)
-                        .inspect_err(|error| {
-                            tracing::error!(?error, "Failed to parse DER-encoded ECDSASignature");
-                        })
-                        .ok()?;
-                    let r = ecdsa_sig
-                        .r()
-                        .to_vec_padded(32)
-                        .inspect_err(|error| {
-                            tracing::error!(?error, "Failed to pad ECDSA r value");
-                        })
-                        .ok()?;
-                    let s = ecdsa_sig
-                        .s()
-                        .to_vec_padded(32)
-                        .inspect_err(|error| {
-                            tracing::error!(?error, "Failed to pad ECDSA s value");
-                        })
-                        .ok()?;
-
-                    let mut r_and_s = Vec::with_capacity(64);
-                    r_and_s.extend_from_slice(&r);
-                    r_and_s.extend_from_slice(&s);
-                    Some(r_and_s)
-                }
-            }
-        }
-    }
-
-    /// Contains the actual signature.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[non_exhaustive]
-    pub enum SignaturePayload {
-        /// RSA signatures are DER-encoded PKCS#1 v1.5 structures as described in
-        /// RFC 8017 Section 9.2.
-        #[serde(with = "base64")]
-        RSA(Vec<u8>),
-        /// Signatures with P256 keys are DER-encoded ECDSASignature structures as
-        /// described in RFC 3279 Section 2.2.3.
-        #[serde(with = "base64")]
-        P256(Vec<u8>),
-    }
-
-    impl std::ops::Deref for SignaturePayload {
-        type Target = [u8];
-
-        fn deref(&self) -> &Self::Target {
-            match self {
-                SignaturePayload::RSA(value) | SignaturePayload::P256(value) => value,
-            }
-        }
-    }
-
-    mod base64 {
-        use serde::{Deserialize, Serialize};
-        use serde::{Deserializer, Serializer};
-
-        pub fn serialize<S: Serializer>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
-            String::serialize(&openssl::base64::encode_block(value), serializer)
-        }
-
-        pub fn deserialize<'de, D: Deserializer<'de>>(
-            deserializer: D,
-        ) -> Result<Vec<u8>, D::Error> {
-            openssl::base64::decode_block(&String::deserialize(deserializer)?)
-                .map_err(|error| serde::de::Error::custom(format!("invalid base64: {error:?}")))
-        }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        openssl::base64::decode_block(&String::deserialize(deserializer)?)
+            .map_err(|error| serde::de::Error::custom(format!("invalid base64: {error:?}")))
     }
 }
 
@@ -718,24 +709,6 @@ impl From<DigestAlgorithm> for &'static openssl::md::MdRef {
             DigestAlgorithm::Sha3_256 => openssl::md::Md::sha3_256(),
             DigestAlgorithm::Sha3_512 => openssl::md::Md::sha3_512(),
         }
-    }
-}
-
-/// A request sent by the client.
-#[derive(Debug, Clone)]
-pub(crate) struct Request {
-    pub message: json::Request,
-}
-
-/// A response sent from the server.
-#[derive(Debug, Clone)]
-pub(crate) struct Response {
-    pub json: json::Response,
-}
-
-impl From<json::Response> for Response {
-    fn from(json: json::Response) -> Self {
-        Self { json }
     }
 }
 

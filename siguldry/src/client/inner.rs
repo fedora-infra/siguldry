@@ -24,10 +24,7 @@ use zerocopy::{IntoBytes, TryFromBytes};
 use crate::{
     error::{ClientError, ConnectionError},
     nestls::Nestls,
-    protocol::{
-        self, Frame, Request,
-        json::{OuterRequest, OuterResponse},
-    },
+    protocol::{self, Frame, OuterRequest, OuterResponse, Request},
 };
 
 // This structure maps to a single connection to the server.
@@ -178,8 +175,7 @@ impl Client {
                     request_id = json_response.request_id,
                     "Full server response received"
                 );
-                let response: protocol::Response = json_response.response.into();
-                let _ = respond_to.send(response);
+                let _ = respond_to.send(json_response.response);
                 incoming_frame = None;
             }
         }
@@ -196,7 +192,7 @@ impl Client {
         let json = OuterRequest {
             session_id: self.session_id,
             request_id: self.request_id,
-            request: request.message,
+            request,
         };
         self.request_id += 1;
         let json = serde_json::to_string(&json)?;

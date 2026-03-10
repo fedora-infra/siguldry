@@ -9,7 +9,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
-    protocol::{self, DigestAlgorithm, Response, ServerError, json},
+    protocol::{self, DigestAlgorithm, Response, ServerError},
     server::{
         Config,
         db::{self, User},
@@ -36,10 +36,9 @@ impl Handler {
 
     #[instrument(skip_all, err)]
     pub(crate) fn who_am_i(&self) -> Result<Response, ServerError> {
-        Ok(json::Response::WhoAmI {
+        Ok(Response::WhoAmI {
             user: self.user.name.clone(),
-        }
-        .into())
+        })
     }
 
     #[instrument(skip_all, err)]
@@ -53,7 +52,7 @@ impl Handler {
             .map(|user| user.name)
             .collect();
 
-        Ok(json::Response::ListUsers { users }.into())
+        Ok(Response::ListUsers { users })
     }
 
     #[instrument(skip_all, err)]
@@ -96,7 +95,7 @@ impl Handler {
             });
         }
 
-        Ok(json::Response::ListKeys { keys }.into())
+        Ok(Response::ListKeys { keys })
     }
 
     #[instrument(skip_all, err, fields(key))]
@@ -140,7 +139,7 @@ impl Handler {
             x509.chain(pgp).collect()
         };
 
-        Ok(json::Response::GetKey {
+        Ok(Response::GetKey {
             key: protocol::Key {
                 name: key.name,
                 key_algorithm: key.key_algorithm,
@@ -148,8 +147,7 @@ impl Handler {
                 public_key: key.public_key,
                 certificates,
             },
-        }
-        .into())
+        })
     }
 
     #[instrument(skip_all, err, fields(key = key_name))]
@@ -164,10 +162,8 @@ impl Handler {
             .sign_request(key_name.to_string(), vec![(digest_algorithm, digest)])
             .await?;
 
-        Ok(Response {
-            json: json::Response::Sign {
-                signature: response.pop().unwrap(),
-            },
+        Ok(Response::Sign {
+            signature: response.pop().unwrap(),
         })
     }
 
@@ -182,9 +178,7 @@ impl Handler {
             .sign_request(key_name.to_string(), digests)
             .await?;
 
-        Ok(Response {
-            json: json::Response::SignPrehashed { signatures },
-        })
+        Ok(Response::SignPrehashed { signatures })
     }
 
     #[instrument(skip_all, err)]

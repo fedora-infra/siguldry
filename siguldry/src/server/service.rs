@@ -21,7 +21,7 @@ use zerocopy::{IntoBytes, TryFromBytes};
 use crate::{
     error::ConnectionError,
     nestls::Nestls,
-    protocol::{self, Role, json::Request},
+    protocol::{self, Request, Role},
     server::{config::Config, db, handlers},
 };
 
@@ -225,31 +225,29 @@ async fn handle(
         let request_bytes = request_buffer.into_inner().freeze();
 
         let request_value = serde_json::from_slice::<serde_json::Value>(&request_bytes)?;
-        let outer_request =
-            match serde_json::from_value::<protocol::json::OuterRequest>(request_value) {
-                Ok(request) => request,
-                Err(error) => {
-                    tracing::error!(
-                        ?error,
-                        "Client request is valid JSON, but is not a supported request"
-                    );
-                    let request_value =
-                        serde_json::from_slice::<serde_json::Value>(&request_bytes)?;
-                    let json_response = protocol::json::OuterResponse {
-                        session_id: conn.session_id(),
-                        request_id: request_value
-                            .get("request_id")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                        response: protocol::json::Response::Unsupported,
-                    };
-                    let json_response = serde_json::to_string(&json_response)?;
-                    let response_frame = protocol::Frame::new(json_response.len().try_into()?);
-                    conn.write_all(response_frame.as_bytes()).await?;
-                    conn.write_all(json_response.as_bytes()).await?;
-                    continue;
-                }
-            };
+        let outer_request = match serde_json::from_value::<protocol::OuterRequest>(request_value) {
+            Ok(request) => request,
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    "Client request is valid JSON, but is not a supported request"
+                );
+                let request_value = serde_json::from_slice::<serde_json::Value>(&request_bytes)?;
+                let json_response = protocol::OuterResponse {
+                    session_id: conn.session_id(),
+                    request_id: request_value
+                        .get("request_id")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    response: protocol::Response::Unsupported,
+                };
+                let json_response = serde_json::to_string(&json_response)?;
+                let response_frame = protocol::Frame::new(json_response.len().try_into()?);
+                conn.write_all(response_frame.as_bytes()).await?;
+                conn.write_all(json_response.as_bytes()).await?;
+                continue;
+            }
+        };
 
         let mut db_transaction = db.begin().await?;
         let response = match outer_request.request {
@@ -269,10 +267,10 @@ async fn handle(
         match response {
             Ok(response) => {
                 db_transaction.commit().await?;
-                let json_response = protocol::json::OuterResponse {
+                let json_response = protocol::OuterResponse {
                     session_id: outer_request.session_id,
                     request_id: outer_request.request_id,
-                    response: response.json,
+                    response,
                 };
                 let json_response = serde_json::to_string(&json_response)?;
 
@@ -282,10 +280,10 @@ async fn handle(
             }
             Err(reason) => {
                 db_transaction.rollback().await?;
-                let json_response = protocol::json::OuterResponse {
+                let json_response = protocol::OuterResponse {
                     session_id: outer_request.session_id,
                     request_id: outer_request.request_id,
-                    response: protocol::json::Response::Error { reason },
+                    response: protocol::Response::Error { reason },
                 };
                 let json_response = serde_json::to_string(&json_response)?;
                 let response_frame = protocol::Frame::new(json_response.len().try_into()?);

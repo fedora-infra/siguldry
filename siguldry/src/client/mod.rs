@@ -9,11 +9,11 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::protocol::DigestAlgorithm;
-use crate::protocol::json::Signature;
+use crate::protocol::Signature;
 use crate::{
     error::{ClientError, ConnectionError},
     nestls::Nestls,
-    protocol::{self, Request, Role, json::Response},
+    protocol::{self, Request, Response, Role},
 };
 
 mod config;
@@ -143,11 +143,9 @@ impl Client {
         let mut client = inner::Client::new(conn);
         let keys = self.keys.lock().await.clone();
         for key in keys {
-            let request = Request {
-                message: protocol::json::Request::Unlock {
-                    key: key.key_name.clone(),
-                    password: key.password(),
-                },
+            let request = protocol::Request::Unlock {
+                key: key.key_name.clone(),
+                password: key.password(),
             };
             match tokio::time::timeout(self.config.request_timeout, client.send(request)).await {
                 Ok(Ok(pending_response)) => {
@@ -172,7 +170,7 @@ impl Client {
                         }
                     };
 
-                    match response.json {
+                    match response {
                         Response::Unlock {} => {
                             tracing::debug!(key = key.key_name, "Successfully unlocked key");
                         }
@@ -214,10 +212,9 @@ impl Client {
     ///
     /// Returns the username you successfully authenticated as.
     pub async fn who_am_i(&self) -> Result<String, ClientError> {
-        let request = protocol::json::Request::WhoAmI {};
-        let request = Request { message: request };
+        let request = protocol::Request::WhoAmI {};
         let response = self.reconnecting_send(request).await?;
-        match response.json {
+        match response {
             Response::WhoAmI { user } => Ok(user),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
@@ -225,12 +222,10 @@ impl Client {
     }
 
     pub async fn list_users(&self) -> Result<Vec<String>, ClientError> {
-        let request = Request {
-            message: protocol::json::Request::ListUsers {},
-        };
+        let request = protocol::Request::ListUsers {};
 
         let response = self.reconnecting_send(request).await?;
-        match response.json {
+        match response {
             Response::ListUsers { users } => Ok(users),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
@@ -238,12 +233,10 @@ impl Client {
     }
 
     pub async fn list_keys(&self) -> Result<Vec<protocol::Key>, ClientError> {
-        let request = Request {
-            message: protocol::json::Request::ListKeys {},
-        };
+        let request = protocol::Request::ListKeys {};
 
         let response = self.reconnecting_send(request).await?;
-        match response.json {
+        match response {
             Response::ListKeys { keys } => Ok(keys),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
@@ -264,15 +257,13 @@ impl Client {
             return Ok(());
         }
 
-        let request = Request {
-            message: protocol::json::Request::Unlock {
-                key: key.clone(),
-                password: password.clone(),
-            },
+        let request = protocol::Request::Unlock {
+            key: key.clone(),
+            password: password.clone(),
         };
 
         let response = self.reconnecting_send(request).await?;
-        match response.json {
+        match response {
             Response::Unlock {} => {
                 // Ensure the key is unlocked again on reconnection.
                 // We dropped the lock since reconnecting_send might need to access the key list.
@@ -295,12 +286,10 @@ impl Client {
     }
 
     pub async fn get_key(&self, key: String) -> Result<crate::protocol::Key, ClientError> {
-        let request = Request {
-            message: protocol::json::Request::GetKey { key },
-        };
+        let request = protocol::Request::GetKey { key };
 
         let response = self.reconnecting_send(request).await?;
-        match response.json {
+        match response {
             Response::GetKey { key } => Ok(key),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
@@ -313,16 +302,14 @@ impl Client {
         digest_algorithm: DigestAlgorithm,
         digest: String,
     ) -> Result<Signature, ClientError> {
-        let request = Request {
-            message: protocol::json::Request::Sign {
-                key,
-                digest_algorithm,
-                digest,
-            },
+        let request = protocol::Request::Sign {
+            key,
+            digest_algorithm,
+            digest,
         };
 
         let response = self.reconnecting_send(request).await?;
-        match response.json {
+        match response {
             Response::Sign { signature } => Ok(signature),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
@@ -335,12 +322,10 @@ impl Client {
         key: String,
         digests: Vec<(DigestAlgorithm, String)>,
     ) -> Result<Vec<Signature>, ClientError> {
-        let request = Request {
-            message: protocol::json::Request::SignAll { key, digests },
-        };
+        let request = protocol::Request::SignAll { key, digests };
 
         let response = self.reconnecting_send(request).await?;
-        match response.json {
+        match response {
             Response::SignPrehashed { signatures } => Ok(signatures),
             Response::Error { reason } => Err(reason.into()),
             _other => Err(anyhow::anyhow!("Unexpected response from server").into()),

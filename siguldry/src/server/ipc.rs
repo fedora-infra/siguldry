@@ -23,7 +23,7 @@ use crate::ipc_common::IpcClient;
 use crate::protocol;
 use crate::server::config::Pkcs11Binding;
 use crate::{
-    protocol::{DigestAlgorithm, json::Signature},
+    protocol::{DigestAlgorithm, Signature},
     server::{Config, crypto, db},
 };
 
@@ -161,7 +161,7 @@ impl Client {
                 tracing::error!(reason, "Failed to unlock key");
                 Err(ServerError::Internal)
             }
-            Response::Success {} => Ok(protocol::json::Response::Unlock {}.into()),
+            Response::Success {} => Ok(protocol::Response::Unlock {}),
             _ => {
                 tracing::error!("helper returned invalid response");
                 Err(ServerError::Internal)
