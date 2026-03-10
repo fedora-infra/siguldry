@@ -95,12 +95,7 @@ pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 algorithm,
                 digest,
             } => {
-                let digests = vec![(algorithm, digest)];
-                let signature = client
-                    .sign_all(key, digests)
-                    .await?
-                    .pop()
-                    .ok_or_else(|| anyhow::anyhow!("Response contained no signature"))?;
+                let signature = client.sign(key, algorithm, digest).await?;
                 Response::Sign { signature }
             }
         };
