@@ -419,7 +419,6 @@ pub enum Response {
     GetKey {
         key: Key,
     },
-    GpgSign {},
     Sign {
         signature: Signature,
     },
