@@ -35,9 +35,9 @@ pseudo-random bytes generated on the server from OpenSSL's RAND_bytes interface.
 then base64-encoded and the result is used as a passphrase. This passphrase never leaves the server.
 
 The passphrase is encrypted for each user that is granted access to the signing key using their
-personal access key. Since the signing service is expected to be used by service accounts, there is
-no key derivation function applied to these personal access keys. Fedora uses 64 byte random
-strings.
+personal access key. This is done using Sequoia OpenPGP using AES-256-GCM. Since the signing
+service is expected to be used by service accounts, there is no key derivation function applied
+to these personal access keys. Fedora uses 64 byte random strings.
 
 Optionally, the server can be configured with "bindings", which are used to encrypt the key
 passphrase and key itself. With this scheme, the passphrase is encrypted using a list of X509

@@ -32,7 +32,7 @@ use sequoia_openpgp::{
     },
     policy::StandardPolicy,
     serialize::stream::{Armorer, Encryptor, LiteralWriter, Message},
-    types::SymmetricAlgorithm,
+    types::{AEADAlgorithm, SymmetricAlgorithm},
 };
 use serde::{Deserialize, Serialize};
 
@@ -342,7 +342,7 @@ impl VerificationHelper for SymmetricHelper {
     }
 }
 
-/// Encrypts some data with the given [`Password`] using GPG.
+/// Encrypts some data with the given [`Password`] using OpenPGP.
 ///
 /// Returns the ASCII-armored, encrypted `key_passphrase`.
 fn symmetric_encrypt(password: Password, data: &[u8]) -> anyhow::Result<Vec<u8>> {
@@ -351,6 +351,7 @@ fn symmetric_encrypt(password: Password, data: &[u8]) -> anyhow::Result<Vec<u8>>
         let message = Armorer::new(Message::new(&mut buffer)).build()?;
         let encryptor = Encryptor::with_passwords(message, Some(password))
             .symmetric_algo(SymmetricAlgorithm::AES256)
+            .aead_algo(AEADAlgorithm::GCM)
             .build()?;
         let mut message = LiteralWriter::new(encryptor).build()?;
         message.write_all(data)?;
