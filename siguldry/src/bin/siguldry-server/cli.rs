@@ -128,10 +128,11 @@ pub enum ManagementCommands {
 
     /// Manage remote users.
     ///
-    /// Remote users can perform non-destructive actions such as creating keys and requesting
-    /// signatures. Users authenticate via client TLS certificates. It is up to you to handle
-    /// issuing and revoking those certificates after you create or remove a user. Users with
-    /// valid certificates that are not explicitly added are rejected.
+    /// Remote users can perform limited actions like listing keys they can access, unlocking those
+    /// keys, and requesting signatures using unlocked keys. Users authenticate via client TLS
+    /// certificates. It is up to you to handle issuing and revoking those certificates after you
+    /// create or remove a user. Users with valid certificates that are not present in the database
+    /// are rejected.
     #[command(subcommand)]
     Users(UserCommands),
 
@@ -328,6 +329,52 @@ pub enum UserCommands {
         /// The username of the user to delete.
         name: String,
     },
+
+    /// Grant a user access to a key.
+    ///
+    /// This command requires a number of credentials, which are read from stdin in the following
+    /// order if files are not provided:
+    ///
+    /// 1. PKCS#11 PIN (if needed).
+    /// 2. Existing user's access password.
+    /// 3. New user's password.
+    GrantKeyAccess {
+        /// A file containing the PIN for the PKCS#11 token used in binding (if any).
+        ///
+        /// The file should include the PIN on the first line and the file should include a newline.
+        /// If this option is not provided, input is read from stdin (if binding is configured).
+        #[arg(long, default_value = None)]
+        pkcs11_binding_pin: Option<PathBuf>,
+        /// The name of the key to grant the user access to.
+        key: String,
+        /// The name of the user who already has access to the key.
+        ///
+        /// You will need their access passphrase to grant the user access.
+        existing_user: String,
+        /// A file containing the key access passphrase of the existing user.
+        ///
+        /// The file should include the password on the first line and the file should include a newline.
+        /// If this option is not provided, input is read from stdin.
+        #[arg(long, default_value = None)]
+        existing_user_password_file: Option<PathBuf>,
+        /// The name of the user who is being granted access to the key.
+        user: String,
+        /// A file containing the key access passphrase of the new user.
+        ///
+        /// The file should include the password on the first line and the file should include a newline.
+        /// If this option is not provided, input is read from stdin.
+        #[arg(long, default_value = None)]
+        user_password_file: Option<PathBuf>,
+    },
+
+    /// Remove a user's access to a key.
+    RevokeKeyAccess {
+        /// The name of the key to revoke access from.
+        key: String,
+        /// The name of the user whose access should be revoked.
+        user: String,
+    },
+
     /// List all users in the database.
     List {},
 }

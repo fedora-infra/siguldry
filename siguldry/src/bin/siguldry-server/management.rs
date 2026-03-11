@@ -96,7 +96,7 @@ fn password_from_file_or_prompt(
 }
 
 #[instrument(skip_all)]
-pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Result<()> {
+pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::Result<()> {
     let db_pool = db::pool(
         config
             .database()
@@ -125,18 +125,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
             } => {
                 let x509_validity_days = std::num::NonZeroU32::new(x509_validity_days)
                     .ok_or_else(|| anyhow::anyhow!("X509 validity must be non-zero"))?;
-
                 let user = db::User::get(&mut conn, &admin).await?;
-                let prompt = format!(
-                    "Enter a password to access the key (at least {} bytes): ",
-                    config.user_password_length.get()
-                );
-                let user_password = password_from_file_or_prompt(
-                    &prompt,
-                    password_file,
-                    config.user_password_length.get() as usize,
-                )?;
-
                 let x509_ca = if let Some(x509_ca) = x509_ca_key_name {
                     // todo user should also provide the cert name
                     let ca_key = db::Key::get(&mut conn, &x509_ca)
@@ -162,13 +151,11 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                         })?
                     };
 
-                    let mut pkcs11_bindings = config
+                    for binding in config
                         .pkcs11_bindings
-                        .iter()
+                        .iter_mut()
                         .filter(|b| b.private_key.is_some())
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    for binding in pkcs11_bindings.iter_mut() {
+                    {
                         let prompt = PromptPassword::new(format!(
                             "Please enter the user PIN for {}:",
                             &binding
@@ -183,7 +170,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     let user_password =
                         password_from_file_or_prompt(&prompt, x509_ca_password_file, 0)?;
                     let key_password = decrypt_key_password(
-                        &pkcs11_bindings,
+                        &config.pkcs11_bindings,
                         user_password,
                         &key_access.encrypted_passphrase,
                     )
@@ -193,6 +180,16 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                 } else {
                     None
                 };
+
+                let prompt = format!(
+                    "Enter a password to access the key (at least {} bytes): ",
+                    config.user_password_length.get()
+                );
+                let user_password = password_from_file_or_prompt(
+                    &prompt,
+                    password_file,
+                    config.user_password_length.get() as usize,
+                )?;
 
                 let encrypted_key = crypto::create_encrypted_key(
                     &config,
@@ -279,13 +276,11 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     (key_access, None)
                 };
 
-                let mut pkcs11_bindings = config
+                for binding in config
                     .pkcs11_bindings
-                    .iter()
+                    .iter_mut()
                     .filter(|b| b.private_key.is_some())
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for binding in pkcs11_bindings.iter_mut() {
+                {
                     let prompt = PromptPassword::new(format!(
                         "Please enter the user PIN for {}:",
                         &binding
@@ -302,7 +297,7 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                 );
                 let user_password = password_from_file_or_prompt(&prompt, ca_password_file, 0)?;
                 let key_password = decrypt_key_password(
-                    &pkcs11_bindings,
+                    &config.pkcs11_bindings,
                     user_password,
                     &key_access.encrypted_passphrase,
                 )
@@ -346,6 +341,90 @@ pub async fn manage(command: ManagementCommands, config: Config) -> anyhow::Resu
                     "Deleted {} user(s) from the database",
                     db::User::delete(&mut conn, &name).await?
                 );
+            }
+            UserCommands::GrantKeyAccess {
+                pkcs11_binding_pin,
+                key,
+                existing_user,
+                existing_user_password_file,
+                user,
+                user_password_file,
+            } => {
+                let key = db::Key::get(&mut conn, &key)
+                    .await
+                    .context("Failed to look up key")?;
+                let existing_user = db::User::get(&mut conn, &existing_user)
+                    .await
+                    .context("Failed to look up existing user")?;
+                let existing_key_access = db::KeyAccess::get(&mut conn, &key, &existing_user)
+                    .await
+                    .context("Failed to look up existing user's key access")?;
+                let new_user = db::User::get(&mut conn, &user)
+                    .await
+                    .context("Failed to look up user being granted access")?;
+
+                if !config.pkcs11_bindings.is_empty() {
+                    let binding = config
+                        .pkcs11_bindings
+                        .iter_mut()
+                        .find(|b| b.private_key.is_some())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("At least one pkcs11 binding needs a private key")
+                        })?;
+                    let prompt = format!(
+                        "Please enter the PKCS11 binding PIN for {}:",
+                        &binding
+                            .private_key
+                            .as_ref()
+                            .expect("filter for bindings with private key URIs")
+                    );
+                    let pin = password_from_file_or_prompt(&prompt, pkcs11_binding_pin, 0)?;
+                    binding.pin = Some(pin);
+                }
+                let existing_user_password = password_from_file_or_prompt(
+                    "Please enter the existing user's password:",
+                    existing_user_password_file,
+                    0,
+                )?;
+                let user_password = password_from_file_or_prompt(
+                    "Please enter the new user's password:",
+                    user_password_file,
+                    config.user_password_length.get().into(),
+                )?;
+
+                let key_password = crypto::binding::decrypt_key_password(
+                    &config.pkcs11_bindings,
+                    existing_user_password,
+                    &existing_key_access.encrypted_passphrase,
+                )
+                .await?;
+                let new_encrypted_passphrase = crypto::binding::encrypt_key_password(
+                    &config.pkcs11_bindings,
+                    user_password,
+                    key_password,
+                )?;
+
+                db::KeyAccess::create(&mut conn, &key, &new_user, new_encrypted_passphrase, false)
+                    .await
+                    .context("Failed to create new access record")?;
+
+                println!(
+                    "Successfully granted user {} access to {}",
+                    new_user.name, key.name
+                );
+            }
+            UserCommands::RevokeKeyAccess { key, user } => {
+                let key = db::Key::get(&mut conn, &key).await?;
+                let user = db::User::get(&mut conn, &user).await?;
+                let deleted = db::KeyAccess::delete(&mut conn, &key, &user).await?;
+                if deleted == 0 {
+                    println!("User did not have key access");
+                } else {
+                    println!(
+                        "Removed {deleted} access record(s) from {} for {}",
+                        key.name, user.name
+                    );
+                }
             }
             UserCommands::List {} => {
                 for user in db::User::list(&mut conn).await? {

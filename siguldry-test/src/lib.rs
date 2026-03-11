@@ -5,6 +5,7 @@
 //! PKCS #11 module.
 
 use std::{
+    collections::HashMap,
     io::Write,
     net::SocketAddr,
     num::NonZeroU16,
@@ -37,6 +38,7 @@ pub struct Creds {
     pub server: Credentials,
     pub bridge: Credentials,
     pub client: Credentials,
+    pub additional_creds: HashMap<String, Credentials>,
 }
 
 // Generate a set of credentials in the given directory.
@@ -44,21 +46,36 @@ pub async fn create_credentials(
     dir: &Path,
     bridge_hostname: &str,
     server_hostname: &str,
-    client_name: &str,
+    client_names: &[&str],
 ) -> anyhow::Result<Creds> {
     let mut command = Command::new("bash");
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../devel/siguldry_auth_keys.sh");
     let output = command
         .current_dir(dir)
         .arg(script.as_path())
-        .args([server_hostname, bridge_hostname, client_name])
+        .args([server_hostname, bridge_hostname])
+        .args(client_names)
         .output()
         .await?;
     if !output.status.success() {
         bail!("Failed to generate auth keys");
     }
 
+    let client_name = client_names.first().unwrap();
     let creds_directory = dir.join("creds/");
+    let mut additional_creds = HashMap::new();
+    for client_name in client_names.iter().skip(1) {
+        additional_creds.insert(
+            client_name.to_string(),
+            Credentials {
+                private_key: creds_directory
+                    .join(format!("siguldry.{client_name}.private_key.pem")),
+                certificate: creds_directory
+                    .join(format!("siguldry.{client_name}.certificate.pem")),
+                ca_certificate: creds_directory.join("siguldry.ca_certificate.pem"),
+            },
+        );
+    }
     Ok(Creds {
         server: Credentials {
             private_key: creds_directory.join("siguldry.server.private_key.pem"),
@@ -71,10 +88,11 @@ pub async fn create_credentials(
             ca_certificate: creds_directory.join("siguldry.ca_certificate.pem"),
         },
         client: Credentials {
-            private_key: creds_directory.join("siguldry.client.private_key.pem"),
-            certificate: creds_directory.join("siguldry.client.certificate.pem"),
+            private_key: creds_directory.join(format!("siguldry.{client_name}.private_key.pem")),
+            certificate: creds_directory.join(format!("siguldry.{client_name}.certificate.pem")),
             ca_certificate: creds_directory.join("siguldry.ca_certificate.pem"),
         },
+        additional_creds,
     })
 }
 
@@ -88,11 +106,13 @@ pub struct Instance {
     pub state_dir: tempfile::TempDir,
     pub signer_helper: (CancellationToken, JoinHandle<anyhow::Result<()>>),
     client_proxy: Option<(CancellationToken, JoinHandle<anyhow::Result<()>>)>,
+    pub additional_users: HashMap<String, client::Client>,
 }
 
 impl Instance {
     pub async fn halt(self) -> anyhow::Result<()> {
         drop(self.client);
+        drop(self.additional_users);
         if let Some((halt_token, client_proxy)) = self.client_proxy {
             halt_token.cancel();
             client_proxy.await??;
@@ -174,11 +194,17 @@ pub struct InstanceBuilder {
     with_pkcs11_binding: bool,
     with_client_proxy: bool,
     with_sigul_import: Option<String>,
+    additional_users: Vec<(String, bool)>,
 }
 
 impl InstanceBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_additional_user(mut self, username: &str, grant_keys: bool) -> Self {
+        self.additional_users.push((username.into(), grant_keys));
+        self
     }
 
     /// Use pre-generated credentials instead of creating new ones.
@@ -352,15 +378,19 @@ impl InstanceBuilder {
         } else {
             vec![]
         };
+        let mut client_names = vec![client_name];
+        for (name, _) in self.additional_users.iter() {
+            client_names.push(name);
+        }
 
-        let creds = if let Some(creds) = self.creds {
-            creds
+        let creds = if let Some(creds) = &self.creds {
+            creds.clone()
         } else {
             create_credentials(
                 tempdir.path(),
                 bridge_hostname,
                 server_hostname,
-                client_name,
+                &client_names,
             )
             .await?
         };
@@ -490,14 +520,46 @@ impl InstanceBuilder {
             }
 
             if self.with_codesigning_key {
-                Self::create_codesigning_key(&server_bin, &server_config_file)?;
+                self.create_codesigning_key(&server_bin, &server_config_file)?;
                 maybe_auto_unlock
                     .push((keys::CODESIGNING_KEY_NAME, keys::CODESIGNING_KEY_PASSWORD));
             }
 
             if self.with_ec_key {
-                Self::create_ec_key(&server_bin, &server_config_file)?;
+                self.create_ec_key(&server_bin, &server_config_file)?;
                 maybe_auto_unlock.push((keys::EC_KEY_NAME, keys::EC_KEY_PASSWORD));
+            }
+        }
+
+        for (user, grant_access) in self.additional_users.iter() {
+            Self::run_server_command(
+                &server_bin,
+                &server_config_file,
+                &["manage", "users", "create", user],
+                None,
+            )?;
+
+            if *grant_access {
+                for (key_name, user_password) in maybe_auto_unlock.iter() {
+                    let stdin = if self.with_pkcs11_binding {
+                        format!("{}\n{}\n{}\n", keys::HSM_PIN, user_password, user_password)
+                    } else {
+                        format!("{}\n{}\n", user_password, user_password)
+                    };
+                    Self::run_server_command(
+                        &server_bin,
+                        &server_config_file,
+                        &[
+                            "manage",
+                            "users",
+                            "grant-key-access",
+                            key_name,
+                            "siguldry-client",
+                            user,
+                        ],
+                        Some(&stdin),
+                    )?;
+                }
             }
         }
 
@@ -545,7 +607,7 @@ impl InstanceBuilder {
             bridge_hostname: bridge_hostname.to_string(),
             bridge_port: bridge.client_port(),
             credentials: creds.client.clone(),
-            keys,
+            keys: keys.clone(),
             ..Default::default()
         };
         let client_config_file = tempdir.path().join("client.toml");
@@ -554,6 +616,23 @@ impl InstanceBuilder {
         let client_config: client::Config =
             toml::from_str(&std::fs::read_to_string(&client_config_file)?)?;
         let client = client::Client::new(client_config)?;
+
+        let mut additional_users = HashMap::new();
+        for (client_name, _) in self.additional_users.iter() {
+            let client_config = client::Config {
+                server_hostname: server_hostname.to_string(),
+                bridge_hostname: bridge_hostname.to_string(),
+                bridge_port: bridge.client_port(),
+                credentials: creds.additional_creds.get(client_name).unwrap().clone(),
+                keys: keys.clone(),
+                ..Default::default()
+            };
+            // round-trip the config to trigger loading key passwords; this is silly and gross.
+            std::fs::write(&client_config_file, toml::to_string_pretty(&client_config)?)?;
+            let client_config: client::Config =
+                toml::from_str(&std::fs::read_to_string(&client_config_file)?)?;
+            additional_users.insert(client_name.clone(), client::Client::new(client_config)?);
+        }
 
         let client_proxy = if self.with_client_proxy {
             let halt_token = CancellationToken::new();
@@ -572,6 +651,7 @@ impl InstanceBuilder {
             state_dir: tempdir,
             signer_helper,
             client_proxy,
+            additional_users,
         })
     }
 
@@ -809,7 +889,25 @@ impl InstanceBuilder {
         )
     }
 
-    fn create_codesigning_key(server_bin: &Path, server_config_file: &Path) -> anyhow::Result<()> {
+    fn create_codesigning_key(
+        &self,
+        server_bin: &Path,
+        server_config_file: &Path,
+    ) -> anyhow::Result<()> {
+        let stdin = if self.with_pkcs11_binding {
+            format!(
+                "{}\n{}\n{}\n",
+                keys::HSM_PIN,
+                keys::CA_KEY_PASSWORD,
+                keys::CODESIGNING_KEY_PASSWORD,
+            )
+        } else {
+            format!(
+                "{}\n{}\n",
+                keys::CA_KEY_PASSWORD,
+                keys::CODESIGNING_KEY_PASSWORD,
+            )
+        };
         Self::run_server_command(
             server_bin,
             server_config_file,
@@ -822,15 +920,21 @@ impl InstanceBuilder {
                 "siguldry-client",
                 keys::CODESIGNING_KEY_NAME,
             ],
-            Some(&format!(
-                "{}\n{}\n",
-                keys::CODESIGNING_KEY_PASSWORD,
-                keys::CA_KEY_PASSWORD
-            )),
+            Some(&stdin),
         )
     }
 
-    fn create_ec_key(server_bin: &Path, server_config_file: &Path) -> anyhow::Result<()> {
+    fn create_ec_key(&self, server_bin: &Path, server_config_file: &Path) -> anyhow::Result<()> {
+        let stdin = if self.with_pkcs11_binding {
+            format!(
+                "{}\n{}\n{}\n",
+                keys::HSM_PIN,
+                keys::CA_KEY_PASSWORD,
+                keys::EC_KEY_PASSWORD,
+            )
+        } else {
+            format!("{}\n{}\n", keys::CA_KEY_PASSWORD, keys::EC_KEY_PASSWORD,)
+        };
         Self::run_server_command(
             server_bin,
             server_config_file,
@@ -844,11 +948,7 @@ impl InstanceBuilder {
                 "siguldry-client",
                 keys::EC_KEY_NAME,
             ],
-            Some(&format!(
-                "{}\n{}\n",
-                keys::EC_KEY_PASSWORD,
-                keys::CA_KEY_PASSWORD
-            )),
+            Some(&stdin),
         )
     }
 

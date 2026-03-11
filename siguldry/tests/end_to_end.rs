@@ -25,7 +25,7 @@ async fn client_rejects_bridge_cert() -> anyhow::Result<()> {
         tempdir.path(),
         bridge_hostname,
         server_hostname,
-        client_name,
+        &[client_name],
     )
     .await?;
     let client_config = client::Config {
@@ -68,7 +68,7 @@ async fn bridge_rejects_client_cert() -> anyhow::Result<()> {
         tempdir.path(),
         bridge_hostname,
         server_hostname,
-        client_name,
+        &[client_name],
     )
     .await?;
     creds.client.ca_certificate = instance.creds.client.ca_certificate.clone();
@@ -104,7 +104,7 @@ async fn bridge_rejects_client_cert() -> anyhow::Result<()> {
 #[tracing_test::traced_test]
 async fn bridge_rejects_client_cert_empty_common_name() -> anyhow::Result<()> {
     let tempdir = tempfile::TempDir::new()?;
-    let creds = create_credentials(tempdir.path(), "localhost", "siguldry-server", "").await?;
+    let creds = create_credentials(tempdir.path(), "localhost", "siguldry-server", &[""]).await?;
     let instance = InstanceBuilder::new().with_creds(creds).build().await?;
 
     let username = instance.client.who_am_i().await;
@@ -800,6 +800,149 @@ async fn import_sigul_certificate_names_match() -> anyhow::Result<()> {
         })
         .collect::<Vec<_>>();
     assert_eq!(vec![keys::SIGUL_RSA_CERT_NAME], rsa_cert_names);
+
+    instance.halt().await?;
+    Ok(())
+}
+
+// Test that a user can be granted access to a key and sign with it.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn grant_user_key_access() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_additional_user("user-with-access", true)
+        .build()
+        .await?;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let data_sum = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), data)?.to_vec();
+    let data_hex = hex::encode(&data_sum);
+
+    let client = instance.additional_users.get("user-with-access").unwrap();
+    client
+        .unlock(
+            keys::CODESIGNING_KEY_NAME.to_string(),
+            keys::CODESIGNING_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+    let key = client
+        .get_key(keys::CODESIGNING_KEY_NAME.to_string())
+        .await?;
+    let signature = client
+        .sign_all(
+            keys::CODESIGNING_KEY_NAME.to_string(),
+            vec![(DigestAlgorithm::Sha256, data_hex)],
+        )
+        .await?
+        .pop()
+        .unwrap();
+
+    let pubkey_path = instance.state_dir.path().join("codesigning-pubkey.pem");
+    std::fs::write(&pubkey_path, &key.public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, signature.value())?;
+    let data_path = instance.state_dir.path().join("data");
+    std::fs::write(&data_path, data)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("dgst")
+        .arg("-verify")
+        .arg(pubkey_path)
+        .arg("-signature")
+        .arg(sig_path)
+        .arg(data_path)
+        .output()
+        .await?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!("Verified OK\n", stdout);
+
+    instance.halt().await?;
+    Ok(())
+}
+
+// Test that a user can be granted access to a key bound with pkcs11 and sign with it.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn grant_user_pkcs11_bound_key_access() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_pkcs11_binding()
+        .with_codesigning_key()
+        .with_additional_user("user-with-access", true)
+        .build()
+        .await?;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+    let data_sum = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), data)?.to_vec();
+    let data_hex = hex::encode(&data_sum);
+
+    let client = instance.additional_users.get("user-with-access").unwrap();
+    client
+        .unlock(
+            keys::CODESIGNING_KEY_NAME.to_string(),
+            keys::CODESIGNING_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+    let key = client
+        .get_key(keys::CODESIGNING_KEY_NAME.to_string())
+        .await?;
+    let signature = client
+        .sign_all(
+            keys::CODESIGNING_KEY_NAME.to_string(),
+            vec![(DigestAlgorithm::Sha256, data_hex)],
+        )
+        .await?
+        .pop()
+        .unwrap();
+
+    let pubkey_path = instance.state_dir.path().join("codesigning-pubkey.pem");
+    std::fs::write(&pubkey_path, &key.public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, signature.value())?;
+    let data_path = instance.state_dir.path().join("data");
+    std::fs::write(&data_path, data)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("dgst")
+        .arg("-verify")
+        .arg(pubkey_path)
+        .arg("-signature")
+        .arg(sig_path)
+        .arg(data_path)
+        .output()
+        .await?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!("Verified OK\n", stdout);
+
+    instance.halt().await?;
+    Ok(())
+}
+
+// Test that a user without key access can't sign or see keys
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn user_without_access_cannot_sign() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_additional_user("user-without-access", false)
+        .build()
+        .await?;
+
+    let client = instance
+        .additional_users
+        .get("user-without-access")
+        .unwrap();
+    assert!(
+        client.list_keys().await?.is_empty(),
+        "User shouldn't have access to any keys"
+    );
+    let result = client
+        .unlock(
+            keys::CODESIGNING_KEY_NAME.to_string(),
+            keys::CODESIGNING_KEY_PASSWORD.to_string(),
+        )
+        .await;
+    assert!(result.is_err());
 
     instance.halt().await?;
     Ok(())

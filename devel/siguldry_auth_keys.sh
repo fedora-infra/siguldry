@@ -1,13 +1,18 @@
 #!/bin/bash
 
-# This script accepts three arguments: the server commonName, the bridge commonName, and the client
-# commonName. For testing purposes, "sigul-server", "localhost", and "sigul-client" are recommended.
+# This script accepts three or more arguments: the server commonName, the bridge commonName, and one
+# or more client commonNames. For testing purposes, "sigul-server", "localhost", and "sigul-client"
+# are recommended.
 
 set -xeuo pipefail
 
 SERVER_CN="${1}"
 BRIDGE_CN="${2}"
-CLIENT_CN="${3}"
+if [[ $# -lt 3 ]]; then
+    CLIENT_CNS=("")
+else
+    CLIENT_CNS=("${@:3}")
+fi
 
 # Create a CA, then sign three certificates for the server, bridge, and client respectively.
 mkdir -p creds/
@@ -54,25 +59,29 @@ openssl x509 -req -in bridge-cert.csr \
     -sha256 \
     -out siguldry.bridge.certificate.pem
 
-# Create and sign a client certificate
-openssl req -new -nodes -sha256 \
-    -addext "extendedKeyUsage = clientAuth" \
-    -subj "/CN=$CLIENT_CN" \
-    -newkey rsa:2048 \
-    -keyout siguldry.client.private_key.pem \
-    -out client-cert.csr
-openssl x509 -req -in client-cert.csr \
-    -CAkey siguldry.ca.private_key.pem \
-    -CA siguldry.ca_certificate.pem \
-    -copy_extensions copyall \
-    -days 3650 \
-    -sha256 \
-    -out siguldry.client.certificate.pem
+# Create and sign client certificates
+for CLIENT_CN in "${CLIENT_CNS[@]}"; do
+    openssl req -new -nodes -sha256 \
+        -addext "extendedKeyUsage = clientAuth" \
+        -subj "/CN=$CLIENT_CN" \
+        -newkey rsa:2048 \
+        -keyout "siguldry.$CLIENT_CN.private_key.pem" \
+        -out "siguldry.$CLIENT_CN.csr"
+    openssl x509 -req -in "siguldry.$CLIENT_CN.csr" \
+        -CAkey siguldry.ca.private_key.pem \
+        -CA siguldry.ca_certificate.pem \
+        -copy_extensions copyall \
+        -days 3650 \
+        -sha256 \
+        -out "siguldry.$CLIENT_CN.certificate.pem"
+done
 
-rm siguldry.ca.private_key.pem *.csr
+rm -- siguldry.ca.private_key.pem *.csr
 
 openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.server.certificate.pem
 openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.bridge.certificate.pem
-openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.client.certificate.pem
+for CLIENT_CN in "${CLIENT_CNS[@]}"; do
+    openssl verify -CAfile ./siguldry.ca_certificate.pem "siguldry.$CLIENT_CN.certificate.pem"
+done
 
 popd
