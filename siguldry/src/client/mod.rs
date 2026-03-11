@@ -232,6 +232,7 @@ impl Client {
         }
     }
 
+    /// List keys that are accessible to the authenticated user.
     pub async fn list_keys(&self) -> Result<Vec<protocol::Key>, ClientError> {
         let request = protocol::Request::ListKeys {};
 

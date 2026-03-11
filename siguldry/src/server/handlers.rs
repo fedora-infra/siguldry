@@ -59,9 +59,10 @@ impl Handler {
     pub(crate) async fn list_keys(
         &self,
         conn: &mut SqliteConnection,
+        user: &User,
     ) -> Result<Response, ServerError> {
         let mut keys = vec![];
-        for key in db::Key::list(conn).await? {
+        for key in db::Key::list_by_user(conn, user).await? {
             let certificates = {
                 let x509 = db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
                     .await?

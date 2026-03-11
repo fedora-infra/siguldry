@@ -356,6 +356,23 @@ impl Key {
             .await
     }
 
+    /// List all keys a user has access to.
+    #[instrument(skip(conn))]
+    pub async fn list_by_user(
+        conn: &mut SqliteConnection,
+        user: &User,
+    ) -> Result<Vec<Key>, sqlx::Error> {
+        sqlx::query_as!(
+            Key,
+            "SELECT keys.* FROM keys
+            INNER JOIN key_accesses ON keys.id = key_accesses.key_id
+            WHERE key_accesses.user_id = $1;",
+            user.id,
+        )
+        .fetch_all(&mut *conn)
+        .await
+    }
+
     pub async fn get_token_keys(
         conn: &mut SqliteConnection,
         token: &Pkcs11Token,
@@ -594,6 +611,41 @@ mod tests {
         assert!(failed_user.is_err_and(|error| {
             "UNIQUE constraint failed: users.name" == error.as_database_error().unwrap().message()
         }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_keys_by_user() -> Result<()> {
+        let db_pool = pool("sqlite::memory:", false).await?;
+        migrate(&db_pool).await?;
+        let mut conn = db_pool.begin().await?;
+
+        let user = User::create(&mut conn, "test-user").await?;
+        let key = Key::create(
+            &mut conn,
+            "test-name",
+            "unique-handle",
+            KeyAlgorithm::P256,
+            Some("secret"),
+            "public-key",
+            None,
+            None,
+        )
+        .await?;
+
+        assert!(
+            Key::list_by_user(&mut conn, &user).await?.is_empty(),
+            "Key returned users doesn't have access to"
+        );
+
+        KeyAccess::create(&mut conn, &key, &user, "secret".into(), false).await?;
+
+        assert_eq!(
+            vec![key],
+            Key::list_by_user(&mut conn, &user).await?,
+            "Key user has access to is missing"
+        );
 
         Ok(())
     }

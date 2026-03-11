@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT * FROM keys WHERE name = $1;",
+  "query": "SELECT keys.* FROM keys\n            INNER JOIN key_accesses ON keys.id = key_accesses.key_id\n            WHERE key_accesses.user_id = $1;",
   "describe": {
     "columns": [
       {
@@ -64,5 +64,5 @@
       true
     ]
   },
-  "hash": "a8a2709c4f53a9d63a6a7f1bc2483fefb9482b5ee058c74358d601bab2d77707"
+  "hash": "bb697c15e2899f86cffbdcf95fe43a5e93681a528110a3f53bc364d3900b4dd1"
 }
