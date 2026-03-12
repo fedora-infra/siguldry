@@ -243,59 +243,44 @@ async fn check_x509_certs() -> anyhow::Result<()> {
         .client
         .get_key(keys::CODESIGNING_KEY_NAME.to_string())
         .await?;
-    match (
-        ca_key.x509_certificates().pop().unwrap(),
-        codesigning_key.x509_certificates().pop().unwrap(),
-    ) {
-        (
-            siguldry::protocol::Certificate::X509 {
-                name: _,
-                certificate: ca_cert,
-            },
-            siguldry::protocol::Certificate::X509 {
-                name: _,
-                certificate: codesigning_cert,
-            },
-        ) => {
-            let ca_path = instance.state_dir.path().join("ca.pem");
-            std::fs::write(&ca_path, &ca_cert)?;
-            let codesigning_path = instance.state_dir.path().join("codesigning.pem");
-            std::fs::write(&codesigning_path, &codesigning_cert)?;
-            // The CA should be self-signed
-            let mut command = tokio::process::Command::new("openssl");
-            let output = command
-                .arg("verify")
-                .arg("-CAfile")
-                .arg(&ca_path)
-                .arg(&ca_path)
-                .output()
-                .await?;
-            assert!(output.status.success());
+    let ca_cert = ca_key.x509_certificates().pop().unwrap();
+    let codesigning_cert = codesigning_key.x509_certificates().pop().unwrap();
+    let ca_path = instance.state_dir.path().join("ca.pem");
+    std::fs::write(&ca_path, &ca_cert.certificate)?;
+    let codesigning_path = instance.state_dir.path().join("codesigning.pem");
+    std::fs::write(&codesigning_path, &codesigning_cert.certificate)?;
+    // The CA should be self-signed
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("verify")
+        .arg("-CAfile")
+        .arg(&ca_path)
+        .arg(&ca_path)
+        .output()
+        .await?;
+    assert!(output.status.success());
 
-            // The CA has signed the codesigning certificate
-            let mut command = tokio::process::Command::new("openssl");
-            let output = command
-                .arg("verify")
-                .arg("-CAfile")
-                .arg(&ca_path)
-                .arg(&codesigning_path)
-                .output()
-                .await?;
-            assert!(output.status.success());
+    // The CA has signed the codesigning certificate
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("verify")
+        .arg("-CAfile")
+        .arg(&ca_path)
+        .arg(&codesigning_path)
+        .output()
+        .await?;
+    assert!(output.status.success());
 
-            // And the CA isn't signed by codesigning
-            let mut invalid_verify = tokio::process::Command::new("openssl");
-            let output = invalid_verify
-                .arg("verify")
-                .arg("-CAfile")
-                .arg(&codesigning_path)
-                .arg(&ca_path)
-                .output()
-                .await?;
-            assert!(!output.status.success());
-        }
-        _ => panic!("unexpected key type"),
-    }
+    // And the CA isn't signed by codesigning
+    let mut invalid_verify = tokio::process::Command::new("openssl");
+    let output = invalid_verify
+        .arg("verify")
+        .arg("-CAfile")
+        .arg(&codesigning_path)
+        .arg(&ca_path)
+        .output()
+        .await?;
+    assert!(!output.status.success());
 
     instance.halt().await?;
     Ok(())
@@ -777,29 +762,21 @@ async fn import_sigul_certificate_names_match() -> anyhow::Result<()> {
         .client
         .get_key(keys::SIGUL_CA_KEY_NAME.to_string())
         .await?;
-    let ca_cert_names = ca_key
-        .certificates
-        .iter()
-        .filter_map(|cert| match cert {
-            siguldry::protocol::Certificate::X509 { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(vec![keys::SIGUL_CA_CERT_NAME], ca_cert_names);
+    let ca_cert = ca_key
+        .x509_certificates()
+        .into_iter()
+        .find(|c| c.name == keys::SIGUL_CA_CERT_NAME);
+    assert!(ca_cert.is_some());
 
     let rsa_key = instance
         .client
         .get_key(keys::SIGUL_RSA_KEY_NAME.to_string())
         .await?;
-    let rsa_cert_names = rsa_key
-        .certificates
-        .iter()
-        .filter_map(|cert| match cert {
-            siguldry::protocol::Certificate::X509 { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(vec![keys::SIGUL_RSA_CERT_NAME], rsa_cert_names);
+    let rsa_cert = rsa_key
+        .x509_certificates()
+        .into_iter()
+        .find(|c| c.name == keys::SIGUL_RSA_CERT_NAME);
+    assert!(rsa_cert.is_some());
 
     instance.halt().await?;
     Ok(())

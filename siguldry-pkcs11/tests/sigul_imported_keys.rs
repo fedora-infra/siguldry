@@ -34,17 +34,7 @@ async fn import_sigul_and_sign() -> anyhow::Result<()> {
         .first()
         .cloned()
         .unwrap();
-    let _fingerprint = match cert {
-        siguldry::protocol::Certificate::Pgp {
-            version: _,
-            certificate,
-            fingerprint,
-        } => {
-            tokio::fs::write(&certificate_path, certificate.as_bytes()).await?;
-            fingerprint
-        }
-        _ => panic!("was expecting a Pgp cert"),
-    };
+    tokio::fs::write(&certificate_path, cert.certificate.as_bytes()).await?;
     let gnupg_home = instance.state_dir.path().join("gpghome");
     tokio::fs::create_dir(&gnupg_home).await?;
     let gpg_agent_conf = gnupg_home.join("gpg-agent.conf");
@@ -175,17 +165,7 @@ async fn import_sigul_just_gpg_key() -> anyhow::Result<()> {
         .first()
         .cloned()
         .unwrap();
-    let _fingerprint = match cert {
-        siguldry::protocol::Certificate::Pgp {
-            version: _,
-            certificate,
-            fingerprint,
-        } => {
-            tokio::fs::write(&certificate_path, certificate.as_bytes()).await?;
-            fingerprint
-        }
-        _ => panic!("was expecting a Pgp cert"),
-    };
+    tokio::fs::write(&certificate_path, cert.certificate.as_bytes()).await?;
     let gnupg_home = instance.state_dir.path().join("gpghome");
     tokio::fs::create_dir(&gnupg_home).await?;
     let gpg_agent_conf = gnupg_home.join("gpg-agent.conf");

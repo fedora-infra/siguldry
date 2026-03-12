@@ -524,26 +524,27 @@ mod base64 {
 
 /// Describes the public portion of keys managed by Siguldry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Certificate {
+    /// The PEM-encoded or ASCII-armored certificate.
+    pub certificate: String,
+    /// The type of the certificate.
+    pub certificate_type: CertificateType,
+    /// A unique identifier for the certificate.
+    pub fingerprint: String,
+    /// The name of the certificate in Siguldry.
+    ///
+    /// Names are unique per-key.
+    pub name: String,
+}
+
+/// The type of certificate contained in a [`Certificate`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
-pub enum Certificate {
+pub enum CertificateType {
     /// A key pair that can be used for OpenPGP signatures.
-    Pgp {
-        /// The key version; likely either 4 or 6, but refer to RFC 9580 and any superceding RFCs.
-        version: u8,
-        /// The ASCII-armored public key
-        certificate: String,
-        /// The key's fingerprint; the exact format depends on the key version.
-        fingerprint: String,
-    },
+    Pgp,
     /// A key pair with an associated X509 certificate.
-    X509 {
-        /// A user-friendly name that uniquely identifies the certificate
-        /// with respect to a key. Different keys may have certificates with
-        /// the same name.
-        name: String,
-        /// The PEM-encoded certificate.
-        certificate: String,
-    },
+    X509,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -557,22 +558,16 @@ pub struct Key {
     pub handle: String,
     /// The PEM-encoded public key.
     pub public_key: String,
+    /// A list of certificates associated with this key.
     pub certificates: Vec<Certificate>,
 }
 
 impl Key {
+    /// A list of X509 certificates.
     pub fn x509_certificates(&self) -> Vec<Certificate> {
         self.certificates
             .iter()
-            .filter(|c| {
-                matches!(
-                    c,
-                    Certificate::X509 {
-                        name: _,
-                        certificate: _
-                    }
-                )
-            })
+            .filter(|c| matches!(c.certificate_type, CertificateType::X509))
             .cloned()
             .collect()
     }
@@ -580,16 +575,7 @@ impl Key {
     pub fn openpgp_certificates(&self) -> Vec<Certificate> {
         self.certificates
             .iter()
-            .filter(|c| {
-                matches!(
-                    c,
-                    Certificate::Pgp {
-                        version: _,
-                        certificate: _,
-                        fingerprint: _
-                    }
-                )
-            })
+            .filter(|c| matches!(c.certificate_type, CertificateType::Pgp,))
             .cloned()
             .collect()
     }

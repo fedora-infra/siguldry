@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use asn1::ObjectIdentifier;
 use openssl::hash::MessageDigest;
 use sequoia_openpgp::parse::Parse;
-use siguldry::protocol::{Certificate, Key, KeyAlgorithm};
+use siguldry::protocol::{Certificate, CertificateType, Key, KeyAlgorithm};
 
 use cryptoki_sys::{
     CK_ATTRIBUTE, CK_ATTRIBUTE_TYPE, CK_BBOOL, CK_FALSE, CK_OBJECT_CLASS, CK_OBJECT_HANDLE, CK_RV,
@@ -224,6 +224,7 @@ impl Attribute {
     }
 
     fn from_certificate(key: &Key, cert: &Certificate) -> anyhow::Result<HashMap<u64, Attribute>> {
+        debug_assert!(matches!(cert.certificate_type, CertificateType::X509));
         let mut attrs = Self::common_attributes(key)?;
         let class = (CKO_CERTIFICATE as CK_OBJECT_CLASS).to_ne_bytes().to_vec();
         attrs.insert(
@@ -241,75 +242,73 @@ impl Attribute {
             },
         );
 
-        // This _should_ always be true
-        if let Certificate::X509 { name, certificate } = cert {
-            if let Ok(cert) = openssl::x509::X509::from_pem(certificate.as_bytes()) {
-                let value = cert.to_der()?;
-                let issuer = cert.issuer_name().to_der()?;
-                let subject = cert.subject_name().to_der()?;
-                let serial_number = cert.serial_number().to_bn()?.to_vec();
-                let pubkey_info = cert.public_key()?.public_key_to_der()?;
+        if let Ok(cert) = openssl::x509::X509::from_pem(cert.certificate.as_bytes()) {
+            let value = cert.to_der()?;
+            let issuer = cert.issuer_name().to_der()?;
+            let subject = cert.subject_name().to_der()?;
+            let serial_number = cert.serial_number().to_bn()?.to_vec();
+            let pubkey_info = cert.public_key()?.public_key_to_der()?;
 
+            attrs.insert(
+                CKA_CERTIFICATE_TYPE,
+                Attribute {
+                    attribute_type: CKA_CERTIFICATE_TYPE,
+                    value: CKC_X_509.to_ne_bytes().to_vec(),
+                },
+            );
+            if let Some(check_value) = openssl::hash::hash(MessageDigest::sha1(), &value)?
+                .get(..3)
+                .map(Vec::from)
+            {
                 attrs.insert(
-                    CKA_CERTIFICATE_TYPE,
+                    CKA_CHECK_VALUE,
                     Attribute {
-                        attribute_type: CKA_CERTIFICATE_TYPE,
-                        value: CKC_X_509.to_ne_bytes().to_vec(),
+                        attribute_type: CKA_CHECK_VALUE,
+                        value: check_value,
                     },
-                );
-                if let Some(check_value) = openssl::hash::hash(MessageDigest::sha1(), &value)?
-                    .get(..3)
-                    .map(Vec::from)
-                {
-                    attrs.insert(
-                        CKA_CHECK_VALUE,
-                        Attribute {
-                            attribute_type: CKA_CHECK_VALUE,
-                            value: check_value,
-                        },
-                    );
-                }
-                attrs.insert(
-                    CKA_VALUE,
-                    Attribute {
-                        attribute_type: CKA_VALUE,
-                        value,
-                    },
-                );
-                attrs.insert(
-                    CKA_ISSUER,
-                    Attribute {
-                        attribute_type: CKA_ISSUER,
-                        value: issuer,
-                    },
-                );
-                attrs.insert(
-                    CKA_SUBJECT,
-                    Attribute {
-                        attribute_type: CKA_SUBJECT,
-                        value: subject,
-                    },
-                );
-                attrs.insert(
-                    CKA_SERIAL_NUMBER,
-                    Attribute {
-                        attribute_type: CKA_SERIAL_NUMBER,
-                        value: serial_number,
-                    },
-                );
-                attrs.insert(
-                    CKA_PUBLIC_KEY_INFO,
-                    Attribute {
-                        attribute_type: CKA_PUBLIC_KEY_INFO,
-                        value: pubkey_info,
-                    },
-                );
-            } else {
-                tracing::error!(
-                    cert_name = name,
-                    "Server sent malformed PEM-encoded X509 certificate"
                 );
             }
+            attrs.insert(
+                CKA_VALUE,
+                Attribute {
+                    attribute_type: CKA_VALUE,
+                    value,
+                },
+            );
+            attrs.insert(
+                CKA_ISSUER,
+                Attribute {
+                    attribute_type: CKA_ISSUER,
+                    value: issuer,
+                },
+            );
+            attrs.insert(
+                CKA_SUBJECT,
+                Attribute {
+                    attribute_type: CKA_SUBJECT,
+                    value: subject,
+                },
+            );
+            attrs.insert(
+                CKA_SERIAL_NUMBER,
+                Attribute {
+                    attribute_type: CKA_SERIAL_NUMBER,
+                    value: serial_number,
+                },
+            );
+            attrs.insert(
+                CKA_PUBLIC_KEY_INFO,
+                Attribute {
+                    attribute_type: CKA_PUBLIC_KEY_INFO,
+                    value: pubkey_info,
+                },
+            );
+        } else {
+            tracing::error!(
+                cert_name = cert.name,
+                fingerprint = cert.fingerprint,
+                "Server sent malformed PEM-encoded X509 certificate"
+            );
         }
 
         Ok(attrs)
@@ -318,63 +317,57 @@ impl Attribute {
     fn common_attributes(key: &Key) -> anyhow::Result<HashMap<u64, Attribute>> {
         let mut attrs = HashMap::new();
 
-        match key.openpgp_certificates().first() {
-            Some(Certificate::Pgp {
-                version,
-                certificate,
-                fingerprint,
-            }) => {
-                // sequioa-cryptoki uses the Id attribute to stash various OpenPGP parameters.
-                // Reproduce those here so the cryptoki backend recognizes this as useable for
-                // OpenPGP signatures.
-                //
-                // This format is from sequoia-cryptoki; it may be subject to change.
-                // Id attribute needs to be a UTF-8 encoded string with the following format:
-                //
-                // pgp:v{6|6t|6pq|4|4t|4pq}:{key_algorithm}:{iso8601-1:2019 basic format creation time}
-                //
-                // The v<num> indicates the OpenPGP profile, and hybrid keys expose their traditional
-                // and post-quantum pieces with the t or pq suffix respectively (we don't currently
-                // support this).
-                //
-                // Finally, ECDSA keys are documented as needing the hash algorithm and symmetric encryption
-                // algorithm after the key algorithm (separated by -, e.g. "rsa-sha256-aes128"), but we
-                // don't support that currently either.
-                let cert = sequoia_openpgp::Cert::from_bytes(certificate.as_bytes())?;
-                let pgp_key = cert.primary_key().key();
-                let key_algo = match key.key_algorithm {
-                    KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => "rsa",
-                    KeyAlgorithm::P256 => "ecdsa",
-                    _ => return Err(anyhow::anyhow!("Unsupported key algorithm")),
-                };
-                let creation_time = chrono::DateTime::<chrono::Utc>::from(pgp_key.creation_time())
-                    .format("%Y%m%dT%H%M%SZ")
-                    .to_string();
-                let id = format!("pgp:v{version}:{key_algo}:{creation_time}:{}", &key.name);
-                tracing::debug!(
-                    fingerprint,
-                    id,
-                    "Exposing OpenPGP key for use via Sequoia's cryptoki backend"
-                );
-                attrs.insert(
-                    CKA_ID,
-                    Attribute {
-                        attribute_type: CKA_ID,
-                        value: id.as_bytes().to_vec(),
-                    },
-                );
-            }
-            _other => {
-                // If there are no OpenPGP certificates, we can use a simple Id; each key is
-                // mapped to a token so we can comfortably use 1 as there's no fear of conflicting
-                attrs.insert(
-                    CKA_ID,
-                    Attribute {
-                        attribute_type: CKA_ID,
-                        value: vec![1_u8],
-                    },
-                );
-            }
+        if let Some(cert) = key.openpgp_certificates().first() {
+            // sequioa-cryptoki uses the Id attribute to stash various OpenPGP parameters.
+            // Reproduce those here so the cryptoki backend recognizes this as useable for
+            // OpenPGP signatures.
+            //
+            // This format is from sequoia-cryptoki; it may be subject to change.
+            // Id attribute needs to be a UTF-8 encoded string with the following format:
+            //
+            // pgp:v{6|6t|6pq|4|4t|4pq}:{key_algorithm}:{iso8601-1:2019 basic format creation time}
+            //
+            // The v<num> indicates the OpenPGP profile, and hybrid keys expose their traditional
+            // and post-quantum pieces with the t or pq suffix respectively (we don't currently
+            // support this).
+            //
+            // Finally, ECDSA keys are documented as needing the hash algorithm and symmetric encryption
+            // algorithm after the key algorithm (separated by -, e.g. "rsa-sha256-aes128"), but we
+            // don't support that currently either.
+            let cert = sequoia_openpgp::Cert::from_bytes(cert.certificate.as_bytes())?;
+            let pgp_key = cert.primary_key().key();
+            let version = pgp_key.version();
+            let key_algo = match key.key_algorithm {
+                KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => "rsa",
+                KeyAlgorithm::P256 => "ecdsa",
+                _ => return Err(anyhow::anyhow!("Unsupported key algorithm")),
+            };
+            let creation_time = chrono::DateTime::<chrono::Utc>::from(pgp_key.creation_time())
+                .format("%Y%m%dT%H%M%SZ")
+                .to_string();
+            let id = format!("pgp:v{version}:{key_algo}:{creation_time}:{}", &key.name);
+            tracing::debug!(
+                fingerprint = pgp_key.fingerprint().to_hex(),
+                id,
+                "Exposing OpenPGP key for use via Sequoia's cryptoki backend"
+            );
+            attrs.insert(
+                CKA_ID,
+                Attribute {
+                    attribute_type: CKA_ID,
+                    value: id.as_bytes().to_vec(),
+                },
+            );
+        } else {
+            // If there are no OpenPGP certificates, we can use a simple Id; each key is
+            // mapped to a token so we can comfortably use 1 as there's no fear of conflicting
+            attrs.insert(
+                CKA_ID,
+                Attribute {
+                    attribute_type: CKA_ID,
+                    value: vec![1_u8],
+                },
+            );
         }
         attrs.insert(
             CKA_LABEL,

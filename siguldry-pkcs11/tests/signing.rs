@@ -588,17 +588,7 @@ async fn sign_rsa4k_gnupg_pkcs11_scd_protected_auth() -> anyhow::Result<()> {
         .first()
         .cloned()
         .unwrap();
-    let _fingerprint = match cert {
-        siguldry::protocol::Certificate::Pgp {
-            version: _,
-            certificate,
-            fingerprint,
-        } => {
-            tokio::fs::write(&certificate_path, certificate.as_bytes()).await?;
-            fingerprint
-        }
-        _ => panic!("was expecting a Pgp cert"),
-    };
+    tokio::fs::write(&certificate_path, cert.certificate.as_bytes()).await?;
     let gnupg_home = instance.state_dir.path().join("gpghome");
     tokio::fs::create_dir(&gnupg_home).await?;
     let gpg_agent_conf = gnupg_home.join("gpg-agent.conf");
@@ -721,17 +711,7 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
         .first()
         .cloned()
         .unwrap();
-    let fingerprint = match cert {
-        siguldry::protocol::Certificate::Pgp {
-            version: _,
-            certificate,
-            fingerprint,
-        } => {
-            tokio::fs::write(&certificate_path, certificate.as_bytes()).await?;
-            fingerprint
-        }
-        _ => panic!("was expecting a Pgp cert"),
-    };
+    tokio::fs::write(&certificate_path, cert.certificate.as_bytes()).await?;
     let password_path = instance.state_dir.path().join("password");
     tokio::fs::write(&password_path, keys::PGP_KEY_PASSWORD.as_bytes()).await?;
 
@@ -760,14 +740,14 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
         .arg("pki")
         .arg("link")
         .arg("add")
-        .arg(format!("--cert={}", fingerprint))
+        .arg(format!("--cert={}", cert.fingerprint))
         .arg("--all")
         .output()
         .await?;
     assert!(
         output.status.success(),
         "'sq --batch pki link add --cert={} --all' failed:\nstdout: {}\nstderr: {}",
-        fingerprint,
+        cert.fingerprint,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
@@ -793,7 +773,7 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
         .arg("--batch")
         .arg(format!("--password-file={}", password_path.display()))
         .arg("sign")
-        .arg(format!("--signer={}", fingerprint))
+        .arg(format!("--signer={}", cert.fingerprint))
         .arg(format!("--signature-file={}", sig_path.display()))
         .arg(&data_path)
         .output()
@@ -802,7 +782,7 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
     assert!(
         output.status.success(),
         "'sq --batch sign --signer={} --signature-file={} {}' failed:\nstdout: {}\nstderr: {}",
-        fingerprint,
+        cert.fingerprint,
         sig_path.display(),
         data_path.display(),
         String::from_utf8_lossy(&output.stdout),

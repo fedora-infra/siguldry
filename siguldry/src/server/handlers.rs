@@ -3,13 +3,14 @@
 
 use std::sync::Arc;
 
+use openssl::{hash::MessageDigest, x509::X509};
 use sequoia_openpgp::parse::Parse;
 use sqlx::SqliteConnection;
 use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
-    protocol::{self, DigestAlgorithm, Response, ServerError},
+    protocol::{self, Certificate, DigestAlgorithm, Response, ServerError},
     server::{
         Config,
         db::{self, User},
@@ -49,30 +50,7 @@ impl Handler {
     ) -> Result<Response, ServerError> {
         let mut keys = vec![];
         for key in db::Key::list_by_user(conn, user).await? {
-            let certificates = {
-                let x509 = db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
-                    .await?
-                    .into_iter()
-                    .map(|cert| crate::protocol::Certificate::X509 {
-                        name: cert.name,
-                        certificate: cert.data,
-                    });
-                let pgp =
-                    db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::OpenPgpCert)
-                        .await?
-                        .into_iter()
-                        .filter_map(|cert| {
-                            sequoia_openpgp::Cert::from_bytes(cert.data.as_bytes())
-                                .ok()
-                                .map(|parsed_cert| crate::protocol::Certificate::Pgp {
-                                    version: parsed_cert.primary_key().key().version(),
-                                    certificate: cert.data,
-                                    fingerprint: parsed_cert.fingerprint().to_hex(),
-                                })
-                        });
-
-                x509.chain(pgp).collect()
-            };
+            let certificates = certs_for_key(conn, &key).await?;
             keys.push(protocol::Key {
                 name: key.name,
                 key_algorithm: key.key_algorithm,
@@ -101,30 +79,7 @@ impl Handler {
         key_name: String,
     ) -> Result<Response, ServerError> {
         let key = db::Key::get(conn, &key_name).await?;
-        let certificates = {
-            let x509 = db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::X509)
-                .await?
-                .into_iter()
-                .map(|cert| crate::protocol::Certificate::X509 {
-                    name: cert.name,
-                    certificate: cert.data,
-                });
-            let pgp =
-                db::PublicKeyMaterial::list(conn, &key, db::PublicKeyMaterialType::OpenPgpCert)
-                    .await?
-                    .into_iter()
-                    .filter_map(|cert| {
-                        sequoia_openpgp::Cert::from_bytes(cert.data.as_bytes())
-                            .ok()
-                            .map(|parsed_cert| crate::protocol::Certificate::Pgp {
-                                version: parsed_cert.primary_key().key().version(),
-                                certificate: cert.data,
-                                fingerprint: parsed_cert.fingerprint().to_hex(),
-                            })
-                    });
-
-            x509.chain(pgp).collect()
-        };
+        let certificates = certs_for_key(conn, &key).await?;
 
         Ok(Response::GetKey {
             key: protocol::Key {
@@ -172,4 +127,44 @@ impl Handler {
     pub(crate) async fn shutdown(self) -> anyhow::Result<()> {
         self.ipc_helper.shutdown().await
     }
+}
+
+async fn certs_for_key(
+    conn: &mut SqliteConnection,
+    key: &db::Key,
+) -> anyhow::Result<Vec<Certificate>> {
+    let certificates = {
+        let x509 = db::PublicKeyMaterial::list(conn, key, db::PublicKeyMaterialType::X509)
+            .await?
+            .into_iter()
+            .filter_map(|cert| {
+                X509::from_pem(cert.data.as_bytes())
+                    .ok()
+                    .and_then(|c| c.digest(MessageDigest::sha256()).ok())
+                    .map(hex::encode_upper)
+                    .map(|fingerprint| crate::protocol::Certificate {
+                        name: cert.name,
+                        certificate: cert.data,
+                        certificate_type: crate::protocol::CertificateType::X509,
+                        fingerprint,
+                    })
+            });
+        let pgp = db::PublicKeyMaterial::list(conn, key, db::PublicKeyMaterialType::OpenPgpCert)
+            .await?
+            .into_iter()
+            .filter_map(|cert| {
+                sequoia_openpgp::Cert::from_bytes(cert.data.as_bytes())
+                    .ok()
+                    .map(|parsed_cert| crate::protocol::Certificate {
+                        name: cert.name,
+                        certificate: cert.data,
+                        certificate_type: crate::protocol::CertificateType::Pgp,
+                        fingerprint: parsed_cert.fingerprint().to_hex(),
+                    })
+            });
+
+        x509.chain(pgp).collect()
+    };
+
+    Ok(certificates)
 }
