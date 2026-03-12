@@ -5,11 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - Unreleased
+## [0.5.0] - 2026-03-12
+
+This release was entirely focused on making Siguldry a functional replacement
+for Sigul. There were no substantive changes to the Sigul client
+implementation.
+
+There were numerous breaking changes to the database schema, the Siguldry
+protocol, and the Rust APIs, but since Siguldry was far from functional that's
+probably okay.
+
+Starting from this release, database migrations for the Siguldry server will be
+provided and the schema is expected to be fairly stable. When migrations are
+required, they will be noted prominently in the change log.
+
+However, the Rust APIs will definitely change. The CLI may also change as the
+Fedora infrastructure team provides feedback. All breaking changes will be called
+out in the release notes, of course.
+
+The primary interface for signing is the libsiguldry_pkcs11.so PKCS#11 module,
+which will be stable.
+
+### Added
+
+- The siguldry client configuration now accepts a list of keys to unlock
+  automatically (#109)
+
+- The siguldry server CLI now has a sub-command to import keys and users from a Sigul
+  database and associated data directory (#118)
+
+- The siguldry server now supports signing with keys in PKCS#11 tokens (#112)
 
 ### Changed
 
 - The minimum supported Rust version is now 1.88 (#96)
+
+- Keys stored in the database are now encrypted with AES-256-GCM rather than
+  AES-256-CBC. Furthermore, if PKCS#11 binding is configured, the key material
+  is bound in addition to the key passphrases (#114 and #150)
+
+- Keys are no longer decrypted in the main server process. Instead, requests
+  are forwarded to a Unix socket, bound by the systemd siguldry-signer.socket
+  unit. Each client connection spawns a new instance of
+  siguldry-signer@.service. This process is responsible for decrypting keys and
+  signing requests (#112)
+
+- The siguldry client list-keys command now only shows the user keys they have
+  access to (#151)
+
+### Removed
+
+- The server no longer has a command for OpenPGP signing; this is provided via
+  the PKCS#11 module (#147)
+
+- The server no longer supports digesting server-side; the Sign call has been
+  changed to accept a digest and the binary field of the protocol frame has
+  been removed (#147)
 
 
 ## [0.4.1] - 2025-11-25
