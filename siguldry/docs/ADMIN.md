@@ -170,6 +170,7 @@ bridge_hostname = "bridge.example.com"
 bridge_port = 44333
 connection_pool_size = 32
 user_password_length = 32
+openpgp_user_id = "Example OpenPGP <signer@example.com>"
 
 # These should match the filenames in /etc/credstore.encrypted/ and /etc/credstore/
 [credentials]
