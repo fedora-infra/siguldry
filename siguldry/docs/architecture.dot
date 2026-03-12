@@ -1,0 +1,170 @@
+digraph siguldry {
+    rankdir=LR;
+    fontsize=18;
+    label="Siguldry";
+    labelloc=t;
+    compound=true;
+
+    node [fontsize=14, style=filled];
+    edge [fontsize=12];
+
+    amqp_consumer [
+        label="AMQP consumer"
+        style=rounded;
+        shape=box;
+        color="#000000";
+        fontcolor="#000000";
+    ];
+    amqp_consumer -> systemd_measure [label="Uses", style=dashed, color="#888888", lhead=cluster_pkcs11_consumers];
+
+    subgraph cluster_client_host {
+        label="Client";
+        labeljust=l;
+        style=dashed;
+        color="#004a99";
+        fontcolor="#004a99";
+
+        subgraph cluster_pkcs11_consumers {
+            label="PKCS#11 Consumers";
+            style=rounded;
+            color="#676767";
+            fontcolor="#676767";
+
+            rpmsign [label="rpmsign", shape=box, fillcolor="#ecfafe"];
+            pesign [label="pesign", shape=box, fillcolor="#ecfafe"];
+            sbsign [label="sbsign", shape=box, fillcolor="#ecfafe"];
+            systemd_measure [label="systemd-measure", shape=box, fillcolor="#ecfafe"];
+            sequoia [label="Sequoia PGP", shape=box, fillcolor="#ecfafe"];
+            gpg [label="gpg", shape=box, fillcolor="#ecfafe"];
+        }
+
+        libpkcs11 [
+            label="libsiguldry_pkcs11.so\nPKCS#11 module",
+            shape=component,
+            fillcolor="#ecfafe"
+        ];
+
+        client_proxy [
+            label="siguldry-client-proxy.socket",
+            shape=box,
+            style="filled,rounded",
+            fillcolor="#aed6f1"
+        ];
+        
+        client_systemd_creds [
+            label="systemd\ncredentials\n(TPM-bound)",
+            shape=note,
+            fillcolor="#fef9e7"
+        ];
+        
+        client_systemd_creds -> client_proxy [label="TLS keys", style=dotted, color="#888888"];
+
+        systemd_measure -> libpkcs11 [label="PKCS#11", style=dashed, color="#888888", ltail=cluster_pkcs11_consumers];
+
+        libpkcs11 -> client_proxy [
+            label="Unix socket",
+            color="#2c3e50"
+        ];
+    }
+
+    subgraph cluster_bridge_host {
+        label="Bridge";
+        labeljust=l;
+        style=dashed;
+        color="#096630";
+        fontcolor="#096630";
+
+        bridge [
+            label="siguldry-bridge\n(siguldry-bridge.service)\n\nListens:\ntcp:44333 (server)\ntcp:44334 (client)",
+            shape=box,
+            style="filled,bold,rounded",
+            fillcolor="#a9dfbf"
+        ];
+
+        bridge_systemd_creds [
+            label="systemd\ncredentials\n(TPM-bound)",
+            shape=note,
+            fillcolor="#fef9e7"
+        ];
+        
+        bridge_systemd_creds -> bridge [label="TLS keys", style=dotted, color="#888888"];
+    }
+
+    subgraph cluster_server_host {
+        label="Server";
+        labeljust=l;
+        style=dashed;
+        color="#5d0909";
+        fontcolor="#5d0909";
+
+        server [
+            label="siguldry-server.service\n\nOutgoing connection\nto bridge only",
+            shape=box,
+            style="filled,bold,rounded",
+            fillcolor="#e74c4c"
+        ];
+
+        signer [
+            label="siguldry-signer.socket\nAccept=yes\n\nDecrypts keys\nSigns digests",
+            shape=box,
+            style="filled,rounded",
+            fillcolor="#ad4238"
+        ];
+
+        sqlite [
+            label="SQLite Database",
+            shape=cylinder,
+            fillcolor="#fdebd0"
+        ];
+
+        hsm [
+            label="PKCS#11 Token\nSigning keys",
+            shape=box3d,
+            fillcolor="#f9e79f"
+        ];
+
+        server_systemd_creds [
+            label="systemd\ncredentials\n(TPM-bound)",
+            shape=note,
+            fillcolor="#fef9e7"
+        ];
+
+        pkcs11_binding [
+            label="PKCS#11 Token\nBinding key"
+            shape=box3d,
+            fillcolor="#f9e79f"
+        ];
+
+        server -> signer [
+            label="Unix socket",
+            color="#922b21"
+        ];
+
+        server -> sqlite [label="reads", color="#922b21"];
+        signer -> sqlite [label="reads", color="#922b21"];
+        signer -> hsm [label="Signs digests", color="#b7950b"];
+        server_systemd_creds -> server [label="TLS keys", style=dotted, color="#888888"];
+        signer -> pkcs11_binding [label="Decrypt key material"]
+    }
+
+    // Network connections
+    client_proxy -> bridge [
+        label="mTLS (outer)",
+        color="#922b21",
+        penwidth=2,
+    ];
+
+    server -> bridge [
+        label="mTLS (outer)",
+        color="#922b21",
+        penwidth=2,
+    ];
+
+    client_proxy -> bridge -> server [
+        label="mTLS (inner)",
+        style=dashed,
+        color="#8e44ad",
+        penwidth=2,
+        constraint=false
+    ];
+}
