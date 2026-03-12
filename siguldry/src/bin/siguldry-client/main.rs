@@ -69,7 +69,7 @@ struct Cli {
     #[arg(
         long,
         env = "SIGULDRY_CLIENT_LOG",
-        default_value = "WARN,siguldry=INFO"
+        default_value = "ERROR,siguldry=WARN"
     )]
     pub log_filter: String,
     #[command(subcommand)]
@@ -95,6 +95,28 @@ enum Command {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+    /// See available keys and certificates.
+    #[command(subcommand)]
+    Key(KeyCommands),
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum KeyCommands {
+    /// List all keys the current user has access to.
+    List,
+    /// Get a certificate associated with the key by name.
+    Cert {
+        key: String,
+        certificate_name: String,
+    },
+    /// Get information about a key by name.
+    Get {
+        /// The name of the key to fetch details for (see available keys with the 'list' command)
+        key: String,
+        /// If provided, OpenPGP and X509 certificates associated with the key are also shown
+        #[arg(long, short, default_value_t)]
+        certificates: bool,
+    },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -117,8 +139,6 @@ async fn main() -> anyhow::Result<()> {
         .with(log_filter);
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
-    let halt_token = CancellationToken::new();
-    tokio::spawn(signal_handler(halt_token.clone()));
 
     let mut config = load_config::<Config>(opts.config, PathBuf::from(DEFAULT_CONFIG).as_path())?;
 
@@ -145,7 +165,60 @@ async fn main() -> anyhow::Result<()> {
             println!("Hello, {user}, you can successfully authenticate with the server!");
         }
         Command::Config => unreachable!("Command handled prior to this match"),
+        Command::Key(subcommand) => match subcommand {
+            KeyCommands::List => {
+                let keys = client
+                    .list_keys()
+                    .await
+                    .context("Failed to retrieve key list")?;
+                for key in keys {
+                    println!("Key: {}", key.name);
+                }
+            }
+            KeyCommands::Cert {
+                key,
+                certificate_name,
+            } => {
+                let key = client
+                    .get_key(key)
+                    .await
+                    .context("Failed to fetch key details from the server")?;
+                if let Some(cert) = key.certificates.iter().find(|c| c.name == certificate_name) {
+                    println!(
+                        "{:?} certificate (fingerprint {}):\n{}",
+                        cert.certificate_type, cert.fingerprint, cert.certificate
+                    );
+                } else {
+                    eprintln!(
+                        "No certificate named '{certificate_name}' is associated with that key"
+                    );
+                }
+            }
+            KeyCommands::Get { key, certificates } => {
+                let key = client
+                    .get_key(key)
+                    .await
+                    .context("Failed to fetch key details from the server")?;
+                println!("Name: {}\nAlgorithm: {}", key.name, key.key_algorithm);
+                if certificates {
+                    for x509_cert in key.x509_certificates() {
+                        println!(
+                            "X509 Certificate '{}':\n{}\n",
+                            x509_cert.name, x509_cert.certificate
+                        );
+                    }
+                    for pgp_cert in key.openpgp_certificates() {
+                        println!(
+                            "OpenPGP Certificate '{}':\n{}\n",
+                            pgp_cert.name, pgp_cert.certificate
+                        );
+                    }
+                }
+            }
+        },
         Command::Proxy { socket } => {
+            let halt_token = CancellationToken::new();
+            tokio::spawn(signal_handler(halt_token.clone()));
             if let Some(socket) = socket {
                 let listener = UnixListener::bind(&socket)
                     .with_context(|| format!("Failed to bind to {}", &socket.display()))?;

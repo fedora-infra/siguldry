@@ -607,6 +607,17 @@ impl KeyAlgorithm {
     }
 }
 
+impl std::fmt::Display for KeyAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            KeyAlgorithm::Rsa2K => "RSA 2048",
+            KeyAlgorithm::Rsa4K => "RSA 4096",
+            KeyAlgorithm::P256 => "NIST P-256",
+        };
+        write!(f, "{s}")
+    }
+}
+
 impl From<KeyAlgorithm> for CipherSuite {
     fn from(value: KeyAlgorithm) -> Self {
         match value {
