@@ -252,7 +252,6 @@ async fn handle(
         let mut db_transaction = db.begin().await?;
         let response = match outer_request.request {
             Request::WhoAmI {} => request_handler.who_am_i(),
-            Request::ListUsers {} => request_handler.list_users(&mut db_transaction).await,
             Request::ListKeys {} => request_handler.list_keys(&mut db_transaction, &user).await,
             Request::Unlock { key, password } => request_handler.unlock(key, password).await,
             Request::Sign {

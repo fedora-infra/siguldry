@@ -42,20 +42,6 @@ impl Handler {
     }
 
     #[instrument(skip_all, err)]
-    pub(crate) async fn list_users(
-        &self,
-        conn: &mut SqliteConnection,
-    ) -> Result<Response, ServerError> {
-        let users = User::list(conn)
-            .await?
-            .into_iter()
-            .map(|user| user.name)
-            .collect();
-
-        Ok(Response::ListUsers { users })
-    }
-
-    #[instrument(skip_all, err)]
     pub(crate) async fn list_keys(
         &self,
         conn: &mut SqliteConnection,

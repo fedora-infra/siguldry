@@ -755,8 +755,8 @@ async fn import_sigul_just_a_user() -> anyhow::Result<()> {
         .await?;
     let keys = instance.client.list_keys().await?;
     assert_eq!(keys.len(), 0);
-    let users = instance.client.list_users().await?;
-    assert_eq!(vec!["siguldry-client".to_string()], users);
+    let user = instance.client.who_am_i().await?;
+    assert_eq!("siguldry-client", &user);
 
     instance.halt().await?;
     Ok(())

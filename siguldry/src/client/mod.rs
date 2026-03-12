@@ -221,17 +221,6 @@ impl Client {
         }
     }
 
-    pub async fn list_users(&self) -> Result<Vec<String>, ClientError> {
-        let request = protocol::Request::ListUsers {};
-
-        let response = self.reconnecting_send(request).await?;
-        match response {
-            Response::ListUsers { users } => Ok(users),
-            Response::Error { reason } => Err(reason.into()),
-            _other => Err(anyhow::anyhow!("Unexpected response from server").into()),
-        }
-    }
-
     /// List keys that are accessible to the authenticated user.
     pub async fn list_keys(&self) -> Result<Vec<protocol::Key>, ClientError> {
         let request = protocol::Request::ListKeys {};

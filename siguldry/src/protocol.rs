@@ -364,7 +364,6 @@ pub(crate) struct OuterResponse {
 #[non_exhaustive]
 pub enum Request {
     WhoAmI {},
-    ListUsers {},
     /// List keys on the server which the current user has access to.
     ListKeys {},
     /// Unlock a key for signing.
@@ -409,9 +408,6 @@ pub enum Request {
 pub enum Response {
     WhoAmI {
         user: String,
-    },
-    ListUsers {
-        users: Vec<String>,
     },
     ListKeys {
         keys: Vec<Key>,
