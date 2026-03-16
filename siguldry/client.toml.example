@@ -1,0 +1,43 @@
+# An example client configuration
+
+# The Siguldry server hostname. This is used to validate the server's TLS certificate.
+#
+# However, since the client connects through the bridge, no DNS resolution is performed.
+# This name just needs to match what is in the server's certificate.
+server_hostname = "server.example.com"
+
+# The Siguldry bridge hostname. This is used to validate the bridge's TLS certificate.
+bridge_hostname = "bridge.example.com"
+
+# The port on the Siguldry bridge to connect to; the default is 44334.
+bridge_port = 44334
+
+# A list of keys to unlock for the client.
+#
+# This can be set for users of the client who can't (or don't want to) call unlock or safely
+# store a password. One example would be the PKCS#11 module used inside a build environment.
+#
+# An example entry:
+#
+# [[keys]]
+# key_name = "signing-key"
+# # Store this encrypted in /etc/credstore.encrypted/
+# passphrase_path = "siguldry.signing_key.passphrase"
+keys = []
+
+# The amount of time to wait before giving up on a request and retrying.
+#
+# This covers both sending requests and receiving responses. In other words, the client
+# will retry the request on a new connection if it cannot write the request to the socket
+# within `request_timeout`, *and* it will retry if it fails to read a response to that
+# request from the socket within `request_timeout`.
+[request_timeout]
+secs = 30
+nanos = 0
+
+# The credentials to use when authenticating to the Siguldry bridge and server. Note that
+# the certificate must have the `clientAuth` extended key usage extension.
+[credentials]
+private_key = "siguldry.client.private_key.pem"
+certificate = "siguldry.client.certificate.pem"
+ca_certificate = "siguldry.ca_certificate.pem"

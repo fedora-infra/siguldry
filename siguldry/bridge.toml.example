@@ -1,0 +1,20 @@
+# This is an example bridge configuration.
+
+# The socket address to listen on for incoming connections from Siguldry servers.
+#
+# The default is to listen on all interfaces on port 44333.
+server_listening_address = "[::]:44333"
+
+# The socket address to listen on for incoming connections from Siguldry clients.
+#
+# The default is to listen on all interfaces on port 44334.
+client_listening_address = "[::]:44334"
+
+# The TLS credentials for the server and client listeners.
+#
+# Both clients and servers connect to the above addresses and perform mutual TLS.
+# Note that the certificate must have `serverAuth` in its extended key usage extension.
+[credentials]
+private_key = "siguldry.bridge.private_key.pem"
+certificate = "siguldry.bridge.certificate.pem"
+ca_certificate = "siguldry.ca_certificate.pem"

@@ -146,3 +146,16 @@ impl Key {
             .map(|p| String::from_utf8(p.to_vec()).expect("The password deserialized to a string"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn load_example_config() -> anyhow::Result<()> {
+        let example_conf_path =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("client.toml.example");
+        let example_conf = std::fs::read_to_string(&example_conf_path)?;
+        toml::de::from_str::<super::Config>(&example_conf)?;
+
+        Ok(())
+    }
+}

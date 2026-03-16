@@ -47,9 +47,9 @@ impl Default for Config {
             client_listening_address: SocketAddr::from_str("[::]:44334")
                 .expect("the default should be valid"),
             credentials: Credentials {
-                private_key: "sigul.bridge.private_key.pem".into(),
-                certificate: "sigul.bridge.certificate.pem".into(),
-                ca_certificate: "sigul.ca_certificate.pem".into(),
+                private_key: "siguldry.bridge.private_key.pem".into(),
+                certificate: "siguldry.bridge.certificate.pem".into(),
+                ca_certificate: "siguldry.ca_certificate.pem".into(),
             },
         }
     }
@@ -330,4 +330,17 @@ async fn bridge(
     };
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn load_example_config() -> anyhow::Result<()> {
+        let example_conf_path =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bridge.toml.example");
+        let example_conf = std::fs::read_to_string(&example_conf_path)?;
+        toml::de::from_str::<super::Config>(&example_conf)?;
+
+        Ok(())
+    }
 }

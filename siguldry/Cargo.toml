@@ -128,6 +128,7 @@ anyhow = "1"
 assert_cmd = "2"
 criterion = "0.8"
 proptest = "1.6"
+toml = "1"
 
 [dev-dependencies.siguldry-test]
 path = "../siguldry-test"

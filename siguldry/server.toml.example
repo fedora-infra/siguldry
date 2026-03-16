@@ -1,0 +1,74 @@
+# An example server configuration
+
+# The location where the server should store its state.
+#
+# To back up the service, back up this directory.
+state_directory = "/var/lib/siguldry/"
+
+# The hostname of the Sigul bridge; this is used to verify the bridge's
+# TLS certificate.
+bridge_hostname = "bridge.example.com"
+
+# The port to use when connecting to the Siguldry bridge
+bridge_port = 44333
+
+# The number of ready connections to maintain with the bridge. This decreases the latency of
+# responses when multiple client connections are established, at the expense of some idle
+# connections. Be aware that the bridge has its own limits on the allowable number of idle
+# server connections. If you use multiple servers with a single bridge, be sure that the
+# bridge allows enough idle connections to cover each server's pool size. The default is 32.
+connection_pool_size = 32
+
+# The minimum length for user's access password, in *bytes*. For example, the multi-byte
+# UTF-8 character "🪿" counts as 4 bytes.
+user_password_length = 32
+
+# The user ID to use when creating OpenPGP keys.
+#
+# This is typically an email like "Signing Key <signing@example.com>".
+openpgp_user_id = "Test Signing <sign@example.com>"
+
+# The set of certificates to encrypt passwords with.
+#
+# At least one entry should include a PKCS#11 URI for a private key. Signing keys are encrypted
+# using each certificate, so providing more than one binding means *any* of the private keys
+# associated with the certificates will allow you to access the signing key, assuming you have
+# the user-set password for the key as well.
+#
+# When binding is used, the admin needs to unlock the token by entering the PIN using
+# "siguldry-server enter-pin".
+#
+# If no bindings are configured, the keys are protected using only the user-provided
+# password.
+#
+# An example binding entry:
+#
+# [[pkcs11_bindings]]
+# certificate = "/path/to/cert.pem"
+# private_key = "pkcs11:token=some-token;type=private"
+#
+# [[pkcs11_bindings]]
+# certificate = "/path/to/a/second/cert.pem"
+pkcs11_bindings = []
+
+# The credentials to use when connecting to the bridge and when accepting client connections
+# tunneled through the bridge. Note that the certificate must have both `clientAuth` and
+# `serverAuth` in its extended key usage extension.
+#
+# It is expected that you store the private key in /etc/credstore.encrypted/ and the certificates
+# in /etc/credstore/ (no encryption necessary).
+[credentials]
+private_key = "siguldry.server.private_key.pem"
+certificate = "siguldry.server.certificate.pem"
+ca_certificate = "siguldry.ca_certificate.pem"
+
+# Certificates created by Siguldry allow the user to specify the subject's common name.
+#
+# The rest of the certificate's subject is specified here.
+[certificate_subject]
+country = "US"
+state_or_province = "Massachusetts"
+locality = "Cambridge"
+organization = "An Example Organization"
+organizational_unit = "Example Department of the Organization"
+
