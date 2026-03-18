@@ -385,7 +385,7 @@ pub unsafe extern "C" fn C_GetInterface(
         // Safety:
         // The pointer is non-NULL, and according to the specification must point to a
         // NULL-terminated string.
-        let interface_name = unsafe { CStr::from_ptr(pInterfaceName as *const i8) };
+        let interface_name = unsafe { CStr::from_ptr(pInterfaceName as *const core::ffi::c_char) };
         if interface_name != interfaces::FUNCTIONS_NAME {
             tracing::warn!("The only supported interface name is PKCS 11");
             return CKR_ARGUMENTS_BAD;
