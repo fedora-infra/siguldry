@@ -13,7 +13,7 @@
 use std::{
     fs::File,
     io,
-    os::{fd::AsFd, unix::fs::PermissionsExt},
+    os::{fd::AsFd, linux::fs::MetadataExt, unix::fs::PermissionsExt},
     time::Duration,
 };
 
@@ -358,16 +358,27 @@ async fn sign_attached_with_filetype(
 ) -> Result<(), anyhow::Error> {
     let key = request.key(&context.config.keys)?;
     tracing::debug!(?key, "signing request mapped to a known key");
+    let temp_dir_root = std::env::temp_dir();
     let temp_dir = tempfile::Builder::new()
         .prefix(".work")
         .rand_bytes(16)
-        .tempdir_in(&context.runtime_directory)
+        .tempdir_in(&temp_dir_root)
         .inspect_err(|error| {
-            tracing::error!(
-                ?error,
-                ?context.runtime_directory,
-                "Failed to make temporary directory inside the runtime directory"
-            );
+            match temp_dir_root.metadata() {
+                Ok(metadata) => tracing::error!(
+                    temp_dir_root_uid=?metadata.st_uid(),
+                    temp_dir_root_gid=?metadata.st_gid(),
+                    temp_dir_root_mode=?metadata.st_mode(),
+                    ?error,
+                    ?temp_dir_root,
+                    "Failed to make temporary directory inside {temp_dir_root:?}",
+                ),
+                Err(metadata_read_error) => tracing::error!(
+                    ?metadata_read_error,
+                    ?error,
+                    "Failed to make temporary directory, and failed to read metadata of {temp_dir_root:?}"
+                ),
+            };
         })?;
     let sigul_input = temp_dir.path().join("unsigned_file");
     let sigul_output = temp_dir.path().join("signed_file");

@@ -37,7 +37,9 @@ PrivateDevices=true
 # For systemd >= 257 this directive should be removed.
 # Refer to https://github.com/systemd/systemd/issues/35959.
 DeviceAllow=/dev/tpmrm0
-PrivateTmp=true
+# We never need to share tmpfiles with other processes, so request a completely
+# new tmpfs instance.
+PrivateTmp=disconnected
 ProtectClock=true
 ProtectControlGroups=true
 ProtectHome=true
@@ -68,4 +70,3 @@ SystemCallFilter=@system-service
 # $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/sigul.client.private_key
 # $ systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/sigul.signing-key.passphrase
 ImportCredential=sigul.*
-
