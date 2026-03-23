@@ -48,6 +48,32 @@ pub fn listen(
     let socket_path = context.runtime_directory.join("socket");
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("Failed to bind to {}", &socket_path.display()))?;
+    for acl in context.config.socket_acl.iter() {
+        tracing::debug!(acl, "Applying additional access control to socket");
+        let mut command = std::process::Command::new("setfacl");
+        let output = command
+            .arg("-m")
+            .arg(acl)
+            .arg(&socket_path)
+            .output()
+            .context("Failed to execute 'setfacl' command (is it installed?)")?;
+        if !output.status.success() {
+            let exit_code = output.status.code();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            tracing::error!(
+                ?exit_code,
+                ?stderr,
+                ?stdout,
+                "Executing 'setfacl -m {acl} {}' failed",
+                socket_path.display()
+            );
+            return Err(anyhow::anyhow!(
+                "Executing 'setfacl -m {acl} {}' failed: {stderr:?} (exited {exit_code:?})",
+                socket_path.display()
+            ));
+        }
+    }
     let metadata = std::fs::metadata(&socket_path)?;
     if metadata.permissions().mode() & rustix::fs::Mode::RWXO.bits() != 0 {
         tracing::error!(mode=?metadata.permissions(), "Service socket has dangerous permissions!");
@@ -593,6 +619,41 @@ mod tests {
             .fix_credentials(&outdir)
             .expect("extract CI credentials with 'cargo xtask extract-keys'");
         config
+    }
+
+    // Test that if configured, additional ACLs are configured on the socket.
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn listen_sets_socket_acls() -> Result<()> {
+        set_umask();
+        let socket_dir = tempfile::tempdir()?;
+        let socket_path = socket_dir.path().join("socket");
+        let mut config = config();
+        config.socket_acl = vec!["user:nobody:r-x".to_string()];
+        let context = Context::new(config, socket_dir.path().to_path_buf())?;
+        let cancel_token = CancellationToken::new();
+
+        let server_task = super::listen(context, cancel_token.clone())?;
+
+        let mut command = tokio::process::Command::new("getfacl");
+        let output = command.arg(&socket_path).output().await?;
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(
+            stdout.contains("user:nobody:r-x"),
+            "Expected 'getfacl {}' to include nobody, but was {}",
+            socket_path.display(),
+            stdout
+        );
+
+        cancel_token.cancel();
+        server_task.await??;
+        assert!(logs_contain(
+            "Applying additional access control to socket acl=\"user:nobody:r-x\"",
+        ));
+
+        Ok(())
     }
 
     // Test that the service waits for existing requests to complete (or timeout) after it

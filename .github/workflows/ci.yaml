@@ -81,6 +81,7 @@ jobs:
       - name: Install test packages
         run: |
           dnf install -y \
+            acl \
             capnproto \
             clang \
             gnupg-pkcs11-scd \
@@ -174,6 +175,7 @@ jobs:
       - name: Install test packages
         run: |
           dnf install -y \
+            acl \
             capnproto \
             clang \
             gnupg-pkcs11-scd \

@@ -45,6 +45,18 @@ pub struct Config {
     /// request. If the requested key is not in this list, the request is
     /// rejected.
     pub keys: Vec<Key>,
+
+    /// A list of ACL specifications to apply to the listening socket.
+    ///
+    /// These are in the format described in the setfacl(1) manual, and is achieved by running that
+    /// command, so you will need it available to use this setting. Each entry is applied to the
+    /// socket using the command `setfacl -m {socket_acl} /path/to/socket`.
+    ///
+    /// # Example
+    ///
+    /// An example entry would be `user:kojibuilder:rwx`.
+    #[serde(default)]
+    pub socket_acl: Vec<String>,
 }
 
 /// Configuration to connect to the Sigul server.
@@ -315,6 +327,7 @@ impl Default for Config {
             sigul_request_timeout_secs: NonZeroU64::new(60).expect("Don't set the default to 0"),
             keys: vec![Key::default()],
             sigul: Siguldry::default(),
+            socket_acl: vec![],
         }
     }
 }
@@ -329,4 +342,82 @@ pub(crate) fn load(path: &str) -> anyhow::Result<Config> {
             eprintln!("Example config file:\n\n{}", Config::default());
         })
         .context("configuration file is invalid")
+}
+
+#[cfg(test)]
+mod tests {
+    use rustix::path::Arg;
+
+    #[test]
+    fn load_config_with_no_acls() -> anyhow::Result<()> {
+        let config_file = tempfile::NamedTempFile::new()?;
+        std::fs::write(
+            config_file.path(),
+            r#"
+total_request_timeout_secs = 600
+sigul_request_timeout_secs = 60
+
+[sigul]
+bridge_hostname = "localhost"
+bridge_port = 44334
+server_hostname = "localhost"
+sigul_user_name = "sigul-client"
+private_key = "sigul.client.private_key.pem"
+client_certificate = "sigul.client.certificate.pem"
+ca_certificate = "sigul.ca_certificate.pem"
+
+[[keys]]
+pesign_token_name = "OpenSC Card"
+pesign_certificate_name = "some-signing-certificate"
+key_name = "signing-key"
+certificate_name = "codesigning"
+passphrase_path = "sigul.signing-key-passphrase"
+        "#,
+        )?;
+
+        let config = super::load(config_file.path().as_str()?)?;
+        assert_eq!(
+            config.socket_acl.len(),
+            0,
+            "ACLs should be an empty list by default"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_config_with_acls() -> anyhow::Result<()> {
+        let config_file = tempfile::NamedTempFile::new()?;
+        std::fs::write(
+            config_file.path(),
+            r#"
+total_request_timeout_secs = 600
+sigul_request_timeout_secs = 60
+
+socket_acl = ["user:kojibuilder:rwx", "user:nobody:r"]
+
+[sigul]
+bridge_hostname = "localhost"
+bridge_port = 44334
+server_hostname = "localhost"
+sigul_user_name = "sigul-client"
+private_key = "sigul.client.private_key.pem"
+client_certificate = "sigul.client.certificate.pem"
+ca_certificate = "sigul.ca_certificate.pem"
+
+[[keys]]
+pesign_token_name = "OpenSC Card"
+pesign_certificate_name = "some-signing-certificate"
+key_name = "signing-key"
+certificate_name = "codesigning"
+passphrase_path = "sigul.signing-key-passphrase"
+        "#,
+        )?;
+
+        let config = super::load(config_file.path().as_str()?)?;
+        let expected_acls = vec!["user:kojibuilder:rwx", "user:nobody:r"];
+        assert_eq!(config.socket_acl, expected_acls);
+
+        Ok(())
+    }
 }
