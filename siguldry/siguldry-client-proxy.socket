@@ -7,6 +7,11 @@ SocketUser=siguldry
 SocketGroup=siguldry
 SocketMode=0660
 ListenStream=%t/siguldry-client-proxy/siguldry-client-proxy.socket
+# In the event that you need to provide additional users access to the socket,
+# You can add a unit override snippet that includes one or more post-start
+# commands that are similar to:
+#
+#ExecStartPost=/usr/bin/setfacl -m u:kojibuilder:rwx %t/siguldry-client-proxy/siguldry-client-proxy.socket
 RemoveOnStop=true
 
 [Install]
