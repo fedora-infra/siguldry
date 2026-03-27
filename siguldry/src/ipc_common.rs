@@ -38,15 +38,11 @@ impl IpcClient {
     pub async fn request<R: ?Sized + serde::Serialize>(
         &mut self,
         request: &R,
-        bytes: Option<&[u8]>,
     ) -> anyhow::Result<serde_json::Value> {
         let mut request = serde_json::to_string(request)?;
         request.push('\n');
 
         self.writer.write_all(request.as_bytes()).await?;
-        if let Some(bytes) = bytes {
-            self.writer.write_all(bytes).await?;
-        }
         self.writer.flush().await?;
 
         match self.reader.next_line().await {

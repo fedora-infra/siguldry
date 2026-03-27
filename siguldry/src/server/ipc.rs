@@ -126,15 +126,12 @@ impl Client {
             .to_string();
         client
             .inner
-            .request(
-                &Request::Config {
-                    user,
-                    database_path,
-                    session_id,
-                    pkcs11_bindings: bindings,
-                },
-                None,
-            )
+            .request(&Request::Config {
+                user,
+                database_path,
+                session_id,
+                pkcs11_bindings: bindings,
+            })
             .await?;
         tracing::trace!("requested signing helper config");
 
@@ -149,7 +146,7 @@ impl Client {
     ) -> Result<protocol::Response, ServerError> {
         let response = self
             .inner
-            .request(&Request::Unlock { key, password }, None)
+            .request(&Request::Unlock { key, password })
             .await?;
         let response = serde_json::from_value(response).map_err(|error| {
             tracing::error!(?error, "helper returned invalid response");
@@ -175,10 +172,7 @@ impl Client {
         key: String,
         digests: Vec<(DigestAlgorithm, String)>,
     ) -> Result<Vec<Signature>, ServerError> {
-        let response = self
-            .inner
-            .request(&Request::Sign { key, digests }, None)
-            .await?;
+        let response = self.inner.request(&Request::Sign { key, digests }).await?;
         let response = serde_json::from_value(response).map_err(|error| {
             tracing::error!(?error, "helper returned invalid response");
             ServerError::Internal

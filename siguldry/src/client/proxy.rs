@@ -27,6 +27,28 @@ use crate::{
     protocol::{self, DigestAlgorithm},
 };
 
+const IPC_VERSION: u32 = 1;
+
+/// Every connection starts with the client sending this header to the server,
+/// indicating what version of the API it plans to speak. The server then responds
+/// with its current IPC version. Old handlers should not be removed from the server.
+///
+/// This will allow for graceful migrations in scenarios where the client proxy server version
+/// doesn't align with the client version (e.g. the PKCS #11 module inside a build environment
+/// speaking to a socket from the builder host)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct IpcHeader {
+    version: u32,
+}
+
+impl IpcHeader {
+    fn new() -> Self {
+        Self {
+            version: IPC_VERSION,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Request {
@@ -48,10 +70,22 @@ enum Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Response {
-    ListKeys { keys: Vec<Key> },
+    ListKeys {
+        keys: Vec<Key>,
+    },
     Unlock {},
-    IsUnlocked { unlocked: bool },
-    Sign { signature: Signature },
+    IsUnlocked {
+        unlocked: bool,
+    },
+    Sign {
+        signature: Signature,
+    },
+    /// Indicates the server doesn't implement the requested function.
+    ///
+    /// The client can expect this if the server half is running an older
+    /// version and a command has been added. Be mindful to provide a graceful
+    /// upgrade path for such scenarios.
+    Unsupported {},
 }
 
 pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
@@ -63,6 +97,7 @@ pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     tracing::info!("Handling requests");
     let mut requests = BufReader::new(requests).lines();
 
+    let mut ipc_header: Option<IpcHeader> = None;
     loop {
         let line = tokio::select! {
             _ = halt_token.cancelled() => {
@@ -77,26 +112,73 @@ pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             }
         };
 
-        let request: Request = serde_json::from_str(&line)?;
-        let response = match request {
-            Request::ListKeys {} => {
-                let keys = client.list_keys().await?;
-                Response::ListKeys { keys }
+        // Currently unused, but if we need to break the API this is helpful to match against
+        let _client_version = if let Some(ipc_header) = ipc_header.as_ref() {
+            ipc_header.version
+        } else {
+            let header: IpcHeader = serde_json::from_str(&line)?;
+            let version = header.version;
+            if version > IPC_VERSION {
+                tracing::error!(
+                    client_version = version,
+                    server_version = IPC_VERSION,
+                    "The IPC client is requesting an unknown protocol version"
+                );
+                return Err(anyhow::anyhow!(
+                    "Unknown protocol version {version} requested by client"
+                ));
             }
-            Request::Unlock { key, password } => {
-                client.unlock(key, password).await?;
-                Response::Unlock {}
-            }
-            Request::IsUnlocked { key } => Response::IsUnlocked {
-                unlocked: client.is_unlocked(key).await,
+            ipc_header = Some(header);
+            let mut response = serde_json::to_string(&IpcHeader::new())?;
+            response.push('\n');
+            responses.write_all(response.as_bytes()).await?;
+            continue;
+        };
+
+        let response = match serde_json::from_str::<Request>(&line) {
+            Ok(request) => match request {
+                Request::ListKeys {} => {
+                    let keys = client.list_keys().await?;
+                    Response::ListKeys { keys }
+                }
+                Request::Unlock { key, password } => {
+                    client.unlock(key, password).await?;
+                    Response::Unlock {}
+                }
+                Request::IsUnlocked { key } => Response::IsUnlocked {
+                    unlocked: client.is_unlocked(key).await,
+                },
+                Request::Sign {
+                    key,
+                    algorithm,
+                    digest,
+                } => {
+                    let signature = client.sign(key, algorithm, digest).await?;
+                    Response::Sign { signature }
+                }
             },
-            Request::Sign {
-                key,
-                algorithm,
-                digest,
-            } => {
-                let signature = client.sign(key, algorithm, digest).await?;
-                Response::Sign { signature }
+            Err(error) => {
+                match error.classify() {
+                    serde_json::error::Category::Io => {
+                        tracing::error!("Failed to read bytes from input stream");
+                        return Err(anyhow::anyhow!("Failed to read bytes from input stream"));
+                    }
+                    serde_json::error::Category::Syntax => {
+                        tracing::error!(column = error.column(), "Client sent invalid JSON");
+                        return Err(anyhow::anyhow!("Client sent invalid JSON"));
+                    }
+                    serde_json::error::Category::Eof => {
+                        tracing::error!("Unexpected end-of-line when deserializing JSON!");
+                        return Err(anyhow::anyhow!(
+                            "Unexpected end-of-line when deserializing JSON!"
+                        ));
+                    }
+                    serde_json::error::Category::Data => tracing::warn!(
+                        "Client sent a request of a type the proxy is not aware of (version mismatch?)"
+                    ),
+                }
+                tracing::warn!("Client sent an unknown request type or invalid JSON");
+                Response::Unsupported {}
             }
         };
         let mut response = serde_json::to_string(&response)?;
@@ -135,8 +217,12 @@ impl ProxyClient {
                 runtime.block_on(async move {
                     let mut client = IpcClient::new(&socket_path).await?;
                     tracing::info!(?socket_path, "Proxy client connected");
+                    // In the future when an version bump occurs we can use this to decide what to send
+                    // and what to expect in response.
+                    let server_ipc_version = client.request(&IpcHeader::new()).await?;
+                    tracing::debug!(?server_ipc_version, "Server IPC header received");
                     while let Some((request, response_tx)) = request_rx.recv().await {
-                        let response = client.request(&request, None).await.and_then(|v| {
+                        let response = client.request(&request).await.and_then(|v| {
                             serde_json::from_value(v)
                                 .map_err(|_| anyhow::anyhow!("Can't deserialize proxy response"))
                         });
