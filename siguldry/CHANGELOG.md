@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-27
+
+### Changed
+
+- key passwords are now encrypted first using the user password, then with any binding
+  X509 certificates. This allows for additional bindings to be added without needing
+  all the user passwords to rebind secrets (#168)
+
+- The IPC format used in the siguldry-client proxy command has changed; it now
+  includes a version and an "Unsupported" response so future breaking changes
+  are not necessary (#166)
+
+### Fixed
+
+- toml is no longer an optional dependency; it technically never was as it was used
+  in the Display implementation for configurations (#160)
+
+- sequoia-keystore and tempfile are no longer dependencies (tempfile is a
+  dev-dependency). This was true of the 0.5.0 release, but the dependency
+  itself was not dropped (#160)
+
+### Added
+
+- Example configuration files are now included with the crate (#158)
+
+
 ## [0.5.0] - 2026-03-12
 
 This release was entirely focused on making Siguldry a functional replacement

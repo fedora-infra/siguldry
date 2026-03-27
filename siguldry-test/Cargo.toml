@@ -23,7 +23,6 @@ features = ["crypto-openssl"]
 
 [dependencies.siguldry]
 path = "../siguldry"
-version = "0.5"
 
 [dependencies.tokio]
 version = "1.27"

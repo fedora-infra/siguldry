@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-27
+
+### Changed
+
+- The service now uses the standard temporary directory. The systemd unit has been
+  adjusted to use `PrivateTmp=disconnected` (#162)
+
+### Added
+
+- A new optional configuration key, `socket_acl`, has been added. Users can provide
+  a list of ACLs to apply to the socket in the format used by setfacl(1). The acl
+  package must be installed to use this option (#164)
+
+
 ## [0.7.0] - 2026-03-12
 
 ### Changed
