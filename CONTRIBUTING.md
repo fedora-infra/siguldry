@@ -19,7 +19,6 @@ test suite. This is expected to run on Fedora or RHEL, although it should work e
 
 ```bash
 dnf install -y \
-  capnproto \
   clang \
   kryoptic \
   opensc \
@@ -29,7 +28,6 @@ dnf install -y \
   pkcs11-provider \
   pkg-config \
   python3-devel \
-  sequoia-keystore-server \
   sequoia-sq \
   sqlite-devel
 ```

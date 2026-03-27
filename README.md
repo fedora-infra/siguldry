@@ -33,7 +33,6 @@ management of the server, bridge, and client.
 To build all the components, you need the following system dependencies:
 
 - `cargo`
-- `capnproto` for sequoia-keystore
 - `clang` for libsqlite3-sys
 - `openssl` headers (provided by `openssl-devel` in Fedora and `libssl-dev` in Debian)
 - `sqlite` headers (provided by `sqlite-devel` in Fedora and `libsqlite3-dev` in Debian)
