@@ -74,9 +74,6 @@ version = "0.8"
 features = ["runtime-tokio", "sqlite-unbundled", "macros", "migrate"]
 optional = true
 
-[dependencies.tempfile]
-version = "3"
-
 [dependencies.thiserror]
 version = "2"
 
@@ -119,6 +116,7 @@ anyhow = "1"
 assert_cmd = "2"
 criterion = "0.8"
 proptest = "1.6"
+tempfile = "3"
 toml = "1"
 
 [dev-dependencies.siguldry-test]
