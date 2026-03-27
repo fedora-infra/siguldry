@@ -39,14 +39,46 @@ personal access key. This is done using Sequoia OpenPGP using AES-256-GCM. Since
 service is expected to be used by service accounts, there is no key derivation function applied
 to these personal access keys. Fedora uses 64 byte random strings.
 
-Optionally, the server can be configured with "bindings", which are used to encrypt the key
-passphrase and key itself. With this scheme, the passphrase is encrypted using a list of X509
+Optionally, the server can be configured with "bindings". If configured, both the PEM-encoded PKCS#8
+EncryptedPrivateKeyInfo and the user's personal access key are encrypted using a list of X509
 certificates provided in the server configuration. These certificates should correspond to private
-keys stored in a hardware token accessible via PKCS#11. For each certificate in the list, the
-passphrase is encrypted to a [CMS](https://www.rfc-editor.org/rfc/rfc5652) structure using
-AES-256-GCM. The list of encrypted passphrases is then serialized to JSON and the result is
-encrypted with the user's personal access key as described above. The EncryptedPrivateKeyInfo
-structure is encrypted using the same manner.
+keys stored in a hardware token accessible via PKCS#11. For each certificate in the list, the key
+and user personal access key is encrypted to a [CMS](https://www.rfc-editor.org/rfc/rfc5652)
+structure using AES-256-GCM. The list of encrypted keys and user personal access keys passphrases
+are then serialized to JSON and stored in their respective database tables.
+
+For example, the `encrypted_passphrase` column in a `key_accesses` database entry would look like
+this if no bindings are configured:
+
+```json
+[
+  {
+    "None": {
+      "secret": "-----BEGIN PGP MESSAGE-----\n\nw0wGGgkDCwMIKoQnCYAo+p7/ASQVDKXQHsJQgRXYNaxsJFM/aCWdtifXq5ISLQCs\n9Z30Hu9kMijeq0XW0ft/S7o/72kfF46zmtEgt+kl0lsCCQMGAt8yECM9A3CSXQvg\nsO0W6FFwadq+Rop/ltpQvNNnuDv2VIb4PgbZddi6lm9omoCssU8duth2KZiFq7dz\niapgan577BXP86LIMKFka95Hp0eSVpNr/jwk\n-----END PGP MESSAGE-----\n"
+    }
+  }
+]
+```
+
+If bindings are configured, the entry would look like:
+
+```json
+[
+  {
+    "Pkcs11WithCMS": {
+      "fingerprint": "87ACAE45EB6436A78A425389F7925C549CCA33527EB0563CD325D2B180E2E7F2",
+      "secret": "-----BEGIN CMS-----\nMIIC2gYLKoZIhvcNAQkQARegggLJMIICxQIBADGCAVMwggFPAgEAMDcwHzEdMBsG\nA1UEAwwUc2lndWxkcnktYmluZGluZy1rZXkCFFcbvBPbtFsk+9QtrZ7HcyJ96YNJ\nMA0GCSqGSIb3DQEBAQUABIIBADFlQzT9vdoQl0aL0VbAIcn/CljfxxtfYNHZfZBk\ngymO7qt6o8lMqpn4+P1RT0byn3whDF8Zbi+pDjYTBPPug5frfPksrYm5jjGI3Zhe\n/YIGrqdXJl/hQ0ZRcp+SkUdchEjO2dqTlP0SF6jg9OvVMVAE9YNZnNexWOQ3g13q\nyiM8dINe3OP/wnudVo4F1mslCDJshPMIRhSF+CLTZYFE+RNGvgLAG13WUNgl5RY8\nt0oZN7Gk717f1jUQHGrkbelnJad4ajA+EZxR6L0nRJLPeqHd2lf6n70CeKumQjBP\n5LzXavP7hOnYJCqA8Nv2N9rVGvomNPbYh4ryrQE97HgngEYwggFVBgkqhkiG9w0B\nBwEwHgYJYIZIAWUDBAEuMBEEDG6+qCHM6cQ6zhyD9gIBEICCASbMbmqHzUZKtNms\nNmGyr+QNa1+Nm+kEio4zcnfigJZ4bc54Z1hXOGUbtEsYigtZyyyjnHyoot/6bU3+\np7wqMofQMMgZVFnp3DBcfUYUXW3EyEDILOxfNJao6yDl2fwAb2l9x9bzJu7HqkSo\nK1Nplc6mqBtkZmed3CehLHrA80NfysC10jXaSPZul3vyKEzvSyds1dvETpwq8c/V\n4co83bwdrIpSe6IxAtRrz1i2wTEbYHsQcTZ4mnN0kvkaL0yYMW/m+el3isESAM5V\nIPScd45sGmT4ocESKB2AXe6kETorq95zzcEpKsdEhSneOn60zIndsz7sC8NTrZJO\nIgUCUf3EOrun+7bsrKyDKzJrabMne7jwKVl5/O7j8vCPoMnWqaaBYGfwURMEEF7L\njFoHe9PbvoWR0LXx4P4=\n-----END CMS-----\n"
+    }
+  }
+]
+```
+
+To access the password required to decrypt the signing key or access the HSM, the PKCS #11 module
+would need to be present. The server decrypts the value of the "secret" key with the PKCS #11
+module, then decrypts the output with the user-provided passphrase.
+
+The same scheme is used with private keys.
+
 
 #### PKCS#11 Keys
 

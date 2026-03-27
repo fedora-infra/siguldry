@@ -128,9 +128,9 @@ impl BoundSecret {
         Ok(bound_secrets)
     }
 
-    pub(crate) fn unbind(&self, bindings: &[Pkcs11Binding]) -> anyhow::Result<Password> {
+    pub(crate) fn unbind(&self, bindings: &[Pkcs11Binding]) -> anyhow::Result<String> {
         match self {
-            BoundSecret::None { secret } => return Ok(Password::from(secret.as_bytes())),
+            BoundSecret::None { secret } => return Ok(secret.clone()),
             BoundSecret::Pkcs11WithCMS {
                 fingerprint,
                 secret,
@@ -138,8 +138,11 @@ impl BoundSecret {
                 for binding in bindings.iter().filter(|binding| binding.can_unbind()) {
                     if let Ok(secret) =
                         binding_decrypt(binding.clone(), secret.clone().into_bytes())
-                            .map(Password::from)
+                            .map(String::from_utf8)
                     {
+                        let secret = secret.map_err(|e| {
+                            anyhow::anyhow!("Unbound key material is not valid UTF-8: {e}")
+                        })?;
                         return Ok(secret);
                     } else {
                         tracing::debug!(
@@ -214,17 +217,20 @@ pub async fn decrypt_key_password(
     user_password: Password,
     data: &[u8],
 ) -> anyhow::Result<Password> {
-    let key_bindings: Vec<BoundSecret> = symmetric_decrypt(user_password, data)
-        .map(|data| serde_json::from_slice(&data))
-        .context("User password is invalid")?
+    let key_bindings: Vec<BoundSecret> = serde_json::from_slice(data)
         .map_err(|_e| anyhow::anyhow!("JSON content in database could not be deserialized!"))?;
-
-    key_bindings
+    let user_encrypted_key_password = key_bindings
         .iter()
         .map(|s| s.unbind(bindings).ok())
         .find(|result| result.is_some())
         .flatten()
-        .ok_or_else(|| anyhow::anyhow!("Unable to unbind key password"))
+        .ok_or_else(|| anyhow::anyhow!("Unable to unbind key password"))?;
+
+    let key_password = symmetric_decrypt(user_password, user_encrypted_key_password.as_bytes())
+        .map(Password::from)
+        .context("User password is invalid")?;
+
+    Ok(key_password)
 }
 
 /// Encrypt a key password for storage.
@@ -233,17 +239,16 @@ pub fn encrypt_key_password(
     user_password: Password,
     key_password: Password,
 ) -> anyhow::Result<Vec<u8>> {
-    let bound_passwords = key_password.map(|password| BoundSecret::bind(bindings, password))?;
+    let encrypted_key_password = key_password
+        .map(|key_password| symmetric_encrypt(user_password.clone(), key_password))
+        .context("Failed to PGP-encrypt the key password")?;
+    let bound_passwords = BoundSecret::bind(bindings, &encrypted_key_password)?;
 
     tracing::debug!(
         tokens_bound = bindings.len(),
         "Key password has been successfully bound"
     );
-    symmetric_encrypt(
-        user_password,
-        serde_json::to_vec(&bound_passwords)?.as_slice(),
-    )
-    .context("Failed to PGP-encrypt the bound password")
+    Ok(serde_json::to_vec(&bound_passwords)?)
 }
 
 /// Bind a string with the provided [`Pkcs11Binding`] and serialize it to JSON for database storage.
@@ -267,11 +272,6 @@ pub(crate) fn unbind_with_pkcs11(
         .iter()
         .find_map(|s| s.unbind(bindings).ok())
         .ok_or_else(|| anyhow::anyhow!("Unable to unbind key material"))
-        .and_then(|password| {
-            password
-                .map(|p| String::from_utf8(p.to_vec()))
-                .map_err(|e| anyhow::anyhow!("Unbound key material is not valid UTF-8: {e}"))
-        })
 }
 
 /// Decrypt a soft key's private key material.
@@ -610,10 +610,8 @@ mod tests {
             ),
             "Expected PKCS11 binding"
         );
-        let decrypted_data = bound_password
-            .unbind(&softhsm.bindings)?
-            .map(|p| p.to_vec());
-        assert_eq!(b"some data".as_slice(), decrypted_data);
+        let decrypted_data = bound_password.unbind(&softhsm.bindings)?;
+        assert_eq!("some data", decrypted_data);
 
         Ok(())
     }
@@ -664,7 +662,7 @@ mod tests {
 
         let key_password = Password::from("a secret that never leaves the server");
         let user_password = Password::from("some long password clients provide");
-        let blob = encrypt_key_password(&softhsm.bindings, user_password, key_password.clone())?;
+        let blob = encrypt_key_password(&[], user_password, key_password.clone())?;
         let user_password = Password::from("the wrong password");
         let result =
             decrypt_key_password(softhsm.bindings.get(1..).unwrap(), user_password, &blob).await;
