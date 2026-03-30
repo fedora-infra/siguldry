@@ -29,7 +29,7 @@ sigul-client = []
 version = "1"
 
 [dependencies.asn1]
-version = "0.23"
+version = "0.24"
 
 [dependencies.bytes]
 version = "1"
