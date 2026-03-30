@@ -15,8 +15,8 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::Instrument;
 use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt};
 
-// The path, relative to $XDG_CONFIG_HOME, of the default config file location.
-const DEFAULT_CONFIG: &str = "siguldry/client.toml";
+// The path, relative to $CONFIGURATION_DIRECTORY, of the default config file location.
+const DEFAULT_CONFIG: &str = "client.toml";
 
 /// The siguldry client
 #[derive(Debug, Parser)]
