@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 /// The configuration file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// The total length of time (in seconds) to wait for a signing request to complete.
     ///
@@ -61,6 +62,7 @@ pub struct Config {
 
 /// Configuration to connect to the Sigul server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Siguldry {
     /// The hostname of the Sigul bridge; this is used to verify the bridge's
     /// TLS certificate.
@@ -118,6 +120,7 @@ impl Default for Siguldry {
 /// If the pesign-client requests a signature from a [`Key`] that is not in the
 /// [`Config`], its request is rejected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Key {
     /// The token name that pesign-client provides; it will be mapped to the
     /// `key_name` field when passed to sigul. For example, if pesign-client
@@ -347,6 +350,117 @@ pub(crate) fn load(path: &str) -> anyhow::Result<Config> {
 #[cfg(test)]
 mod tests {
     use rustix::path::Arg;
+
+    #[test]
+    fn extra_key_sigul_section() -> anyhow::Result<()> {
+        let config_file = tempfile::NamedTempFile::new()?;
+        std::fs::write(
+            config_file.path(),
+            r#"
+total_request_timeout_secs = 600
+sigul_request_timeout_secs = 60
+
+[sigul]
+bridge_hostname = "localhost"
+bridge_port = 44334
+server_hostname = "localhost"
+sigul_user_name = "sigul-client"
+private_key = "sigul.client.private_key.pem"
+client_certificate = "sigul.client.certificate.pem"
+ca_certificate = "sigul.ca_certificate.pem"
+socket_acl = ["user:someone:rwx", "group:others:rwx"]
+
+[[keys]]
+pesign_token_name = "OpenSC Card"
+pesign_certificate_name = "some-signing-certificate"
+key_name = "signing-key"
+certificate_name = "codesigning"
+passphrase_path = "sigul.signing-key-passphrase"
+        "#,
+        )?;
+
+        let result = super::load(config_file.path().as_str()?);
+        assert!(
+            result.is_err_and(|error| format!("{error:?}").contains("unknown field `socket_acl`"))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn extra_key_key_section() -> anyhow::Result<()> {
+        let config_file = tempfile::NamedTempFile::new()?;
+        std::fs::write(
+            config_file.path(),
+            r#"
+total_request_timeout_secs = 600
+sigul_request_timeout_secs = 60
+
+[sigul]
+bridge_hostname = "localhost"
+bridge_port = 44334
+server_hostname = "localhost"
+sigul_user_name = "sigul-client"
+private_key = "sigul.client.private_key.pem"
+client_certificate = "sigul.client.certificate.pem"
+ca_certificate = "sigul.ca_certificate.pem"
+
+[[keys]]
+pesign_token_name = "OpenSC Card"
+pesign_certificate_name = "some-signing-certificate"
+key_name = "signing-key"
+certificate_name = "codesigning"
+passphrase_path = "sigul.signing-key-passphrase"
+another_field = "oh no"
+        "#,
+        )?;
+
+        let result = super::load(config_file.path().as_str()?);
+        assert!(
+            result
+                .is_err_and(|error| format!("{error:?}").contains("unknown field `another_field`"))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn extra_key_main_section() -> anyhow::Result<()> {
+        let config_file = tempfile::NamedTempFile::new()?;
+        std::fs::write(
+            config_file.path(),
+            r#"
+total_request_timeout_secs = 600
+sigul_request_timeout_secs = 60
+some_other_field = 42
+
+[sigul]
+bridge_hostname = "localhost"
+bridge_port = 44334
+server_hostname = "localhost"
+sigul_user_name = "sigul-client"
+private_key = "sigul.client.private_key.pem"
+client_certificate = "sigul.client.certificate.pem"
+ca_certificate = "sigul.ca_certificate.pem"
+
+[[keys]]
+pesign_token_name = "OpenSC Card"
+pesign_certificate_name = "some-signing-certificate"
+key_name = "signing-key"
+certificate_name = "codesigning"
+passphrase_path = "sigul.signing-key-passphrase"
+        "#,
+        )?;
+
+        let result = super::load(config_file.path().as_str()?);
+        assert!(
+            result.is_err_and(
+                |error| format!("{error:?}").contains("unknown field `some_other_field`")
+            )
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn load_config_with_no_acls() -> anyhow::Result<()> {
