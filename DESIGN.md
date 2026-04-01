@@ -31,7 +31,7 @@ been registered with the service.
 
 Private keys in the database are stored as PEM-encoded PKCS#8 EncryptedPrivateKeyInfo structures
 using AES-256-CBC.  The passphrase used to encrypt the key is 128 bytes of cryptographically strong
-pseudo-random bytes generated on the server from OpenSSL's RAND_bytes interface. These bytes are
+pseudo-random bytes generated on the server from OpenSSL's RAND_priv_bytes interface. These bytes are
 then base64-encoded and the result is used as a passphrase. This passphrase never leaves the server.
 
 The passphrase is encrypted for each user that is granted access to the signing key using their

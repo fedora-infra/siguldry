@@ -34,7 +34,7 @@ pub mod token;
 
 fn generate_password() -> anyhow::Result<Password> {
     let mut buf = [0; 128];
-    openssl::rand::rand_bytes(buf.as_mut_slice())?;
+    openssl::rand::rand_priv_bytes(buf.as_mut_slice())?;
     Ok(Password::from(openssl::base64::encode_block(&buf)))
 }
 
