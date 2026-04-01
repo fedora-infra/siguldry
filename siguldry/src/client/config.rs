@@ -12,6 +12,7 @@ use crate::config::Credentials;
 
 /// Configuration for the siguldry client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// The Siguldry server hostname. This is used to validate the server's TLS certificate.
     pub server_hostname: String,
@@ -67,6 +68,7 @@ impl std::fmt::Display for Config {
 
 /// A key to unlock for the client
 #[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Key {
     /// The name of the key in the Siguldry server.
     pub key_name: String,
@@ -155,6 +157,60 @@ mod tests {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("client.toml.example");
         let example_conf = std::fs::read_to_string(&example_conf_path)?;
         toml::de::from_str::<super::Config>(&example_conf)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_extra_key() -> anyhow::Result<()> {
+        let config = r#"
+server_hostname = "server.example.com"
+bridge_hostname = "bridge.example.com"
+bridge_port = 44333
+another_key = 42
+
+[request_timeout]
+secs = 30
+nanos = 0
+
+[credentials]
+private_key = "siguldry.client.private_key.pem"
+certificate = "/etc/siguldry/client.cert"
+ca_certificate = "/etc/siguldry/ca.crt"
+        "#;
+
+        if let Err(error) = toml::from_str::<super::Config>(config) {
+            assert!(error.message().contains("unknown field `another_key`"));
+        } else {
+            panic!("Config should fail to load");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_extra_key() -> anyhow::Result<()> {
+        let config = r#"
+server_hostname = "server.example.com"
+bridge_hostname = "bridge.example.com"
+bridge_port = 44333
+
+[request_timeout]
+secs = 30
+nanos = 0
+another_key = 42
+
+[credentials]
+private_key = "siguldry.client.private_key.pem"
+certificate = "/etc/siguldry/client.cert"
+ca_certificate = "/etc/siguldry/ca.crt"
+        "#;
+
+        if let Err(error) = toml::from_str::<super::Config>(config) {
+            assert!(error.message().contains("unknown field `another_key`"));
+        } else {
+            panic!("Config should fail to load");
+        }
 
         Ok(())
     }

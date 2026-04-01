@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
-
-use std::{env, path::PathBuf};
+#[cfg(feature = "cli")]
+use std::env;
+use std::path::PathBuf;
 
 use anyhow::Context;
 use openssl::{
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 /// only accessible to the service using it. If the paths provided are relative, it is assumed
 /// to be relative to the `$CREDENTIALS_DIRECTORY` environment variable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Credentials {
     /// The systemd credentials ID of the PEM-encoded private key file.
     ///
@@ -191,4 +193,30 @@ where
             private_load_config::<T>(&path)
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Credentials;
+
+    #[test]
+    fn creds_extra_key() -> anyhow::Result<()> {
+        let config = r#"
+private_key = "privkey.pem"
+certificate = "cert.pem"
+ca_certificate = "ca.pem"
+ca_key = "ca_key.pem"
+        "#;
+
+        if let Err(error) = toml::from_str::<Credentials>(config) {
+            assert_eq!(
+                error.message(),
+                "unknown field `ca_key`, expected one of `private_key`, `certificate`, `ca_certificate`"
+            );
+        } else {
+            panic!("Config should fail to load");
+        }
+
+        Ok(())
+    }
 }

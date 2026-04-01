@@ -26,6 +26,7 @@ use crate::{
 
 /// Configuration for the siguldry bridge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// The socket address to listen on for incoming connections from Siguldry servers.
     ///

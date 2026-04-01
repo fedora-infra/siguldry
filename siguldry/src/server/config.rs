@@ -10,6 +10,7 @@ use crate::config::Credentials;
 
 /// Configuration for the siguldry server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// The location where the server should store its state.
     ///
@@ -83,6 +84,7 @@ pub struct Config {
 ///
 /// The user provides the common name to use, all other values are defined here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct X509SubjectName {
     pub country: String,
     pub state_or_province: String,
@@ -108,6 +110,7 @@ impl Default for X509SubjectName {
 /// The server encrypts the secret needed to use a signing key with a user-provided password. It
 /// then encrypts _that_ with one or more secrets accessible only to the server.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Pkcs11Binding {
     /// The PEM-encoded X509 certificate to use to encrypt secrets.
     pub certificate: PathBuf,
@@ -190,6 +193,85 @@ mod tests {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("server.toml.example");
         let example_conf = std::fs::read_to_string(&example_conf_path)?;
         toml::de::from_str::<super::Config>(&example_conf)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn pkcs11_bindings_extra_key() -> anyhow::Result<()> {
+        let config = r#"
+certificate = "cert.pem"
+private_key = "pkcs11:token"
+other_key = 42
+        "#;
+
+        if let Err(error) = toml::from_str::<super::Pkcs11Binding>(config) {
+            assert_eq!(
+                error.message(),
+                "unknown field `other_key`, expected `certificate` or `private_key`"
+            );
+        } else {
+            panic!("Config should fail to load");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn x509_subject_name_extra_key() -> anyhow::Result<()> {
+        let config = r#"
+other_key = 42
+country = "US"
+state_or_province = "Maryland"
+locality = "Bethesda"
+organization = "Cat Caretaker"
+organizational_unit = "Primary Cat Scratcher"
+        "#;
+
+        if let Err(error) = toml::from_str::<super::X509SubjectName>(config) {
+            assert_eq!(
+                error.message(),
+                "unknown field `other_key`, expected one of \
+            `country`, `state_or_province`, `locality`, `organization`, `organizational_unit`"
+            );
+        } else {
+            panic!("Config should fail to load");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_extra_key() -> anyhow::Result<()> {
+        let config = r#"
+state_directory = "/var/lib/siguldry/"
+bridge_hostname = "bridge.example.com"
+bridge_port = 44333
+connection_pool_size = 16
+user_password_length = 64
+openpgp_user_id = "Fedora <fedora-openpgp@fedoraproject.org>"
+another_key = 42
+
+pkcs11_bindings = []
+
+[credentials]
+private_key = "siguldry.server.private_key.pem"
+certificate = "/etc/siguldry/server.cert"
+ca_certificate = "/etc/siguldry/ca.crt"
+
+[certificate_subject]
+country = "US"
+state_or_province = "Maryland"
+locality = "Bethesda"
+organization = "Cat Caretaker"
+organizational_unit = "Primary Cat Scratcher"
+        "#;
+
+        if let Err(error) = toml::from_str::<super::Config>(config) {
+            assert!(error.message().contains("unknown field `another_key`"));
+        } else {
+            panic!("Config should fail to load");
+        }
 
         Ok(())
     }
