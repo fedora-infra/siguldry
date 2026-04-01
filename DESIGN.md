@@ -2,10 +2,11 @@
 
 This is a high-level description of the design of Siguldry.
 
-Siguldry leans heavily on systemd sandboxing and encryption features. In particular, every service
-is expected to use [systemd credentials](https://systemd.io/CREDENTIALS/) for private keys used for
-TLS authentication and for key passwords used by clients. It also makes heavy use of systemd
-sandboxing features.
+Siguldry leans heavily on systemd sandboxing and encryption features, and is not expected to work
+without them. Every service is expected to use [systemd
+credentials](https://systemd.io/CREDENTIALS/) for private keys used for TLS authentication and for
+key passwords used by clients. Socket-activated services are used to isolate client connections from
+each other and to ensure key material is never decrypted in the network-facing service.
 
 ## Server
 
@@ -19,15 +20,17 @@ there's not necessarily any hardware preventing a malicious administrator from e
 database containing signing keys. While the keys are encrypted with per-user credentials, the users
 that are administrating the server may also have access to credentials for a key.
 
-Each client unlocks keys separately, and this is enforced using a systemd-managed process for each
-client connection.
+Each client connection's signing operations are isolated from the main signing service and other
+connections using a systemd-managed socket-activated "helper" service. This helper, running in a
+separate process with additional systemd sandboxing features, is the only place signing keys are
+decrypted.
 
 ### Key Storage
 
 Signing keys are stored either in an SQLite database, or are provided by PKCS#11 tokens that have
 been registered with the service.
 
-#### Database Keys
+#### Database Signing Keys
 
 Private keys in the database are stored as PEM-encoded PKCS#8 EncryptedPrivateKeyInfo structures
 using AES-256-CBC.  The passphrase used to encrypt the key is 128 bytes of cryptographically strong
@@ -40,12 +43,17 @@ service is expected to be used by service accounts, there is no key derivation f
 to these personal access keys. Fedora uses 64 byte random strings.
 
 Optionally, the server can be configured with "bindings". If configured, both the PEM-encoded PKCS#8
-EncryptedPrivateKeyInfo and the user's personal access key are encrypted using a list of X509
+EncryptedPrivateKeyInfo and the user's personal access key are further encrypted using a list of X509
 certificates provided in the server configuration. These certificates should correspond to private
 keys stored in a hardware token accessible via PKCS#11. For each certificate in the list, the key
 and user personal access key is encrypted to a [CMS](https://www.rfc-editor.org/rfc/rfc5652)
 structure using AES-256-GCM. The list of encrypted keys and user personal access keys passphrases
 are then serialized to JSON and stored in their respective database tables.
+
+When configured with bindings, at least one of the configured binding certificates must be
+accompanied with the PKCS #11 URI to the associated private key. On server startup, the system
+administrator provides the user PIN needed to access that private key, which is used to decrypt the
+EncryptedPrivateKeyInfo structures and users personal access keys.
 
 For example, the `encrypted_passphrase` column in a `key_accesses` database entry would look like
 this if no bindings are configured:
@@ -73,23 +81,27 @@ If bindings are configured, the entry would look like:
 ]
 ```
 
-To access the password required to decrypt the signing key or access the HSM, the PKCS #11 module
-would need to be present. The server decrypts the value of the "secret" key with the PKCS #11
-module, then decrypts the output with the user-provided passphrase.
-
-The same scheme is used with private keys.
+With bindings, a malicious actor needs to steal both the SQLite database and the PKCS#11 token used
+for binding to access the keys.
 
 
-#### PKCS#11 Keys
+#### PKCS#11 Signing Keys
 
-For keys stored in a token accessible via PKCS#11, the administrator provides the user PIN to access
-to token. This PIN is then encrypted using the same process used by key passphrases described in the
-Database Keys section above.
+For signing keys stored in a token accessible via PKCS#11, the administrator registers the token
+and, as part of registration, provides the token's user PIN. This PIN is treated in the same manner
+as the server-generated password for a database key: it's encrypted with a user's personal access
+key, and then encrypted with any binding X509 certificates.
 
-Tokens may store multiple key pairs, and there's only one PIN protecting them. Siguldry clients
-never have access to the PIN itself and need to be granted access so the PIN is encrypted by their
-personal access key, but technically if there were a bug in the server, clients _could_ be able to
-sign content with other key pairs in the token.
+Siguldry never stores the actual private key material for signing keys backed by PKCS#11 tokens. At
+this time, administrators must use standard tools like pkcs11-tool to manage the tokens outside of
+Siguldry.
+
+PKCS#11 tokens may store multiple key pairs, and there's only one user PIN protecting them. Siguldry
+clients never have access to the PIN itself. If a client has been granted access to one key in a
+token, the server does not allow the client to perform signing operations with other keys in the
+token. However, this is a server-enforced rule rather than a cryptographically-enforced restriction
+so a flaw in the server could allow clients to perform signatures using other key pairs in a token
+it has been granted access to.
 
 ### Client Access
 
