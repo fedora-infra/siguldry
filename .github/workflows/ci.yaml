@@ -152,7 +152,7 @@ jobs:
           persist-credentials: false
 
       - name: Download sigul data artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: sigul-data
           path: devel/sigul-data/
