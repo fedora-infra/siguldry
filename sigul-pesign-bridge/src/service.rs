@@ -49,7 +49,7 @@ pub fn listen(
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("Failed to bind to {}", &socket_path.display()))?;
     for acl in context.config.socket_acl.iter() {
-        tracing::debug!(acl, "Applying additional access control to socket");
+        tracing::info!(acl, "Applying additional access control to socket");
         let mut command = std::process::Command::new("setfacl");
         let output = command
             .arg("-m")
@@ -57,10 +57,10 @@ pub fn listen(
             .arg(&socket_path)
             .output()
             .context("Failed to execute 'setfacl' command (is it installed?)")?;
+        let exit_code = output.status.code();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         if !output.status.success() {
-            let exit_code = output.status.code();
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
             tracing::error!(
                 ?exit_code,
                 ?stderr,
@@ -72,6 +72,14 @@ pub fn listen(
                 "Executing 'setfacl -m {acl} {}' failed: {stderr:?} (exited {exit_code:?})",
                 socket_path.display()
             ));
+        } else {
+            tracing::debug!(
+                ?exit_code,
+                ?stderr,
+                ?stdout,
+                "Successfully ran 'setfacl -m {acl} {}'",
+                socket_path.display()
+            );
         }
     }
     let metadata = std::fs::metadata(&socket_path)?;
