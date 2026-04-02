@@ -1,0 +1,60 @@
+digraph grant_key_access {
+    rankdir=TB;
+    fontsize=18;
+    label="Granting a User Access to a Key";
+    labelloc=t;
+    compound=true;
+
+    node [fontsize=14, style=filled];
+    edge [fontsize=12];
+
+    subgraph cluster_decrypt {
+        label="Decrypt - Existing User";
+        labeljust=l;
+        style=dashed;
+        color="#5d0909";
+        fontcolor="#5d0909";
+
+        existing_user_password [label="existing_user_password", shape=box, fillcolor="#f9e79f"];
+
+        read_passphrase [label="SQLite\nkey_accesses.encrypted_passphrase\nexisting user", shape=cylinder, fillcolor="#fdebd0"];
+        unbound_passphrase [label="existing_user_encrypted_key_password\nAES-256-GCM", shape=box, fillcolor="#d5dbdb"];
+        read_passphrase -> unbound_passphrase [label="decrypt with\nbinding private key\nPKCS#11 + PIN"];
+        binding_key_dec [label="PKCS#11 Token\nBinding Private Key\nPIN on startup", shape=box3d, fillcolor="#ff6c6c"];
+        binding_key_dec -> unbound_passphrase [style=dotted, color="#888888"];
+
+        recovered_key_password [label="key_password", shape=box, fillcolor="#a9dfbf"];
+        unbound_passphrase -> recovered_key_password [label="decrypt with\nexisting_user_password"];
+        existing_user_password -> recovered_key_password [style=dashed, color="#888888"];
+    }
+
+    // Step 2: Re-encrypt the key_password for the new user
+    subgraph cluster_encrypt {
+        label="Re-encrypt - New User";
+        labeljust=l;
+        style=dashed;
+        color="#004a99";
+        fontcolor="#004a99";
+
+        new_user_password [label="new_user_password", shape=box, fillcolor="#f9e79f"];
+        reencrypted_key_password [label="key_password", shape=box, fillcolor="#a9dfbf"];
+
+        pgp_encrypted_pw [label="new_user_encrypted_key_password\nAES-256-GCM", shape=box, fillcolor="#d5dbdb"];
+        reencrypted_key_password -> pgp_encrypted_pw [label="encrypt with\nnew_user_password\nsymmetric OpenPGP"];
+        new_user_password -> pgp_encrypted_pw [style=dashed, color="#888888"];
+
+        binding_certs_enc [label="X509 Binding Certificates", shape=box3d, fillcolor="#ff6c6c"];
+        cms_password [label="PEM-encoded CMS\none per binding cert\nAES-256-GCM", shape=box, fillcolor="#d2b4de"];
+        pgp_encrypted_pw -> cms_password [label="encrypt with\neach X509 cert\n"];
+        binding_certs_enc -> cms_password [style=dotted, color="#888888"];
+
+        new_encrypted_passphrase [label="SQLite\nkey_accesses.encrypted_passphrase\nnew user", shape=cylinder, fillcolor="#fdebd0"];
+        cms_password -> new_encrypted_passphrase [label="serialize to JSON"];
+    }
+
+    // Connect the two clusters
+    recovered_key_password -> reencrypted_key_password [
+        style=dashed,
+        color="#2c3e50",
+    ];
+}

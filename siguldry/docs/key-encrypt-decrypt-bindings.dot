@@ -1,0 +1,80 @@
+digraph database_key_encryption {
+    rankdir=TB;
+    fontsize=18;
+    label="Database Key Encryption & Decryption with PKCS#11 Bindings";
+    labelloc=t;
+    compound=true;
+
+    node [fontsize=14, style=filled];
+    edge [fontsize=12];
+
+    // Encryption
+    subgraph cluster_encrypt {
+        label="Encryption - Key Creation";
+        labeljust=l;
+        style=dashed;
+        color="#004a99";
+        fontcolor="#004a99";
+
+        // The key material itself
+        private_key [label="signing_private_key\nserver-generated", shape=box, fillcolor="#aed6f1"];
+        key_password [label="key_password\n128 random bytes\nserver-generated", shape=box, fillcolor="#a9dfbf"];
+        user_password_enc [label="user_password\nclient-provided", shape=box, fillcolor="#f9e79f"];
+
+        encrypted_pem [label="signing_private_key\nPEM-encoded PKCS#8\nAES-256-CBC", shape=box, fillcolor="#d5dbdb"];
+        private_key -> encrypted_pem [label="encrypt with\nkey_password"];
+        key_password -> encrypted_pem [style=dashed, color="#888888"];
+
+        cms_key_material [label="PEM-encoded CMS\none per binding cert\nAES-256-GCM", shape=box, fillcolor="#d2b4de"];
+        encrypted_pem -> cms_key_material [label="encrypt with\neach X509 cert\n"];
+        binding_certs_enc [label="X509 Binding Certificates", shape=box3d, fillcolor="#ff6c6c"];
+        binding_certs_enc -> cms_key_material [style=dotted, color="#888888"];
+
+        key_material_json [label="SQLite\nkeys.key_material\nJSON array of\nPEM-encoded CMS", shape=cylinder, fillcolor="#fdebd0"];
+        cms_key_material -> key_material_json [label="serialize to JSON"];
+
+        // The password used to encrypt the key material above
+        pgp_encrypted_pw [label="user_encrypted_key_password\nAES-256-GCM", shape=box, fillcolor="#d5dbdb"];
+        key_password -> pgp_encrypted_pw [label="encrypt with\nuser password\nsymmetric OpenPGP"];
+        user_password_enc -> pgp_encrypted_pw [style=dashed, color="#888888"];
+
+        cms_password [label="PEM-encoded CMS\none per binding cert\nAES-256-GCM", shape=box, fillcolor="#d2b4de"];
+        pgp_encrypted_pw -> cms_password [label="encrypt with\neach X509 cert\n"];
+        binding_certs_enc -> cms_password [style=dotted, color="#888888"];
+
+        encrypted_passphrase [label="SQLite\nkey_accesses.encrypted_passphrase\nJSON array of\nPEM-encoded CMS", shape=cylinder, fillcolor="#fdebd0"];
+        cms_password -> encrypted_passphrase [label="serialize to JSON"];
+    }
+
+    // Decryption
+    subgraph cluster_decrypt {
+        label="Decryption - User Unlocks Key";
+        labeljust=l;
+        style=dashed;
+        color="#5d0909";
+        fontcolor="#5d0909";
+
+        user_password_dec [label="user_password\nclient-provided", shape=box, fillcolor="#f9e79f"];
+
+        // Key password
+        read_passphrase [label="SQLite\nkey_accesses.encrypted_passphrase\nJSON array of\nPEM-encoded CMS\nfrom database", shape=cylinder, fillcolor="#fdebd0"];
+        unbound_passphrase [label="user_encrypted_key_password\nAES-256-GCM", shape=box, fillcolor="#d5dbdb"];
+        read_passphrase -> unbound_passphrase [label="decrypt with\nbinding private key\nPKCS#11 + PIN"];
+        binding_key_dec [label="PKCS#11 Token\nBinding Private Key\nPIN on startup", shape=box3d, fillcolor="#ff6c6c"];
+        binding_key_dec -> unbound_passphrase [style=dotted, color="#888888"];
+
+        recovered_key_password [label="key_password", shape=box, fillcolor="#a9dfbf"];
+        unbound_passphrase -> recovered_key_password [label="decrypt with\nuser_password"];
+        user_password_dec -> recovered_key_password [style=dashed, color="#888888"];
+
+        // The key material
+        read_key_material [label="SQLite\nkeys.key_material\nJSON array of\nPEM-encoded CMS\nfrom database", shape=cylinder, fillcolor="#fdebd0"];
+        unbound_pem [label="signing_private_key\nPEM-encoded PKCS#8\nAES-256-CBC", shape=box, fillcolor="#d5dbdb"];
+        read_key_material -> unbound_pem [label="decrypt with\nbinding private key\nPKCS#11 + PIN"];
+        binding_key_dec -> unbound_pem [style=dotted, color="#888888"];
+
+        recovered_private_key [label="signing_private_key", shape=box, fillcolor="#aed6f1"];
+        unbound_pem -> recovered_private_key [label="decrypt PKCS#8 PEM\nwith key_password"];
+        recovered_key_password -> recovered_private_key [style=dashed, color="#888888"];
+    }
+}
