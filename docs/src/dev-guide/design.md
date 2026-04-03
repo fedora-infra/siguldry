@@ -8,6 +8,8 @@ credentials](https://systemd.io/CREDENTIALS/) for private keys used for TLS auth
 key passwords used by clients. Socket-activated services are used to isolate client connections from
 each other and to ensure key material is never decrypted in the network-facing service.
 
+![System architecture](../diagrams/architecture.svg)
+
 ## Server
 
 The server component of Siguldry does its best to isolate the keys, whether they are hardware-backed
@@ -84,6 +86,14 @@ If bindings are configured, the entry would look like:
 With bindings, a malicious actor needs to steal both the SQLite database and the PKCS#11 token used
 for binding to access the keys.
 
+##### Encrypting and Decrypting with Bindings
+
+![Encrypting and decrypting with bindings](../diagrams/key-encrypt-decrypt-bindings.svg)
+
+##### Encrypting and Decrypting without Bindings
+
+![Encrypting and decrypting without bindings](../diagrams/key-encrypt-decrypt-no-bindings.svg)
+
 
 #### PKCS#11 Signing Keys
 
@@ -102,6 +112,14 @@ token, the server does not allow the client to perform signing operations with o
 token. However, this is a server-enforced rule rather than a cryptographically-enforced restriction
 so a flaw in the server could allow clients to perform signatures using other key pairs in a token
 it has been granted access to.
+
+#### Granting Key Access to Users
+
+After a key is created, it is encrypted with the creating user's key as well as any binding keys.
+To grant additional users access to the key, the initial user must provide their access key, as
+well as the access key of the new user.
+
+![key grant flow](../diagrams/grant-key-access.svg)
 
 ### Client Access
 
