@@ -9,6 +9,10 @@ ExecStart=/usr/bin/siguldry-client proxy
 User=siguldry
 Group=siguldry
 Environment=SIGULDRY_CLIENT_LOG=INFO
+# The default configuration location is "siguldry/client.toml" relative to /etc/ for system units
+# and relative to $XDG_CONFIG_HOME for user units. It can be manually specified as an absolute
+# path, for example:
+# Environment=SIGULDRY_CLIENT_CONFIG=/etc/siguldry/client.toml
 
 StandardInput=socket
 StandardOutput=socket

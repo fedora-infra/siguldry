@@ -5,7 +5,7 @@
 # To back up the service, back up this directory.
 state_directory = "/var/lib/siguldry/"
 
-# The hostname of the Sigul bridge; this is used to verify the bridge's
+# The hostname of the Siguldry bridge; this is used to verify the bridge's
 # TLS certificate.
 bridge_hostname = "bridge.example.com"
 
@@ -71,4 +71,3 @@ state_or_province = "Massachusetts"
 locality = "Cambridge"
 organization = "An Example Organization"
 organizational_unit = "Example Department of the Organization"
-

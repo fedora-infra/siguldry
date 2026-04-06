@@ -5,18 +5,14 @@ bridge. The server communicates with the bridge using mutual TLS (mTLS). The cli
 with the bridge, also via mTLS, and once both client and server have connected to the bridge, the
 client starts a TLS connection to the server using the connection to the bridge.
 
-Siguldry is expected to be run under systemd and relies heavily on its security features. The
-systemd units provided expect at least systemd 258 and will need adjustment on older systems when
-used with TPM-bound credentials.
 
+## Prerequisites
 
-## Prereqs
+In production, Siguldry should be run on at least three separate hosts.
 
-In production, Siguldry should be run on three separate hosts.
-
-Ideally, the server should be configured to drop all incoming traffic (except that related to its
-established connections to the bridge) and should be managed out of band (e.g. through a management
-console, in person, etc).
+Ideally, the server should be configured to drop all incoming network traffic (except that related
+to its established connections to the bridge) and should be managed out of band (e.g. through a
+management console, in person, etc).
 
 The bridge should be configured to accept connections on the two ports it listens on. The server
 port should only accept connections from the server, and ideally the client port should also be
@@ -27,245 +23,147 @@ Clients have no special requirements, but are expected to be running in a truste
 In a test environment, all three services can run on the same host, or the server and bridge can be
 on the same host.
 
+## Logging
 
-## Certificates
+All services configure logging via environment variables. The default is to log Siguldry events at
+`INFO` level and 3rd party library events at `WARN` level. Logging can be configured using [tracing
+directives](https://docs.rs/tracing-subscriber/0.3.23/tracing_subscriber/filter/struct.EnvFilter.html#directives) to enable or disable particular logging statements.
 
-If you already have a way to issue TLS certificates, it is recommended that you use that flow.
+To adjust the log level, use a systemd override file to set the appropriate environment variable for
+the service. The systemd unit contains a comment with examples and the expected environment variable.
 
-For reference, the following is how to generate a complete set of certificates.  Note that for
-production environments, care should be taken to encrypt and protect the private keys generated.
-Later, when setting up the service, we will make use of [systemd
-credentials](https://systemd.io/CREDENTIALS/) so one approach is generate the key on the host and
-pipe it directly to `systemd-creds`.
+## Bridge
 
-In all examples, adjust the common name to match your environment.
-
-### Certificate Authority
-
-First, create a certificate authority which is used to sign all our certificates:
-```bash
-openssl req -x509 -new -nodes -sha256 \
-    -days 3650 \
-    -extensions v3_ca \
-    -subj "/CN=Siguldry CA" \
-    -newkey rsa:4096 \
-    -keyout siguldry.ca.private_key.pem \
-    -out siguldry.ca_certificate.pem
-```
-
-Once you've finished signing everything you should store the private key in a safe
-place or just delete it.
-
-
-### Server
-
-The server uses its certificate both as a client connecting to the bridge, and
-as a server the client connects to via the bridge. The certificate for the
-server must have the `clientAuth` _and_ `serverAuth` extended key usage
-extensions.
-
-Since the client only communicates through the bridge, and because the server
-initiates the connection to the bridge, the server's name does not need to
-resolve, but it does need to match what the client has been configured to
-accept.
-
-```bash
-SERVER_CN="server.example.com"
-
-openssl req -new -nodes -sha256 \
-    -addext "subjectAltName = DNS:$SERVER_CN" \
-    -addext "extendedKeyUsage = clientAuth,serverAuth" \
-    -subj "/CN=$SERVER_CN" \
-    -newkey rsa:2048 \
-    -keyout siguldry.server.private_key.pem \
-    -out server-cert.csr
-openssl x509 -req -in server-cert.csr \
-    -CAkey siguldry.ca.private_key.pem \
-    -CA siguldry.ca_certificate.pem \
-    -copy_extensions copyall \
-    -days 3650 \
-    -sha256 \
-    -out siguldry.server.certificate.pem
-```
-
-### Bridge
-
-The bridge accepts connections from the server and the client. It needs the
-`serverAuth` extended key usage extension, and its name must resolve for both
-the client and server.
-
-```bash
-BRIDGE_CN="bridge.example.com"
-
-openssl req -new -nodes -sha256 \
-    -addext "subjectAltName = DNS:$BRIDGE_CN" \
-    -addext "extendedKeyUsage = serverAuth" \
-    -subj "/CN=$BRIDGE_CN" \
-    -newkey rsa:2048 \
-    -keyout siguldry.bridge.private_key.pem \
-    -out bridge-cert.csr
-openssl x509 -req -in bridge-cert.csr \
-    -CAkey siguldry.ca.private_key.pem \
-    -CA siguldry.ca_certificate.pem \
-    -copy_extensions copyall \
-    -days 3650 \
-    -sha256 \
-    -out siguldry.bridge.certificate.pem
-```
-
-### Clients
-
-Each client needs a certificate to authenticate with. The common name of the certificate must match
-the username that we create on the Siguldry server later.
-
-```bash
-CLIENT_CN = "demo-client"
-
-# Create and sign a client certificate
-openssl req -new -nodes -sha256 \
-    -addext "extendedKeyUsage = clientAuth" \
-    -subj "/CN=$CLIENT_CN" \
-    -newkey rsa:2048 \
-    -keyout siguldry.client.private_key.pem \
-    -out client-cert.csr
-openssl x509 -req -in client-cert.csr \
-    -CAkey siguldry.ca.private_key.pem \
-    -CA siguldry.ca_certificate.pem \
-    -copy_extensions copyall \
-    -days 3650 \
-    -sha256 \
-    -out siguldry.client.certificate.pem
-```
-
-Finally, you can clean up the certificate signing requests and check that things are signed properly:
-
-```bash
-rm {client,bridge,server}-cert.csr
-
-openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.server.certificate.pem
-openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.bridge.certificate.pem
-openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.client.certificate.pem
-
-```
-
-## Server Configuration
-
-With the certificates in hand, we can configure the server. First, encrypt the server's
-private key using systemd-creds and add the certificate to the credential store:
-
-```bash
-systemd-creds encrypt siguldry.server.private_key.pem /etc/credstore.encrypted/siguldry.server.private_key.pem
-cp siguldry.server.certificate.pem /etc/credstore/
-cp siguldry.ca_certificate.pem /etc/credstore/
-```
-
-The systemd unit will load any credentials prefixed with `siguldry.`.
-
-Next, write a [server configuration](https://docs.rs/siguldry/latest/siguldry/server/struct.Config.html#fields) to `/etc/siguldry/server.toml`:
-
-```toml
-state_directory = "/var/lib/siguldry/"
-signer_socket_path = "/run/siguldry-signer/signer.socket"
-bridge_hostname = "bridge.example.com"
-bridge_port = 44333
-connection_pool_size = 32
-user_password_length = 32
-openpgp_user_id = "Example OpenPGP <signer@example.com>"
-
-# These should match the filenames in /etc/credstore.encrypted/ and /etc/credstore/
-[credentials]
-private_key = "siguldry.server.private_key.pem"
-certificate = "siguldry.server.certificate.pem"
-ca_certificate = "siguldry.ca_certificate.pem"
-
-[certificate_subject]
-country = "US"
-state_or_province = "Massachusetts"
-locality = "Cambridge"
-organization = "Your Organization"
-organizational_unit = "Department within your Organization"
-
-# If you'd like keys to be bound to hardware tokens, provide one or more certificates.
-# At least one entry should have a private_key entry with a pkcs11 URI. If not, provide
-# no [[pkcs11_bindings]] entries.
-[[pkcs11_bindings]]
-certificate = "/etc/siguldry/binding_cert1.pem"
-private_key = "pkcs11:serial=abc123;id=%01;type=private"
-
-[[pkcs11_bindings]]
-certificate = "/etc/siguldry/binding_cert2.pem"
-
-# This concludes the configuration.
-```
-
-Start the service:
-
-```bash
-systemctl enable --now siguldry-server.service
-```
-
-
-## Bridge Configuration
-
-Similar to the server, we will encrypt its private key and place its certificate and the CA in the
-credential store:
-
-```bash
-systemd-creds encrypt siguldry.bridge.private_key.pem /etc/credstore.encrypted/siguldry.bridge.private_key.pem
-cp siguldry.bridge.certificate.pem /etc/credstore/
-cp siguldry.ca_certificate.pem /etc/credstore/
-```
-
-Next, write a [bridge configuration](https://docs.rs/siguldry/latest/siguldry/bridge/struct.Config.html#fields) to `/etc/siguldry/bridge.toml`:
-
-```toml
-server_listening_address = "[::]:44333"
-client_listening_address = "[::]:44334"
-
-[credentials]
-private_key = "sigul.bridge.private_key.pem"
-certificate = "sigul.bridge.certificate.pem"
-ca_certificate = "sigul.ca_certificate.pem"
-```
-
-And start the service:
+Assuming you've prepared the configuration and it is located in `/etc/siguldry/bridge.toml`, all you
+need to do is start the service:
 
 ```bash
 systemctl enable --now siguldry-bridge.service
 ```
 
+The bridge does not store any state.
 
-## Client Configuration
+## Server
 
-A client command-line interface is available to query available keys, test out authentication, and to run
-a service that offers a Unix socket with the PKCS #11 module uses to communicate with the service through.
+The server is composed of several systemd services, a command-line utility called `siguldry-server`,
+and some persistent state. The server stores its state, by default, in `/var/lib/siguldry/`. At this
+time, it consists of a single SQLite database.
 
-Encrypt the client's private key and add its certificate to the credential store:
+> [!NOTE]
+> To back up the server, save the contents of the state directory, and ensure you have backups to any
+> PKCS#11 binding keys you may have configured. Backing up PKCS#11 devices is outside the scope of
+> this guide.
+
+### Database
+
+The SQLite database stores users, signing keys, OpenPGP and X.509 certificates for those signing
+keys, and per-user key access passwords. For signing keys stored in an HSM, it stores a record of
+how to access the HSM, rather than the signing keys themselves.
+
+> [!CAUTION]
+> Always back up your database before applying a migration.
+
+To create the database, or to apply new database migrations, run:
 
 ```bash
-systemd-creds encrypt siguldry.client.private_key.pem /etc/credstore.encrypted/siguldry.client.private_key.pem
-cp siguldry.client.certificate.pem /etc/credstore/
-cp siguldry.ca_certificate.pem /etc/credstore/
+systemd-run --pty --wait --collect \
+  --working-directory=/var/lib/siguldry \
+  --setenv=SIGULDRY_SERVER_CONFIG=/etc/siguldry/server.toml \
+  --property=UMask=017 \
+  --uid=siguldry \
+  --gid=siguldry \
+  siguldry-server manage migrate
 ```
 
-Add a client configuration:
+### Importing Sigul Data
 
-```toml
-server_hostname = "server.example.com"
-bridge_hostname = "bridge.example.com"
-bridge_port = 44334
+If you have an existing Sigul server that you wish to migrate to Siguldry, this
+can be done via the `siguldry-server manage import-sigul` command. Before you begin, you
+will need:
 
-# Keys can be automatically unlocked by configuring them here.
-# This is really only recommended when using the PKCS #11 module with
-# the protected authentication path feature (e.g. clients don't need a PIN).
-keys = []
+- The data directory for Sigul; this includes an SQLite database, as well as a number of directories
+  for GPG keys, X.509 certificates, and PEM-encoded key pairs.
+- The PKCS#11 device used for binding, if bindings were used with the Sigul server
+- Some or all of the user passwords for the keys you wish to import.
 
-[request_timeout]
-secs = 30
-nanos = 0
+You will be prompted for each user and key you wish to import.
 
-[credentials]
-private_key = "siguldry.client.private_key.pem"
-certificate = "siguldry.client.certificate.pem"
-ca_certificate = "siguldry.ca_certificate.pem"
+### Users
+
+Users can be managed with `siguldry-server manage users` subcommands. You will need to
+create at least one user before creating any keys. 
+
+For example, to create a user:
+
+```bash
+systemd-run --pty --wait --collect \
+  --working-directory=/var/lib/siguldry \
+  --setenv=SIGULDRY_SERVER_CONFIG=/etc/siguldry/server.toml \
+  --uid=siguldry \
+  --gid=siguldry \
+  siguldry-server manage users create jcline
 ```
+
+> [!NOTE]
+> The username used here must match the Common Name field of the client certificates you
+> create to authenticate.
+
+Users can also have their access to signing keys granted or revoked with the `grant-key-access` and
+`revoke-key-access` commands respectively.
+
+### Keys
+
+Keys can be managed with `siguldry-server manage key` subcommands.
+
+For example, to create a key:
+
+```bash
+systemd-run --pty --wait --collect \
+  --working-directory=/var/lib/siguldry \
+  --setenv=SIGULDRY_SERVER_CONFIG=/etc/siguldry/server.toml \
+  --uid=siguldry \
+  --gid=siguldry \
+  siguldry-server manage key create jcline test-key
+```
+
+You will be prompted to provide the user's access password. This password is used to encrypt the
+key, so it should be a long, random value that you store safely in a credential manager.
+
+Review the help text for `key create` as there are a number of optional values to control the key
+type.
+
+> [!NOTE]
+> Keys are created with both X.509 certificates and OpenPGP certificates
+
+### Services
+
+The server's primary systemd service is `siguldry-server.service`. There are two associated systemd
+units to be aware of. `siguldry-signer.socket` is a systemd managed Unix socket configured to start
+an instance of `siguldry-signer@.service` for each new connection to the socket. The main
+`siguldry-server.service` unit sets `BindsTo=siguldry-signer.socket`, so there is no need to enable
+the socket unit. The `siguldry-signer@.service` instance is the unit where signatures are performed.
+Logs for a signing operation can be associated across the units via the `session_id` and `request_id`
+fields.
+
+To start with, enable the primary service:
+
+```bash
+systemctl enable --now siguldry-server.service
+```
+
+Next, if using PKCS#11 bindings, enter the PIN to unlock the binding device:
+
+```bash
+systemd-run --pty --wait --collect \
+  --working-directory=/var/lib/siguldry \
+  --setenv=SIGULDRY_SERVER_CONFIG=/etc/siguldry/server.toml \
+  --uid=siguldry \
+  --gid=siguldry \
+  siguldry-server enter-pin
+```
+
+The server will now connect to the bridge.
+
+## Client
+
+The client is primarily used via the `libsiguldry_pkcs11.so` PKCS#11 module. In order to isolate the credentials from the PKCS#11 module, the `siguldry-client-proxy.socket` systemd socket is provided. This spawns a `siguldry-client-proxy@.service` instance.

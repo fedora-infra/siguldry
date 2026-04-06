@@ -1,8 +1,18 @@
 #!/bin/bash
 
-# This script accepts three or more arguments: the server commonName, the bridge commonName, and one
-# or more client commonNames. For testing purposes, "sigul-server", "localhost", and "sigul-client"
-# are recommended.
+# If you already have a way to issue TLS certificates, it is recommended that
+# you use that flow.
+# 
+# For reference, the following is how to generate a complete set of
+# certificates.  Note that for production environments, care should be taken to
+# encrypt and protect the private keys generated. The recommended approach is
+# to use systemd-creds.
+#
+# This script accepts three or more arguments: the server commonName, the
+# bridge commonName, and one or more client commonNames.
+#
+# For testing purposes, when all three services run on a single host,
+# "sigul-server", "localhost", and "sigul-client" are recommended.
 
 set -xeuo pipefail
 
@@ -14,11 +24,10 @@ else
     CLIENT_CNS=("${@:3}")
 fi
 
-# Create a CA, then sign three certificates for the server, bridge, and client respectively.
 mkdir -p creds/
 pushd creds
 
-# Create a CA used to sign the client certificates as well as the server and bridge server certificates
+# First, create a certificate authority which is used to sign all our certificates.
 openssl req -x509 -new -nodes -sha256 \
     -days 3650 \
     -extensions v3_ca \
@@ -28,6 +37,16 @@ openssl req -x509 -new -nodes -sha256 \
     -out siguldry.ca_certificate.pem
 
 # Create and sign a server certificate
+#
+# The server uses its certificate both as a client connecting to the bridge, and
+# as a server the client connects to via the bridge. The certificate for the
+# server must have the `clientAuth` _and_ `serverAuth` extended key usage
+# extensions.
+# 
+# Since the client only communicates through the bridge, and because the server
+# initiates the connection to the bridge, the server's name does not need to
+# resolve, but it does need to match what the client has been configured to
+# accept.
 openssl req -new -nodes -sha256 \
     -addext "subjectAltName = DNS:$SERVER_CN" \
     -addext "extendedKeyUsage = clientAuth,serverAuth" \
@@ -44,6 +63,10 @@ openssl x509 -req -in server-cert.csr \
     -out siguldry.server.certificate.pem
 
 # Create and sign a bridge certificate
+#
+# The bridge accepts connections from the server and the client. It needs the
+# `serverAuth` extended key usage extension, and its name must resolve for both
+# the client and server.
 openssl req -new -nodes -sha256 \
     -addext "subjectAltName = DNS:$BRIDGE_CN" \
     -addext "extendedKeyUsage = serverAuth" \
@@ -60,6 +83,10 @@ openssl x509 -req -in bridge-cert.csr \
     -out siguldry.bridge.certificate.pem
 
 # Create and sign client certificates
+#
+# Each client needs a certificate to authenticate with. The common name of the
+# certificate must match the username that we create on the Siguldry server
+# later.
 for CLIENT_CN in "${CLIENT_CNS[@]}"; do
     openssl req -new -nodes -sha256 \
         -addext "extendedKeyUsage = clientAuth" \
