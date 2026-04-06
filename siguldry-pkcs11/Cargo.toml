@@ -57,7 +57,7 @@ version = "1"
 
 [dependencies.siguldry]
 path = "../siguldry"
-version = "0.6"
+version = ">=0.6, <0.8"
 default-features = false
 
 [dependencies.tokio]

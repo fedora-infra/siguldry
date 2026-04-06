@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-04-06
+
+### Changed
+
+- Configuration files with unknown keys are now rejected. Previously, the unknown keys were ignored
+  (#176)
+
+- The dependency on asn1 was updated from 0.23 to 0.24 (#170)
+
+### Fixed
+
+- Generated signing key encryption passphrases using OpenSSL's rand_priv_bytes. Previously,
+  rand_bytes was used. Both use cryptographically secure pseudo random generators, but the priv
+  variant uses a separate instance (#181)
+
+- Fixed the default configuration location of siguldry-client; the value checked,
+  /etc/siguldry/siguldry/client.toml for system units, did not match the documented location of
+  /etc/siguldry/client.toml. The behavior now matches the documentation (#171)
+
+
 ## [0.6.0] - 2026-03-27
 
 ### Changed
