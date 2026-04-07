@@ -140,3 +140,29 @@ $ /usr/lib/systemd/systemd-measure --private-key="pkcs11:token=pcr-signing-key" 
     --certificate=./pcr-signing-cert.pem \
     sign --current --bank=sha256 
 ```
+
+### Cosign
+
+You can sign container images using `cosign`, if it was compiled with PKCS#11 support (which is not the default). More information on this can be found in Cosign's documentation [here](https://docs.sigstore.dev/cosign/signing/pkcs11/).
+
+With the proxy running, you can list keys using the following command. This will output longer-format PKCS#11 URIs, but the `token=` style ones used above should also work (though you may need to append `;object=` with the same key name to the PKCS#11 URI). The certificate must also have a SAN set to an `email:` or `URI:` value.
+
+```bash
+$ COSIGN_PKCS11_MODULE_PATH=/path/to/libsiguldry_pkcs11.so cosign pkcs11-tool list-keys-uris
+```
+
+And then sign an image with:
+
+```bash
+$ COSIGN_PKCS11_MODULE_PATH=/path/to/libsiguldry_pkcs11.so cosign sign --output-signature=signature.base64 --output-payload=payload.json --key 'pkcs11:token=siguldry-key-name;object=siguldry-key-name' <image reference>
+```
+
+When testing, you may want to use `--upload=false --use-signing-config=false --tlog-upload=false` to disable certificate transparency as it will cause issues when repeatedly signing the same payload, or if you don't have permission to push to the registry.
+
+The signature can then be verified with the public key from Siguldry:
+
+```bash
+$ COSIGN_PKCS11_MODULE_PATH=/path/to/libsiguldry_pkcs11.so cosign verify-blob --key "pkcs11:token=siguldry-key-name;object=siguldry-key-name" --signature=signature.base64 payload.json
+```
+
+You will need to add `--insecure-ignore-tlog=true` if you didn't upload the certificate transparency log entry.
