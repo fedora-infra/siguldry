@@ -141,9 +141,13 @@ $ /usr/lib/systemd/systemd-measure --private-key="pkcs11:token=pcr-signing-key" 
     sign --current --bank=sha256 
 ```
 
-### Cosign
+### Container Signing
 
-You can sign container images using `cosign`, if it was compiled with PKCS#11 support (which is not the default). More information on this can be found in Cosign's documentation [here](https://docs.sigstore.dev/cosign/signing/pkcs11/).
+The recommended method for signing Container Images is using [Cosign](https://github.com/sigstore/cosign). Depending on how you want to manage the `cosign` binary, there are different signing flows which are explained below.
+
+#### Cosign with PKCS#11 Support
+
+You can sign container images directly using `cosign` if it was compiled with PKCS#11 support (which is not the default). More information on this can be found in Cosign's documentation [here](https://docs.sigstore.dev/cosign/signing/pkcs11/).
 
 With the proxy running, you can list keys using the following command. This will output longer-format PKCS#11 URIs, but the `token=` style ones used above should also work (though you may need to append `;object=` with the same key name to the PKCS#11 URI). The certificate must also have a SAN set to an `email:` or `URI:` value.
 
@@ -166,3 +170,30 @@ $ COSIGN_PKCS11_MODULE_PATH=/path/to/libsiguldry_pkcs11.so cosign verify-blob --
 ```
 
 You will need to add `--insecure-ignore-tlog=true` if you didn't upload the certificate transparency log entry.
+
+#### Cosign with OpenSSL Signing
+
+To avoid needing to recompile Cosign with PKCS#11 support, you can also use the OpenSSL CLI to generate a signature and then verify it with Cosign. This is more manual, but may be easier for testing. More information about this flow can be found [here](https://docs.sigstore.dev/cosign/signing/signing_with_containers/#sign-and-upload-a-generated-payload-in-another-format-from-another-tool)
+
+Generate the payload for signing:
+
+```bash
+$ cosign generate <image reference> > payload.json
+```
+
+Then sign the payload with OpenSSL:
+
+```bash
+$ PKCS11_PROVIDER_MODULE=/path/to/libsiguldry_pkcs11.so openssl \
+    pkeyutl -sign -rawin \
+    -provider pkcs11 -inkey 'pkcs11:token=siguldry-key-name' \
+    -in payload.json -digest sha256 | base64 > signature.base64
+```
+
+You can use the same Cosign command as above to verify the signature, and the below command to publish the signed version.
+
+```bash
+$ cosign attach signature --payload payload.json --signature signature.base64 <image reference>
+```
+
+Note that signing using this method will not produce a certificate transparency log entry. Cosign will recognize this and skip the check, but it does result in a less cryptographically-sound verification process.
