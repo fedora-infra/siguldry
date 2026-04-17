@@ -282,8 +282,7 @@ impl Pkcs11Token {
             .find(|slot| {
                 pkcs11
                     .get_token_info(*slot)
-                    .map(|info| info.serial_number() == self.serial_number)
-                    .unwrap_or(false)
+                    .is_ok_and(|info| info.serial_number() == self.serial_number)
             })
             .ok_or_else(|| {
                 anyhow::anyhow!(

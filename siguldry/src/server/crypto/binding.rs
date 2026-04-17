@@ -315,8 +315,7 @@ impl DecryptionHelper for SymmetricHelper {
         for session_key in symmetric_session_keys {
             if session_key
                 .decrypt(&self.password)
-                .map(|(algorithm, session_key)| decrypt(algorithm, &session_key))
-                .unwrap_or(false)
+                .is_ok_and(|(algorithm, session_key)| decrypt(algorithm, &session_key))
             {
                 return Ok(None);
             }
