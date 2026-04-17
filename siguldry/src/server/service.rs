@@ -28,7 +28,7 @@ use crate::{
 // The maximum request size; this should be configurable.
 const MAX_JSON_SIZE: usize = 1024 * 32;
 
-/// A sigul server.
+/// A server instance.
 pub struct Server {
     config: Arc<Config>,
     db_pool: Pool<Sqlite>,

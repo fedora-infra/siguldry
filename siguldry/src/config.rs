@@ -22,8 +22,8 @@ pub struct Credentials {
     /// The systemd credentials ID of the PEM-encoded private key file.
     ///
     /// This private key is the key that matches the `certificate` and is used to authenticate
-    /// with the Sigul bridge. It is expected to be provided by systemd's "ImportCredential" or
-    /// "LoadCredentialEncrypted" option.
+    /// with the Siguldry bridge. It is expected to be provided by systemd's "ImportCredential"
+    /// or "LoadCredentialEncrypted" option.
     ///
     /// # Example
     ///

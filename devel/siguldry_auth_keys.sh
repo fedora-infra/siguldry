@@ -12,7 +12,7 @@
 # bridge commonName, and one or more client commonNames.
 #
 # For testing purposes, when all three services run on a single host,
-# "sigul-server", "localhost", and "sigul-client" are recommended.
+# "siguldry-server", "localhost", and "siguldry-client" are recommended.
 
 set -xeuo pipefail
 

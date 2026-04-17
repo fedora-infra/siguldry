@@ -33,11 +33,11 @@ pub struct Config {
     #[serde(default = "default_socket_path")]
     pub signer_socket_path: PathBuf,
 
-    /// The hostname of the Sigul bridge; this is used to verify the bridge's
+    /// The hostname of the Siguldry bridge; this is used to verify the bridge's
     /// TLS certificate.
     pub bridge_hostname: String,
 
-    /// The port to connect to the Sigul bridge; the default port is 44333 for
+    /// The port to connect to the Siguldry bridge; the default port is 44333 for
     /// the server.
     pub bridge_port: u16,
 

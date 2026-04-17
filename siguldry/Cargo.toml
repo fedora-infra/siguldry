@@ -6,7 +6,7 @@ rust-version = { workspace = true }
 version = "0.7.0"
 readme = "README.md"
 description = """
-An implementation of the Sigul protocol.
+A signing server and client.
 """
 keywords = ["pesign", "sigul", "fedora"]
 repository = "https://github.com/fedora-infra/siguldry"

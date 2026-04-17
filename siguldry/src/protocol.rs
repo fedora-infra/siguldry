@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-//! The structures used in the Sigul protocol.
+//! The structures used in the Siguldry protocol.
 //!
 //! All structures described in this documenation are to be sent in network byte order (big endian).
 //!
@@ -87,7 +87,7 @@ use crate::error::ConnectionError;
 
 /// Magic number used in the protocol header.
 pub const MAGIC: U64 = U64::from_bytes([83, 73, 71, 85, 76, 68, 82, 89]);
-/// The Sigul wire protocol version this implementation supports
+/// The Siguldry wire protocol version this implementation supports
 pub const PROTOCOL_VERSION: U32 = U32::new(2);
 
 /// The possible roles a connection can have.

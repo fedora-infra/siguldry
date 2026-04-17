@@ -29,7 +29,7 @@ pub enum ConnectionError {
     #[error("one or more openssl errors occurred: {0}")]
     SslErrors(#[from] openssl::error::ErrorStack),
 
-    /// The TLS connection to the Sigul bridge or the Sigul server failed.
+    /// The TLS connection to the bridge or server failed.
     ///
     /// This could be due to a protocol level failure, like a handshake failure
     /// due to no common supported versions/ciphers/etc, or because the TLS
@@ -40,7 +40,7 @@ pub enum ConnectionError {
     #[error("an SSL error occurred: {0}")]
     Ssl(#[from] openssl::ssl::Error),
 
-    /// A Sigul protocol violation occurred.
+    /// A protocol violation occurred.
     ///
     /// This occurs if the handshake is malformed, the framing is invalid, etc.
     /// This is almost certainly a bug.
@@ -76,14 +76,14 @@ where
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClientError {
-    /// Returned in the event that an error occurred while communicating with the Sigul bridge or
-    /// Sigul server. This may be a result of a transient networking problem, or because of a more
+    /// Returned in the event that an error occurred while communicating with the bridge or
+    /// server. This may be a result of a transient networking problem, or because of a more
     /// permanent issue such as invalid configuration, or event a client bug.
     ///
     /// Retrying the operation that led to this error is safe, although whether subsequent
     /// attempts fail or succeed depend on the specific error.  Refer to [`ConnectionError`] for
     /// details on the possible errors and if retrying is advisable.
-    #[error("connection error with Sigul bridge or server: {0}")]
+    #[error("connection error with bridge or server: {0}")]
     Connection(#[from] ConnectionError),
 
     /// A general I/O error occurred, unrelated to the underlying network connection. It is likely

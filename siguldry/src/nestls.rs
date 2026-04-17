@@ -19,7 +19,7 @@
 //!
 //! The high-level connection flow is as follows:
 //!
-//! 1. A TLS connection to the Sigul bridge is made and both sides offer x509 certificates to be
+//! 1. A TLS connection to the bridge is made and both sides offer x509 certificates to be
 //!    verified.
 //!
 //! 2. A protocol header is sent which is a magic number, a protocol version, and
@@ -63,7 +63,7 @@ pub struct NestlsBuilder {
 ///
 /// Use [`AsyncRead`] and [`AsyncWrite`] to read and write to the inner TLS session.
 pub struct Nestls {
-    /// The TLS connection to the Sigul server.
+    /// The TLS connection to the Siguldry server.
     inner: SslStream<SslStream<TcpStream>>,
     /// A shared ID between the client and the server identifying this connection.
     session_id: Uuid,
