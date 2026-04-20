@@ -19,7 +19,6 @@ use std::{
 
 use anyhow::{Context as AnyhowContext, anyhow};
 use bytes::Bytes;
-use siguldry::v1::error::ClientError;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
@@ -467,13 +466,9 @@ async fn sign_attached_with_filetype(
             Ok(Ok(_)) => {
                 break;
             }
-            Ok(Err(ClientError::Connection(error))) => {
-                tracing::warn!(%error, "signing failed; retrying sigul request in 2 seconds");
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
             Ok(Err(error)) => {
-                tracing::error!(%error, "signing failed due to an unrecoverable error");
-                return Err(error.into());
+                tracing::error!(%error, "signing failed; retrying sigul request in 2 seconds");
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
             Err(_error) => {
                 tracing::warn!("Sigul signing request timed out; retrying...");
