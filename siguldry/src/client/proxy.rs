@@ -13,6 +13,7 @@
 
 use std::path::PathBuf;
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc::UnboundedSender;
@@ -208,6 +209,16 @@ impl ProxyClient {
     #[instrument]
     pub fn new(socket_path: PathBuf) -> anyhow::Result<Self> {
         let (request_tx, mut request_rx) = tokio::sync::mpsc::unbounded_channel::<ChannelRequest>();
+
+        // Fail quickly if the socket doesn't exist. The connection would also fail,
+        // but would only be visible to the caller when shutdown and the thread joins.
+        if !socket_path.exists() {
+            return Err(anyhow::anyhow!(
+                "The socket at {} doesn't exist",
+                socket_path.display()
+            ));
+        }
+
         let rt_thread = std::thread::Builder::new()
             .name("proxy-client-rt".to_string())
             .spawn(move || {
@@ -215,11 +226,16 @@ impl ProxyClient {
                     .enable_all()
                     .build()?;
                 runtime.block_on(async move {
-                    let mut client = IpcClient::new(&socket_path).await?;
+                    let mut client = IpcClient::new(&socket_path)
+                        .await
+                        .context("Failed to create proxy client")?;
                     tracing::info!(?socket_path, "Proxy client connected");
                     // In the future when an version bump occurs we can use this to decide what to send
                     // and what to expect in response.
-                    let server_ipc_version = client.request(&IpcHeader::new()).await?;
+                    let server_ipc_version = client
+                        .request(&IpcHeader::new())
+                        .await
+                        .context("Failed to request IPC version")?;
                     tracing::debug!(?server_ipc_version, "Server IPC header received");
                     while let Some((request, response_tx)) = request_rx.recv().await {
                         let response = client.request(&request).await.and_then(|v| {
@@ -248,12 +264,25 @@ impl ProxyClient {
             .map_err(|error| anyhow::anyhow!("Runtime thread panicked: {error:?}"))?
     }
 
+    fn sync_request(&mut self, request: Request) -> anyhow::Result<Response> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.request_tx
+            .send((request, response_tx))
+            .context("Failed to send request to the siguldry client proxy")?;
+        let response = response_rx
+            .blocking_recv()
+            .context("Client proxy connection is dead")?
+            .context("Client proxy request failed")?;
+
+        Ok(response)
+    }
+
     #[instrument(skip_all)]
     pub fn list_keys(&mut self) -> anyhow::Result<Vec<protocol::Key>> {
         let request = Request::ListKeys {};
-        let (response_tx, response_rx) = oneshot::channel();
-        self.request_tx.send((request, response_tx))?;
-        let response = response_rx.blocking_recv()??;
+        let response = self
+            .sync_request(request)
+            .context("ListKeys request failed")?;
 
         match response {
             Response::ListKeys { keys } => Ok(keys),
@@ -264,9 +293,9 @@ impl ProxyClient {
     #[instrument(skip_all)]
     pub fn unlock(&mut self, key: String, password: String) -> anyhow::Result<()> {
         let request = Request::Unlock { key, password };
-        let (response_tx, response_rx) = oneshot::channel();
-        self.request_tx.send((request, response_tx))?;
-        let response = response_rx.blocking_recv()??;
+        let response = self
+            .sync_request(request)
+            .context("Unlock request failed")?;
 
         match response {
             Response::Unlock {} => Ok(()),
@@ -277,9 +306,9 @@ impl ProxyClient {
     #[instrument(skip_all)]
     pub fn is_unlocked(&mut self, key: String) -> anyhow::Result<bool> {
         let request = Request::IsUnlocked { key };
-        let (response_tx, response_rx) = oneshot::channel();
-        self.request_tx.send((request, response_tx))?;
-        let response = response_rx.blocking_recv()??;
+        let response = self
+            .sync_request(request)
+            .context("IsUnlocked request failed")?;
 
         match response {
             Response::IsUnlocked { unlocked } => Ok(unlocked),
@@ -299,9 +328,7 @@ impl ProxyClient {
             algorithm,
             digest,
         };
-        let (response_tx, response_rx) = oneshot::channel();
-        self.request_tx.send((request, response_tx))?;
-        let response = response_rx.blocking_recv()??;
+        let response = self.sync_request(request).context("Sign request failed")?;
 
         match response {
             Response::Sign { signature } => Ok(signature),

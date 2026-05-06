@@ -39,11 +39,18 @@ impl IpcClient {
         &mut self,
         request: &R,
     ) -> anyhow::Result<serde_json::Value> {
-        let mut request = serde_json::to_string(request)?;
+        let mut request =
+            serde_json::to_string(request).context("Unable to serialize request to string")?;
         request.push('\n');
 
-        self.writer.write_all(request.as_bytes()).await?;
-        self.writer.flush().await?;
+        self.writer
+            .write_all(request.as_bytes())
+            .await
+            .context("Failed to write request to connection")?;
+        self.writer
+            .flush()
+            .await
+            .context("Failed to flush request to connection")?;
 
         match self.reader.next_line().await {
             Ok(Some(response)) => serde_json::from_str(&response)
