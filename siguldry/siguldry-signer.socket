@@ -9,5 +9,9 @@ SocketMode=0600
 ListenStream=%t/siguldry-signer/signer.socket
 RemoveOnStop=true
 
+# Maximum number of concurrent connections to allow; once the limit is reached
+# additional connections will be rejected until an existing connection finishes.
+MaxConnections=512
+
 [Install]
 WantedBy=sockets.target

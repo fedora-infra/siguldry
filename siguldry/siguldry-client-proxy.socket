@@ -14,5 +14,9 @@ ListenStream=%t/siguldry-client-proxy/siguldry-client-proxy.socket
 #ExecStartPost=/usr/bin/setfacl -m u:kojibuilder:rwx %t/siguldry-client-proxy/siguldry-client-proxy.socket
 RemoveOnStop=true
 
+# Maximum number of concurrent connections to allow; once the limit is reached
+# additional connections will be rejected until an existing connection finishes.
+MaxConnections=256
+
 [Install]
 WantedBy=sockets.target
