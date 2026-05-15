@@ -185,6 +185,35 @@ extern "C" fn C_Initialize(pInitArgs: *mut ::std::os::raw::c_void) -> CK_RV {
         }
     };
 
+    // Optionally restrict the set of tokens this module exposes to a comma-separated
+    // list of key names provided in the LIBSIGULDRY_PKCS11_KEYS environment variable.
+    //
+    // This is necessary when this module is used through gnupg-pkcs11-scd: that daemon
+    // can only present a single token to gpg-agent at a time, and asks the user (via a
+    // NEEDPIN/NEEDTOKEN callback) to "insert" any other token whenever a key on a
+    // different token is requested. Limiting the visible tokens prevents those prompts
+    // and the resulting hangs in non-interactive contexts.
+    let keys = match std::env::var("LIBSIGULDRY_PKCS11_KEYS") {
+        Ok(filter) => {
+            let allowed: Vec<&str> = filter
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let filtered: Vec<_> = keys
+                .into_iter()
+                .filter(|k| allowed.iter().any(|name| *name == k.name))
+                .collect();
+            tracing::info!(
+                allowed = ?allowed,
+                tokens_exposed = filtered.len(),
+                "Restricting exposed tokens to those listed in LIBSIGULDRY_PKCS11_KEYS"
+            );
+            filtered
+        }
+        Err(_) => keys,
+    };
+
     let mut client = CLIENT.lock().expect("client lock is poisoned");
     if client.is_some() {
         tracing::error!("The module was already initialized");

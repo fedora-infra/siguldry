@@ -208,6 +208,55 @@ async fn enumerate_slots() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[tracing_test::traced_test]
+async fn filter_slots() -> anyhow::Result<()> {
+    // SAFETY: These tests must be run under nextest which ensures no one else
+    // is reading or writing environment variables in this process.
+    unsafe {
+        std::env::set_var("LIBSIGULDRY_PKCS11_KEYS", keys::CODESIGNING_KEY_NAME);
+    }
+
+    // Expose two keys, but filter down to just 1 using the environment variable
+    let _instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let mut slot_infos = tokio::task::spawn_blocking(|| {
+        let pkcs11 = initialize_module()?;
+        let slots = pkcs11.get_all_slots()?;
+        assert_eq!(1, slots.len());
+        let slot_infos = slots
+            .into_iter()
+            .map(|slot| pkcs11.get_slot_info(slot))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok::<_, anyhow::Error>(slot_infos)
+    })
+    .await??;
+    assert_eq!(1, slot_infos.len());
+
+    let mut expected_descriptions = [keys::CODESIGNING_KEY_NAME];
+    expected_descriptions.sort();
+    slot_infos.sort_by(|a, b| a.slot_description().cmp(b.slot_description()));
+    for (expected_description, slot_info) in expected_descriptions
+        .into_iter()
+        .zip(slot_infos.into_iter())
+    {
+        assert!(slot_info.token_present());
+        assert_eq!("Fedora Infrastructure", slot_info.manufacturer_id());
+
+        assert_eq!(1, slot_info.firmware_version().major());
+        assert_eq!(0, slot_info.firmware_version().minor());
+
+        assert_eq!(1, slot_info.hardware_version().major());
+        assert_eq!(0, slot_info.hardware_version().minor());
+        assert_eq!(expected_description, slot_info.slot_description());
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
 async fn mechanism_list_for_rsa_key() -> anyhow::Result<()> {
     let _instance = InstanceBuilder::new()
         .with_codesigning_key()

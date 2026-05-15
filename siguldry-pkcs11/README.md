@@ -19,12 +19,15 @@ proxy`.  This socket needs to be configured before using this module.
 To do so, start the systemd socket `siguldry-client-proxy.socket`. Refer to the documentation for
 `siguldry-client proxy` for more details.
 
-The module reads two environment variables:
+The module reads three environment variables:
 
 - `LIBSIGULDRY_PKCS11_PROXY_PATH` - if set, it should contain the absolute path to the Unix socket
   provided by `siguldry-client proxy`. The default is `/run/siguldry-client-proxy/siguldry-client-proxy.socket`, which matches the systemd unit.
 - `LIBSIGULDRY_PKCS11_LOG` - if set, it is used to configure the logging filter via [envfilter
   directives](https://docs.rs/tracing-subscriber/0.3.22/tracing_subscriber/filter/struct.EnvFilter.html#directives)
+- `LIBSIGULDRY_PKCS11_KEYS` - if set, it should contain a comma-separated list of Siguldry key names,
+  any only these keys will be exposed as tokens by the module. The primary use-case is for tools,
+  primarily gnupg-pkcs11-scd, which don't handle multiple tokens well.
 
 ## Example Uses
 
