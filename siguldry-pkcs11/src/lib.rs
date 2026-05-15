@@ -20,7 +20,7 @@ use std::{
 
 use cryptoki::context::CInitializeFlags;
 use siguldry::protocol;
-use tracing::{instrument, level_filters::LevelFilter};
+use tracing::{Level, instrument, level_filters::LevelFilter};
 
 use cryptoki_sys::{
     CK_ATTRIBUTE, CK_BBOOL, CK_C_INITIALIZE_ARGS_PTR, CK_FLAGS, CK_FUNCTION_LIST,
@@ -775,7 +775,7 @@ extern "C" fn C_Logout(hSession: CK_SESSION_HANDLE) -> CK_RV {
     CKR_OK
 }
 
-#[instrument(ret)]
+#[instrument(level = Level::DEBUG, ret)]
 extern "C" fn C_GetMechanismList(
     slotID: CK_SLOT_ID,
     pMechanismList: *mut CK_MECHANISM_TYPE,
@@ -836,7 +836,7 @@ extern "C" fn C_GetMechanismList(
     CKR_OK
 }
 
-#[instrument(ret)]
+#[instrument(level = Level::DEBUG, ret)]
 extern "C" fn C_GetMechanismInfo(
     slotID: CK_SLOT_ID,
     type_: CK_MECHANISM_TYPE,
@@ -901,7 +901,7 @@ extern "C" fn C_GetMechanismInfo(
 /// OR
 ///
 /// ulCount is 0 in which case all objects are returned and the value of pTemplate can be anything.
-#[instrument(ret)]
+#[instrument(level = Level::DEBUG, ret)]
 extern "C" fn C_FindObjectsInit(
     hSession: CK_SESSION_HANDLE,
     pTemplate: *mut CK_ATTRIBUTE,
@@ -950,7 +950,7 @@ extern "C" fn C_FindObjectsInit(
     CKR_OK
 }
 
-#[instrument(ret)]
+#[instrument(level = Level::DEBUG, ret)]
 extern "C" fn C_FindObjects(
     hSession: CK_SESSION_HANDLE,
     phObject: *mut CK_OBJECT_HANDLE,
@@ -991,7 +991,7 @@ extern "C" fn C_FindObjects(
 }
 
 /// Implemented as described in section 5.7.9 of PKCS #11 version 3.2.
-#[instrument(ret)]
+#[instrument(level = Level::DEBUG, ret)]
 extern "C" fn C_FindObjectsFinal(hSession: CK_SESSION_HANDLE) -> CK_RV {
     let mut sessions = SESSIONS.lock().expect("session lock was poisoned");
     let session = if let Some(session) = sessions.get_mut(&hSession) {
@@ -1012,7 +1012,7 @@ extern "C" fn C_FindObjectsFinal(hSession: CK_SESSION_HANDLE) -> CK_RV {
 // - pTemplate is non-NULL and points to a list of valid CK_ATTRIBUTE objects of length ulCount.
 // - The pValue field of the CK_ATTRIBUTE object must either be a NULL pointer, or be a buffer
 //   of length of the pValueLen field of the object.
-#[instrument(ret)]
+#[instrument(level = Level::DEBUG, ret)]
 extern "C" fn C_GetAttributeValue(
     hSession: CK_SESSION_HANDLE,
     hObject: CK_OBJECT_HANDLE,
