@@ -82,7 +82,7 @@ const ECDSA_MECHANISMS: [CK_MECHANISM_TYPE; 5] = [
 static LOGGING: LazyLock<()> = LazyLock::new(|| {
     let log_filter = EnvFilter::builder()
         .with_env_var("LIBSIGULDRY_PKCS11_LOG")
-        .with_default_directive(LevelFilter::INFO.into())
+        .with_default_directive(LevelFilter::WARN.into())
         .from_env()
         .expect("Set a valid log filter");
     let stderr_layer = tracing_subscriber::fmt::layer()
