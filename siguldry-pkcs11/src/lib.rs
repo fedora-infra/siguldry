@@ -619,12 +619,19 @@ extern "C" fn C_GetTokenInfo(slotID: CK_SLOT_ID, pInfo: CK_TOKEN_INFO_PTR) -> CK
         .map(|client| client.is_unlocked(token.name.clone()))
     {
         Some(Ok(true)) => {
+            tracing::debug!(
+                token.name,
+                "Token is configured for protected authentication path"
+            );
             CKF_TOKEN_INITIALIZED
                 | CKF_LOGIN_REQUIRED
                 | CKF_USER_PIN_INITIALIZED
                 | CKF_PROTECTED_AUTHENTICATION_PATH
         }
-        Some(Ok(false)) => CKF_TOKEN_INITIALIZED | CKF_LOGIN_REQUIRED | CKF_USER_PIN_INITIALIZED,
+        Some(Ok(false)) => {
+            tracing::debug!(token.name, "Token requires PIN to access the private key");
+            CKF_TOKEN_INITIALIZED | CKF_LOGIN_REQUIRED | CKF_USER_PIN_INITIALIZED
+        }
         Some(Err(error)) => {
             tracing::error!(?error, "Failed to check if the key is unlocked");
             return CKR_FUNCTION_FAILED;
@@ -721,7 +728,7 @@ extern "C" fn C_Login(
                 "Protected authentication path succeeded"
             ),
             Some(Ok(false)) => {
-                tracing::info!(
+                tracing::warn!(
                     key = session.key.name,
                     "Protected authentication path failed; siguldry proxy not configured to auto-unlock key"
                 );
@@ -733,10 +740,6 @@ extern "C" fn C_Login(
             }
             None => return CKR_CRYPTOKI_NOT_INITIALIZED,
         }
-        tracing::info!(
-            key = session.key.name,
-            "Protected authentication path specified; configure the siguldry client to unlock key"
-        );
     }
 
     // The specification states "each of the applications sessions will enter the state" so we
