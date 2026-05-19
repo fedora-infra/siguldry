@@ -87,17 +87,16 @@ ignore = [
 # This is not a complete list of acceptable licenses for the project, merely the
 # list required by our dependencies.
 allow = [
-    "0BSD",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
+    "BSD-2-Clause",
     "ISC",
     "MIT",
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
     "LGPL-2.0-or-later",
-    "MPL-2.0",
     "BSL-1.0",
 ]
 # The confidence threshold for detecting a license from license text.
@@ -108,9 +107,6 @@ confidence-threshold = 1.0
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
 # aren't accepted for every possible crate as with the normal allow list
 exceptions = [
-    # Fedora has some restrictions on this license; this is for sequoia which
-    # is already included, so only allow the license for that dependency.
-    { allow = ["CC0-1.0"], crate = "tiny-keccak" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
