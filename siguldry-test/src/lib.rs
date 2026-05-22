@@ -672,9 +672,24 @@ impl InstanceBuilder {
         let listener = UnixListener::bind(&socket_path)?;
 
         let proxy = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await?;
-            let (reader, writer) = tokio::io::split(stream);
-            siguldry::client::proxy(client, proxy_halt, reader, writer).await?;
+            loop {
+                tokio::select! {
+                    _ = proxy_halt.cancelled() => break,
+                    accepted = listener.accept() => {
+                        let (stream, _) = accepted?;
+                        let client = client.clone();
+                        let conn_halt = proxy_halt.clone();
+                        tokio::spawn(async move {
+                            let (reader, writer) = tokio::io::split(stream);
+                            if let Err(error) =
+                                siguldry::client::proxy(client, conn_halt, reader, writer).await
+                            {
+                                tracing::warn!(?error, "client proxy connection failed");
+                            }
+                        });
+                    }
+                }
+            }
             Ok::<_, anyhow::Error>(())
         });
 
