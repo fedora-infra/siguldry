@@ -166,4 +166,6 @@ The server will now connect to the bridge.
 
 ## Client
 
-The client is primarily used via the `libsiguldry_pkcs11.so` PKCS#11 module. In order to isolate the credentials from the PKCS#11 module, the `siguldry-client-proxy.socket` systemd socket is provided. This spawns a `siguldry-client-proxy@.service` instance.
+The client is primarily used via the `libsiguldry_pkcs11.so` PKCS#11 module. In order to isolate the
+credentials from the PKCS#11 module, the `siguldry-client-proxy.socket` systemd socket is provided.
+This spawns a `siguldry-client-proxy@.service` instance.

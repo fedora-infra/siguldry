@@ -1,0 +1,88 @@
+[Unit]
+Description=Siguldry autosigning service
+Requires=siguldry-client-proxy.socket
+After=siguldry-client-proxy.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/siguldry-fedora-autopen consume
+User=siguldry
+Group=siguldry
+Restart=on-failure
+RestartSec=5s
+RestartSteps=3
+RestartMaxDelaySec=60s
+
+# Refer to https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/filter/struct.EnvFilter.html#directives
+# for more fine-grain logging output.
+# Environment=SIGULDRY_FEDORA_AUTOPEN_LOG="ERROR,lapin=INFO,siguldry_fedora_autopen=INFO,siguldry=INFO"
+
+# The default configuration location is "siguldry/fedora-autopen.toml" relative to /etc/ for system units
+# and relative to $XDG_CONFIG_HOME for user units. It can be manually specified as an absolute
+# path, for example:
+# Environment=SIGULDRY_FEDORA_AUTOPEN_CONFIG=/etc/siguldry/fedora-autopen.toml
+
+UMask=077
+RuntimeDirectory=siguldry-fedora-autopen
+RuntimeDirectoryPreserve=no
+RuntimeDirectoryMode=750
+ConfigurationDirectory=siguldry
+
+# Opt-in to most systemd sandboxing
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+KeyringMode=private
+ProcSubset=pid
+PrivateDevices=true
+PrivateTmp=disconnected
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+RemoveIPC=true
+
+# Restrict write-able and executable filesystem locations
+ReadOnlyPaths=/
+ReadWritePaths=/run/siguldry-client-proxy
+NoExecPaths=/
+# Executables that are always required
+ExecPaths=/usr/bin/siguldry-fedora-autopen /usr/lib /usr/lib64
+
+# Executables needed when performing OpenPGP signing via gpg
+#
+# This applies to, at a minimum, RPM and OSTree signing.
+ExecPaths=/usr/bin/gpg /usr/bin/gpg-agent /usr/bin/gnupg-pkcs11-scd
+
+# Executables needed when performing OpenPGP signing via Sequoia
+#
+# This applies to, at a minimum, RPM signing
+ExecPaths=/usr/bin/sq
+
+# Executables needed when signing RPMs via rpmsign
+ExecPaths=/usr/bin/rpmsign /usr/bin/sh
+
+# Executables needed for OSTree signing
+ExecPaths=/usr/bin/ostree
+
+# The service connects to the siguldry proxy over Unix socket, makes HTTP requests, and binds to
+# a TCP socket when metrics are enabled.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SocketBindDeny=any
+# If non-default metrics port is used, you'll need to adjust this.
+SocketBindAllow=tcp:9000
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# Filter available system calls
+# This can likely be restricted further
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM

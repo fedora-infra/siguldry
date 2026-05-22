@@ -62,7 +62,7 @@ jobs:
     name: Code style checks
     runs-on: ubuntu-latest
     container:
-      image: quay.io/fedora/fedora:43
+      image: quay.io/fedora/fedora:44
     steps:
       - uses: actions/checkout@v5
         with:
@@ -80,19 +80,21 @@ jobs:
 
       - name: Install test packages
         run: |
-          dnf install -y \
+          dnf install -y --enablerepo=updates-testing \
             acl \
             clang \
             gnupg-pkcs11-scd \
             kryoptic \
-            sequoia-sq \
+            opensc \
+            openssl \
+            openssl-devel \
+            ostree \
             pesign \
             pkcs11-provider \
             pkg-config \
             python3-devel \
-            opensc \
-            openssl \
-            openssl-devel \
+            sequoia-sq \
+            siguldry-pkcs11 \
             sqlite-devel
 
       - name: cargo clippy
@@ -140,7 +142,7 @@ jobs:
     needs: generate-sigul-data
     runs-on: ubuntu-latest
     container:
-      image: quay.io/fedora/fedora:43
+      image: quay.io/fedora/fedora:44
     strategy:
       matrix:
         # Support current stable and the toolchain that ships with
@@ -171,20 +173,21 @@ jobs:
 
       - name: Install test packages
         run: |
-          dnf install -y \
+          dnf install -y --enablerepo=updates-testing \
             acl \
             clang \
             gnupg-pkcs11-scd \
             kryoptic \
-            sequoia-sq \
+            opensc \
+            openssl \
+            openssl-devel \
+            ostree \
             pesign \
             pkcs11-provider \
             pkg-config \
             python3-devel \
-            opensc \
-            openssl \
-            openssl-devel \
-            softhsm \
+            sequoia-sq \
+            siguldry-pkcs11 \
             sqlite-devel
 
           # pesign-client doesn't let you configure the socket location, so make it available to the world

@@ -1,0 +1,76 @@
+[amqp]
+amqp_url = "amqps://fedora:@rabbitmq.fedoraproject.org/%2Fpublic_pubsub?auth_mechanism=external"
+
+[amqp.tls]
+ca_cert = "/etc/fedora-messaging/cacert.pem"
+keyfile = "/etc/fedora-messaging/fedora-key.pem"
+certfile = "/etc/fedora-messaging/fedora-cert.pem"
+
+[[amqp.bindings]]
+exchange = "amq.topic"
+routing_keys = [
+    "org.fedoraproject.*.buildsys.tag",
+    "org.fedoraproject.*.coreos.build.request.artifacts-sign",
+    "org.fedoraproject.*.pungi.compose.ostree",
+]
+
+[siguldry]
+client_proxy_socket = "/run/siguldry-client-proxy/siguldry-client-proxy.socket"
+concurrency = 128
+
+[koji]
+url = "https://koji.fedoraproject.org/kojihub"
+instance = "primary"
+# Enabling the readonly setting below will turn off any Koji write operations.
+# This is only really useful for local testing against a public Koji instance.
+#readonly = true
+
+[koji.auth]
+authmethod = "kerberos"
+principal = "jcline@FEDORAPROJECT.ORG"
+
+[[koji.tags]]
+from = "f45-signing-pending"
+to = "f45-updates-testing-pending"
+siguldry_key = "fedora-45"
+siguldry_openpgp_cert = "fedora-45-openpgp"
+trusted_taggers = ["bodhi"]
+
+[koji.tags.file_signing_key]
+siguldry_key = "fedora-45-ima"
+siguldry_x509_cert = "fedora-45-ima-x509"
+
+[koji.tags.sidetags]
+from_regex = "(?P<sidetag>f45-build-side-[1-9][0-9]*)-signing-pending"
+to_template = "<sidetag>-testing-pending"
+
+[rpm]
+signing_tool = "gpg"
+with_rpmv4 = true
+
+[[ostree]]
+reference = "fedora/rawhide/x86_64/iot"
+directory = "/mnt/fedora_koji/koji/compose/iot/repo/"
+siguldry_key = "fedora-45"
+siguldry_openpgp_cert = "fedora-45-openpgp"
+
+[[ostree]]
+reference = "fedora/rawhide/aarch64/iot"
+directory = "/mnt/fedora_koji/koji/compose/iot/repo/"
+siguldry_key = "fedora-45"
+siguldry_openpgp_cert = "fedora-45-openpgp"
+
+[coreos]
+aws_region = "us-east-2"
+aws_bucket = "fcos-builds"
+aws_access_key = "some-access-key"
+aws_access_secret = "secret key"
+signing_tool = "gpg"
+
+[[coreos.keys]]
+build_version = 45
+siguldry_key =  "fedora-45"
+siguldry_openpgp_cert = "fedora-45-openpgp"
+
+[metrics]
+http_listener = "127.0.0.1:9000"

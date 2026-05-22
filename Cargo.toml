@@ -2,10 +2,11 @@
 resolver = "3"
 members = [
     "sample-uefi",
-    "sigul-pesign-bridge",
     "siguldry",
+    "siguldry-fedora-autopen",
     "siguldry-pkcs11",
     "siguldry-test",
+    "sigul-pesign-bridge",
     "xtask",
 ]
 

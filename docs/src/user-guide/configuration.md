@@ -119,3 +119,18 @@ An example [client configuration](https://docs.rs/siguldry/latest/siguldry/clien
 ```
 
 By default, this is loaded from `/etc/siguldry/client.toml`.
+
+## siguldy-fedora-autopen
+
+If you're looking to automatically sign content from AMQP messages, and you happen to also be using
+Koji, the `siguldry-fedora-autopen` application is what you're looking for. It should be configured
+on a host where a client configuration also exists, and any signing keys it uses must be configured
+to be automatically unlocked by the client.
+
+{{#include ../../../siguldry-fedora-autopen/README.md:9}}
+
+An example configuration:
+
+```toml
+{{#include ../../../siguldry-fedora-autopen/config.toml.example}}
+```
