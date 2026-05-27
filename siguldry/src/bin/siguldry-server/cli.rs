@@ -34,6 +34,13 @@ pub struct Cli {
     #[arg(long, short, env = "SIGULDRY_SERVER_CONFIG")]
     pub config: Option<PathBuf>,
 
+    /// Emit logs when new tracing spans are created, and when they are closed.
+    ///
+    /// This is useful in debugging scenarios to trace functions and tasks, but can lead to rather
+    /// verbose logs.
+    #[arg(long)]
+    pub span_events: bool,
+
     /// A set of one or more comma-separated directives to filter logs.
     ///
     /// The general format is "target_name[span_name{field=value}]=level" where level is

@@ -51,13 +51,17 @@ async fn main() -> anyhow::Result<()> {
         )
     }?;
 
+    let registry = tracing_subscriber::registry();
     let stderr_layer = tracing_subscriber::fmt::layer()
-        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
         .without_time()
         .with_writer(std::io::stderr);
-    let registry = tracing_subscriber::registry()
-        .with(stderr_layer)
-        .with(log_filter);
+
+    let registry = if opts.span_events {
+        registry.with(stderr_layer.with_span_events(FmtSpan::NEW | FmtSpan::CLOSE))
+    } else {
+        registry.with(stderr_layer)
+    };
+    let registry = registry.with(log_filter);
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
 

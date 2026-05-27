@@ -33,6 +33,13 @@ struct Cli {
     #[arg(long, short, env = "SIGULDRY_BRIDGE_CONFIG")]
     config: Option<PathBuf>,
 
+    /// Emit logs when new tracing spans are created, and when they are closed.
+    ///
+    /// This is useful in debugging scenarios to trace functions and tasks, but can lead to rather
+    /// verbose logs.
+    #[arg(long)]
+    pub span_events: bool,
+
     /// A set of one or more comma-separated directives to filter logs.
     ///
     /// The general format is "target_name[span_name{field=value}]=level" where level is
@@ -95,13 +102,17 @@ async fn main() -> anyhow::Result<()> {
             https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/\
             filter/struct.EnvFilter.html#directives for format details.",
     )?;
+
+    let registry = tracing_subscriber::registry();
     let stderr_layer = tracing_subscriber::fmt::layer()
-        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
         .without_time()
         .with_writer(std::io::stderr);
-    let registry = tracing_subscriber::registry()
-        .with(stderr_layer)
-        .with(log_filter);
+    let registry = if opts.span_events {
+        registry.with(stderr_layer.with_span_events(FmtSpan::NEW | FmtSpan::CLOSE))
+    } else {
+        registry.with(stderr_layer)
+    };
+    let registry = registry.with(log_filter);
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
 
