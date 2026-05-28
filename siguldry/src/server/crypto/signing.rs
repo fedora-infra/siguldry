@@ -45,6 +45,8 @@ pub fn sign_with_softkey(
             KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => protocol::SignaturePayload::RSA(signature),
             KeyAlgorithm::P256 => protocol::SignaturePayload::P256(signature),
         };
+
+        tracing::info!(digest_algorithm=%algorithm, digest=hex_hash, "Signature issued");
         signatures.push(protocol::Signature {
             signature,
             digest: algorithm,
@@ -113,6 +115,7 @@ pub fn sign_with_pkcs11(
             }
         };
 
+        tracing::info!(digest_algorithm=%algorithm, digest=hex_hash, "Signature issued");
         signatures.push(protocol::Signature {
             signature,
             digest: algorithm,
