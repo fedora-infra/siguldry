@@ -199,7 +199,7 @@ impl Client {
 }
 
 /// Start a siguldry-signer helper server.
-#[instrument(name = "siguldry-signer", skip_all, fields(session_id = tracing::field::Empty))]
+#[instrument(name = "siguldry-signer", skip_all, fields(user = tracing::field::Empty, session_id = tracing::field::Empty))]
 pub async fn serve<
     R: AsyncRead + Unpin + std::fmt::Debug,
     W: AsyncWrite + Unpin + std::fmt::Debug,
@@ -226,7 +226,7 @@ pub async fn serve<
                     let request: Request = serde_json::from_str(&request)?;
                     match request {
                         Request::Config { user, database_path, session_id, pkcs11_bindings } => {
-                            tracing::Span::current().record("session_id", session_id.to_string());
+                            tracing::Span::current().record("session_id", tracing::field::display(session_id));
                             let mut response = serde_json::to_string(&Response::Success {  })?;
                             response.push('\n');
                             responses.write_all(response.as_bytes()).await?;
@@ -243,8 +243,9 @@ pub async fn serve<
     let db_pool = db::pool(&database_path, true).await?;
     let mut db_conn = db_pool.acquire().await?;
     let user = db::User::get(&mut db_conn, &user).await?;
+    tracing::Span::current().record("user", &user.name);
     drop(db_conn);
-    tracing::debug!(user.name, "siguldry-signer is configured and ready to use");
+    tracing::info!("siguldry-signer is configured and ready to accept requests");
 
     loop {
         let request = tokio::select! {

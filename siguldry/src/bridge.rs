@@ -99,9 +99,9 @@ async fn accept_conn(
 
     let peer_name = peer_common_name(&stream);
     match &peer_name {
-        Ok(username) => {
+        Ok(user) => {
             // We defer acking good connections until we have both sides so that they can share a session id
-            tracing::info!(username, ?role, "Sigul connection established");
+            tracing::info!(user, ?role, "Connection established");
         }
         Err(protocol::Error::MissingCommonName) => {
             tracing::warn!(
@@ -299,7 +299,7 @@ pub async fn listen(config: Config) -> anyhow::Result<Listener> {
     fields(
         client_addr = ?client.1,
         server_addr = ?server.1,
-        session_id = Uuid::from_u128(ack.session_id.get()).to_string()
+        session_id = %Uuid::from_u128(ack.session_id.get())
     )
 )]
 async fn bridge(

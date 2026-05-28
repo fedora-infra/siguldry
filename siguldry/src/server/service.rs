@@ -179,7 +179,7 @@ impl Server {
     }
 }
 
-#[instrument(skip_all, err, fields(session_id = conn.session_id().to_string(), client = conn.peer_common_name()))]
+#[instrument(skip_all, err, fields(session_id = %conn.session_id(), user = conn.peer_common_name()))]
 async fn handle(
     config: Arc<Config>,
     db: Pool<Sqlite>,
