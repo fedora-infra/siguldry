@@ -111,7 +111,7 @@ impl Server {
 
                 match conn {
                     Some(Ok(Ok(conn))) => {
-                        tracing::info!("New request accepted");
+                        tracing::info!("New connection accepted");
                         while connection_pool.len() < self.config.connection_pool_size {
                             self.accept(&mut connection_pool)?;
                         }
@@ -189,8 +189,10 @@ async fn handle(
         .peer_common_name()
         .ok_or(protocol::Error::MissingCommonName)?;
     let mut db_conn = db.acquire().await?;
-    let user = db::User::get(&mut db_conn, &user).await?;
-    tracing::info!(user.name, "User authenticated");
+    let user = db::User::get(&mut db_conn, &user)
+        .await
+        .with_context(|| format!("Failed to look up user '{user}"))?;
+    tracing::info!("User authenticated");
     drop(db_conn);
 
     let mut request_handler =
@@ -201,7 +203,9 @@ async fn handle(
         let frame = protocol::Frame::try_ref_from_bytes(&frame_buffer)
             .map_err(|e| protocol::Error::Framing(format!("Invalid frame: {e:?}")))?;
         if frame.is_empty() {
-            tracing::info!("Connection sent empty frame indicating it is done; closing connection");
+            tracing::debug!(
+                "Connection sent empty frame indicating it is done; closing connection"
+            );
             break;
         } else {
             tracing::debug!(?frame, "New request frame received");
@@ -293,5 +297,7 @@ async fn handle(
     }
     request_handler.shutdown().await?;
     conn.shutdown().await?;
+    tracing::info!("Connection completed successfully");
+
     Ok(())
 }

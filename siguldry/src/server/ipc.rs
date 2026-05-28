@@ -208,7 +208,7 @@ pub async fn serve<
     requests: R,
     mut responses: W,
 ) -> anyhow::Result<()> {
-    tracing::info!("Handling requests");
+    tracing::debug!("Handling requests");
     let mut requests = BufReader::new(requests).lines();
 
     // Keys that the client has unlocked are stored in this map of key names to key passwords.
@@ -389,6 +389,8 @@ async fn unlock(
         .await?;
         key_passwords.insert(key.name, UnlockedKey::Private { key: private_key });
     }
+
+    tracing::info!("Unlocked key");
     return Ok(());
 }
 

@@ -37,6 +37,7 @@ impl Handler {
 
     #[instrument(skip_all, err)]
     pub(crate) fn who_am_i(&self) -> Result<Response, ServerError> {
+        tracing::debug!("WhoAmI request successfully processed");
         Ok(Response::WhoAmI {
             user: self.user.name.clone(),
         })
@@ -59,17 +60,24 @@ impl Handler {
                 certificates,
             });
         }
-
+        tracing::debug!(
+            num_keys = keys.len(),
+            "ListKeys request successfully processed"
+        );
         Ok(Response::ListKeys { keys })
     }
 
-    #[instrument(skip_all, err, fields(key))]
+    #[instrument(skip_all, err, fields(key = key))]
     pub(crate) async fn unlock(
         &mut self,
         key: String,
         password: String,
     ) -> Result<Response, ServerError> {
-        self.ipc_helper.unlock_request(key, password).await
+        let result = self.ipc_helper.unlock_request(key, password).await;
+        if result.is_err() {
+            tracing::error!("Failed to unlock key");
+        }
+        result
     }
 
     #[instrument(skip_all, err, fields(key = key_name))]
@@ -80,6 +88,7 @@ impl Handler {
     ) -> Result<Response, ServerError> {
         let key = db::Key::get(conn, &key_name).await?;
         let certificates = certs_for_key(conn, &key).await?;
+        tracing::debug!("GetKey request successfully processed");
 
         Ok(Response::GetKey {
             key: protocol::Key {
@@ -104,6 +113,7 @@ impl Handler {
             .sign_request(key_name.to_string(), vec![(digest_algorithm, digest)])
             .await?;
 
+        tracing::debug!("Sign request successfully processed");
         Ok(Response::Sign {
             signature: response.pop().unwrap(),
         })
@@ -120,11 +130,13 @@ impl Handler {
             .sign_request(key_name.to_string(), digests)
             .await?;
 
+        tracing::debug!("SignAll request successfully processed");
         Ok(Response::SignPrehashed { signatures })
     }
 
     #[instrument(skip_all, err)]
     pub(crate) async fn shutdown(self) -> anyhow::Result<()> {
+        tracing::debug!("Shutting down IPC client");
         self.ipc_helper.shutdown().await
     }
 }
