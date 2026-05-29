@@ -8,10 +8,11 @@ use std::{sync::Arc, time::Duration};
 
 use tokio::sync::Mutex;
 
+use crate::error::ConnectionError;
 use crate::protocol::DigestAlgorithm;
 use crate::protocol::Signature;
 use crate::{
-    error::{ClientError, ConnectionError},
+    error::ClientError,
     nestls::Nestls,
     protocol::{self, Request, Response, Role},
 };
@@ -64,15 +65,14 @@ impl Client {
                         *service_lock = Some(service);
                         Some(response)
                     }
-                    Ok(Err(ClientError::Connection(ConnectionError::Io(error)))) => {
+                    Ok(Err(error)) => {
                         tracing::info!(
                             ?error,
-                            "An I/O error occurred while connecting; retrying..."
+                            "An error occurred while sending request; retrying..."
                         );
                         tokio::time::sleep(Duration::from_secs(3)).await;
                         None
                     }
-                    Ok(Err(error)) => break Err(error),
                     Err(_timeout_err) => {
                         tracing::warn!(
                             "Timed out while attempting to send request; restarting connection..."
@@ -81,12 +81,58 @@ impl Client {
                     }
                 }
             } else {
-                if let Some(client) = self.new_inner_client().await? {
-                    *service_lock = Some(client);
-                } else {
-                    tracing::warn!(
-                        "Timed out while attempting to connect with the server; retrying..."
-                    );
+                match self.new_inner_client().await {
+                    Ok(Some(client)) => {
+                        *service_lock = Some(client);
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            "Timed out while attempting to connect with the server; retrying..."
+                        );
+                    }
+                    Err(ClientError::Connection(ConnectionError::Protocol(error))) => {
+                        tracing::error!(?error, "An unrecoverable protocol error occurred");
+                        return Err(ConnectionError::Protocol(error).into());
+                    }
+                    Err(ClientError::Connection(ConnectionError::Ssl(error))) => {
+                        match error
+                            .ssl_error()
+                            .map(|e| e.errors())
+                            .and_then(|e| e.first())
+                            .map(|e| (e.reason_code(), e.reason()))
+                        {
+                            Some((134, Some("certificate verify failed"))) => {
+                                tracing::error!(
+                                    "certificate verify failed; check the CA, bridge, and server certificates"
+                                );
+                                return Err(ClientError::CertificateVerifyFailed);
+                            }
+                            Some((1048, Some("tlsv1 alert unknown ca"))) => {
+                                tracing::error!(
+                                    "The client certificate is not signed by a CA the bridge accepts"
+                                );
+                                return Err(ClientError::InvalidClientCertificate);
+                            }
+                            Some((reason_code, reason)) => {
+                                tracing::warn!(
+                                    reason_code,
+                                    ?reason,
+                                    "A TLS error occurred; retrying connection..."
+                                );
+                            }
+                            None => tracing::warn!(
+                                ?error,
+                                "A TLS error occurred without details, retrying..."
+                            ),
+                        }
+
+                        // If it didn't match a fatal TLS error above, just try again.
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "Connection to server failed; retrying...");
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+                    }
                 }
                 None
             };
@@ -180,21 +226,13 @@ impl Client {
                         }
                     };
                 }
-                Ok(Err(ClientError::Connection(ConnectionError::Io(error)))) => {
+                Ok(Err(error)) => {
                     tracing::info!(
                         ?error,
-                        "An I/O error occurred while connecting; retrying..."
+                        "An error occurred while sending request; retrying..."
                     );
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     return Ok(None);
-                }
-                Ok(Err(error)) => {
-                    tracing::error!(
-                        ?error,
-                        key = key.key_name,
-                        "failed to unlock configured key"
-                    );
-                    return Err(error);
                 }
                 Err(_timeout_err) => {
                     tracing::warn!(

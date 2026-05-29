@@ -102,6 +102,12 @@ pub enum ClientError {
     #[error("openssl could not be configured: {0}")]
     Ssl(#[from] openssl::error::ErrorStack),
 
+    #[error("The bridge or server certificate is not valid")]
+    CertificateVerifyFailed,
+
+    #[error("The client certificate is not signed by a CA the bridge or server trust")]
+    InvalidClientCertificate,
+
     /// Errors the server returned for a particular request.
     ///
     /// Retrying may be appropriate for some server errors, while others may never succeed.

@@ -40,10 +40,7 @@ async fn client_rejects_bridge_cert() -> anyhow::Result<()> {
     let username = client.who_am_i().await;
     match username {
         Ok(_) => panic!("The request should not succeed"),
-        Err(ClientError::Connection(ConnectionError::Ssl(error))) => {
-            let error = error.ssl_error().unwrap().errors().first().unwrap();
-            assert_eq!(error.reason_code(), 134);
-            assert_eq!(error.reason(), Some("certificate verify failed"));
+        Err(ClientError::CertificateVerifyFailed) => {
             assert!(logs_contain("certificate verify failed"));
         }
         Err(other) => panic!("Incorrect error variant returned: {other:?}"),
@@ -84,10 +81,7 @@ async fn bridge_rejects_client_cert() -> anyhow::Result<()> {
     let username = client.who_am_i().await;
     match username {
         Ok(_) => panic!("The request should not succeed"),
-        Err(ClientError::Connection(ConnectionError::Ssl(error))) => {
-            let error = error.ssl_error().unwrap().errors().first().unwrap();
-            assert_eq!(error.reason_code(), 1048);
-            assert_eq!(error.reason(), Some("tlsv1 alert unknown ca"));
+        Err(ClientError::InvalidClientCertificate) => {
             assert!(logs_contain("Failed to accept new client connection"));
             assert!(logs_contain("client_certificate:certificate verify failed"));
         }
