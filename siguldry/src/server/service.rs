@@ -299,8 +299,29 @@ async fn handle(
         }
     }
     request_handler.shutdown().await?;
-    conn.shutdown().await?;
-    tracing::info!("Connection completed successfully");
+
+    // At this point the client shouldn't send it anything else, but we need to poll
+    // the connection to gracefully shut down the TLS session.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        tracing::debug!("Waiting for EOF from client");
+        let mut buf = [0u8; 1024];
+        while let Ok(n) = conn.read(&mut buf).await {
+            if n == 0 {
+                tracing::debug!("Client sent EOF");
+                break;
+            } else {
+                tracing::warn!("Client unexpectedly sent us {} bytes of data", n);
+            }
+        }
+        conn.shutdown()
+            .await
+            .context("Failed to shutdown connection to client")?;
+        tracing::info!("Connection completed successfully");
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("Timed out waiting for connection to close")??;
 
     Ok(())
 }
