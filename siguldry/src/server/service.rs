@@ -149,6 +149,9 @@ impl Server {
             tracing::debug!("Request tracker closed");
             connection_pool.shutdown().await;
             tracing::debug!("Connection pool shutdown");
+            if !request_tracker.is_empty() {
+                tracing::info!("Waiting for {} pending requests to complete", request_tracker.len());
+            }
             request_tracker.wait().await;
             tracing::info!("All pending requests are now complete");
 
