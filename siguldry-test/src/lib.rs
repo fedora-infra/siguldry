@@ -570,19 +570,21 @@ impl InstanceBuilder {
             let signer_halt = halt_token.clone();
 
             let signer = tokio::spawn(async move {
-                let stream = tokio::select! {
-                    _ = signer_halt.cancelled() => {
-                        return Ok(());
-                    }
-                    result = listener.accept() => {
-                        let (unix_stream, _) = result?;
-                        unix_stream
-                    }
-                };
-                tracing::info!("signing helper accepted connection");
-                let (reader, writer) = tokio::io::split(stream);
-                siguldry::server::ipc::serve(signer_halt, reader, writer).await?;
-                Ok::<_, anyhow::Error>(())
+                loop {
+                    let stream = tokio::select! {
+                        _ = signer_halt.cancelled() => {
+                            return Ok(());
+                        }
+                        result = listener.accept() => {
+                            let (unix_stream, _) = result?;
+                            unix_stream
+                        }
+                    };
+                    tracing::info!("signing helper accepted connection");
+                    let (reader, writer) = tokio::io::split(stream);
+                    let conn_halt = signer_halt.clone();
+                    siguldry::server::ipc::serve(conn_halt, reader, writer).await?;
+                }
             });
             (halt_token, signer)
         };
