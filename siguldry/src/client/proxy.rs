@@ -12,6 +12,7 @@
 //! service provided by [`proxy`] except via [`ProxyClient`].
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -99,16 +100,16 @@ pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     let mut requests = BufReader::new(requests).lines();
 
     let mut ipc_header: Option<IpcHeader> = None;
-    loop {
+    let result = loop {
         let line = tokio::select! {
             _ = halt_token.cancelled() => {
                 tracing::info!("proxy halted; shutting down");
-                return Ok(());
+                break Ok(());
             }
             line = requests.next_line() => {
                 if let Some(line) = line? { line } else {
                     tracing::debug!("EOF received for proxy");
-                    return Ok(());
+                    break Ok(());
                 }
             }
         };
@@ -125,7 +126,7 @@ pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                     server_version = IPC_VERSION,
                     "The IPC client is requesting an unknown protocol version"
                 );
-                return Err(anyhow::anyhow!(
+                break Err(anyhow::anyhow!(
                     "Unknown protocol version {version} requested by client"
                 ));
             }
@@ -162,15 +163,15 @@ pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 match error.classify() {
                     serde_json::error::Category::Io => {
                         tracing::error!("Failed to read bytes from input stream");
-                        return Err(anyhow::anyhow!("Failed to read bytes from input stream"));
+                        break Err(anyhow::anyhow!("Failed to read bytes from input stream"));
                     }
                     serde_json::error::Category::Syntax => {
                         tracing::error!(column = error.column(), "Client sent invalid JSON");
-                        return Err(anyhow::anyhow!("Client sent invalid JSON"));
+                        break Err(anyhow::anyhow!("Client sent invalid JSON"));
                     }
                     serde_json::error::Category::Eof => {
                         tracing::error!("Unexpected end-of-line when deserializing JSON!");
-                        return Err(anyhow::anyhow!(
+                        break Err(anyhow::anyhow!(
                             "Unexpected end-of-line when deserializing JSON!"
                         ));
                     }
@@ -185,7 +186,13 @@ pub async fn proxy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         let mut response = serde_json::to_string(&response)?;
         response.push('\n');
         responses.write_all(response.as_bytes()).await?;
-    }
+    };
+
+    tracing::trace!("Shutting down client");
+    tokio::time::timeout(Duration::from_secs(30), client.shutdown()).await?;
+    tracing::trace!("Shutdown of client completed");
+
+    result
 }
 
 /// A client that proxies requests to the Siguldry server over a local Unix socket.
@@ -246,6 +253,9 @@ impl ProxyClient {
                     }
 
                     tracing::info!("Proxy client runtime thread shutting down");
+                    tokio::time::timeout(Duration::from_secs(30), client.shutdown())
+                        .await
+                        .context("Timed out waiting for client shutdown")??;
                     Ok::<_, anyhow::Error>(())
                 })?;
 
