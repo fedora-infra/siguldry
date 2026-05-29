@@ -3,7 +3,7 @@
 
 //! The Siguldry bridge.
 
-use std::{fmt::Debug, net::SocketAddr, pin::Pin, str::FromStr};
+use std::{fmt::Debug, net::SocketAddr, pin::Pin, str::FromStr, time::Duration};
 
 use anyhow::{Context, anyhow};
 use openssl::ssl::Ssl;
@@ -294,7 +294,6 @@ pub async fn listen(config: Config) -> anyhow::Result<Listener> {
 
 #[instrument(
     skip_all,
-    ret,
     err,
     fields(
         client_addr = ?client.1,
@@ -315,20 +314,89 @@ async fn bridge(
     )?;
     tracing::info!("Bridging new connection");
 
-    let size = 1024 * 64;
-    match tokio::io::copy_bidirectional_with_sizes(&mut client_conn, &mut server_conn, size, size)
-        .await
-    {
-        Ok((client_sent_bytes, server_sent_bytes)) => tracing::info!(
-            client_sent_bytes,
-            server_sent_bytes,
-            "Connection bridge completed"
-        ),
-        Err(result) => tracing::info!(
-            ?result,
-            "Connection bridge completed; connection closed ungracefully"
-        ),
-    };
+    // Tokio offers a copy_bidirectional function, but for some reason it's causing
+    // the connections to end ungracefully. This is a gross manual implementation and
+    // at some point we should investigate further why copy_bidirectional causes the
+    // connections to end with tls_retry_write_records failures.
+    //
+    // This approach is definitely the slowest way we could handle this, but payloads
+    // should be extremely small and requests relatively infrequent.
+    let mut client_to_server_buf = [0u8; 1024 * 16];
+    let mut server_to_client_buf = [0u8; 1024 * 16];
+    let mut client_read_done = false;
+    let mut server_read_done = false;
+    let mut client_sent_bytes: u64 = 0;
+    let mut server_sent_bytes: u64 = 0;
+
+    loop {
+        if client_read_done && server_read_done {
+            break;
+        }
+        tokio::select! {
+            result = client_conn.read(&mut client_to_server_buf), if !client_read_done => {
+                match result {
+                    Ok(0) => {
+                        tracing::trace!("Client sent EOF");
+                        client_read_done = true;
+                        if !server_read_done {
+                            match tokio::time::timeout(Duration::from_secs(10), server_conn.shutdown()).await {
+                                Ok(Ok(())) => tracing::trace!("Successfully closed server connection"),
+                                Ok(Err(error)) => tracing::warn!(?error, "Failed to gracefully shut down server connection"),
+                                Err(_elapsed) => tracing::warn!("Timed out waiting for the server connection to shut down"),
+                            }
+                        }
+                    }
+                    Ok(n) => {
+                        let slice = client_to_server_buf.get(..n).expect("AsyncRead impl provided invalid value");
+                        if let Err(error) = server_conn.write_all(slice).await {
+                            tracing::warn!(?error, "Failed to write client data to server connection");
+                        } else {
+                            tracing::trace!("Successfully forwarded {} bytes from client to server", n);
+                            client_sent_bytes += n as u64;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "Error reading from client");
+                        client_read_done = true;
+                    }
+                }
+            }
+            result = server_conn.read(&mut server_to_client_buf), if !server_read_done => {
+                match result {
+                    Ok(0) => {
+                        tracing::trace!("Server sent EOF");
+                        server_read_done = true;
+                        if !client_read_done {
+                            match tokio::time::timeout(Duration::from_secs(10), client_conn.shutdown()).await {
+                                Ok(Ok(())) => tracing::trace!("Successfully closed client connection"),
+                                Ok(Err(error)) => tracing::warn!(?error, "Failed to gracefully shut down client connection"),
+                                Err(_elapsed) => tracing::warn!("Timed out waiting for the client connection to shut down"),
+                            }
+                        }
+                    }
+                    Ok(n) => {
+                        let slice = server_to_client_buf.get(..n).expect("AsyncRead impl provided invalid value");
+                        if let Err(error) = client_conn.write_all(slice).await {
+                            tracing::warn!(?error, "Failed to write server data to client connection");
+                        } else {
+                            tracing::trace!("Successfully forwarded {} bytes from server to client", n);
+                            server_sent_bytes += n as u64;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "Error reading from server");
+                        server_read_done = true;
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        client_sent_bytes,
+        server_sent_bytes,
+        "Connection bridge completed"
+    );
 
     Ok(())
 }
