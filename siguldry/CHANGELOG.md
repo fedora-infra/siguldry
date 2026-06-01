@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-06-01
+
+### Changed
+
+- The MaxConnections setting on the systemd sockets is now explicitly set with a default
+  of 256; the prior systemd default was 64. This setting impacts the number of concurrent
+  operations allowed and should be tuned by the administrator (#200)
+
+- Logging no longer includes synthetic span open/close events and a new `--span-events` flag
+  has been added to the CLIs. This greatly reduces the logging verbosity (#207)
+
+- Debug level logging events were added for each server API call, and digests that are signed
+  are now logged at the info level (#207)
+
+### Fixed
+
+- Improved the error details for clients of the proxy service and of the signing helper (#203)
+
+- The client will now actually retry requests automatically as it claims it would when
+  the underlying connection fails unexpectedly (#208)
+
+- Connections are now shut down gracefully; you should no longer see any "early EOF" errors
+  on the server or connections finishing with "tls_retry_write_records" errors on the
+  bridge (#209)
+
+
 ## [0.7.0] - 2026-04-06
 
 ### Changed
