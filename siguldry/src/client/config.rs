@@ -109,7 +109,21 @@ impl<'de> Deserialize<'de> for Key {
             passphrase_path: PathBuf,
         }
 
-        let helper = KeyHelper::deserialize(deserializer)?;
+        let helper = {
+            let mut helper = KeyHelper::deserialize(deserializer)?;
+            if !helper.passphrase_path.is_absolute() {
+                let creds_dir = std::env::var_os("CREDENTIALS_DIRECTORY").ok_or_else(||
+                    serde::de::Error::custom(format!(
+                    "key passphrase_path {} is relative but CREDENTIALS_DIRECTORY environment variable is unset",
+                    helper.passphrase_path.display(),
+                )))?;
+                let base = PathBuf::from(creds_dir);
+                helper.passphrase_path = base.join(helper.passphrase_path);
+                helper
+            } else {
+                helper
+            }
+        };
 
         let passphrase = std::fs::read_to_string(&helper.passphrase_path)
             .map_err(|e| {
