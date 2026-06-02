@@ -86,3 +86,6 @@ RestrictSUIDSGID=true
 SystemCallFilter=@system-service
 SystemCallArchitectures=native
 SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

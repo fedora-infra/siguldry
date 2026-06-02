@@ -78,3 +78,6 @@ SystemCallErrorNumber=EPERM
 # $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/siguldry.client.private_key
 # $ systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/siguldry.signing-key.passphrase
 ImportCredential=siguldry.*
+
+[Install]
+WantedBy=multi-user.target

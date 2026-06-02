@@ -70,3 +70,6 @@ SystemCallFilter=@system-service
 # $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/sigul.client.private_key
 # $ systemd-ask-password | systemd-creds encrypt - /etc/credstore.encrypted/sigul.signing-key.passphrase
 ImportCredential=sigul.*
+
+[Install]
+WantedBy=multi-user.target
