@@ -361,21 +361,36 @@ impl<K: KojiOps> KojiSigner<K> {
         }
 
         // Wait for all the signatures to complete and, if all succeed, move the build over.
-        // In the event that some fail we return the error and retry later; we'll skip over
+        // In the event that some fail we return the error and retry later, we'll skip over
         // any RPM that has been signed by the requested key ID, so we'll keep making forward
         // progress.
-        signing_tasks
-            .join_all()
-            .await
-            .into_iter()
-            .inspect(|result| {
-                if result.is_err() {
-                    crate::metrics_utils::rpms_failed().increment(1);
-                } else {
+        //
+        // We use join_next() for more accurate metrics reporting over join_all()
+        let mut rpm_failed = 0_u32;
+        while let Some(task) = signing_tasks.join_next().await {
+            match task {
+                Ok(Ok(())) => {
+                    tracing::trace!("RPM signing task joined successfully");
                     crate::metrics_utils::rpms_signed().increment(1);
                 }
-            })
-            .collect::<Result<(), _>>()?;
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "RPM signing task failed");
+                    crate::metrics_utils::rpms_failed().increment(1);
+                    rpm_failed += 1;
+                }
+                Err(error) => {
+                    tracing::error!(?error, "RPM signing task panicked!");
+                    crate::metrics_utils::rpms_failed().increment(1);
+                    rpm_failed += 1;
+                }
+            }
+        }
+        if rpm_failed > 0 {
+            return Err(anyhow::anyhow!(
+                "{} RPM signing tasks failed and will be retried later",
+                rpm_failed
+            ));
+        }
 
         tracing::info!(
             sigkey,
