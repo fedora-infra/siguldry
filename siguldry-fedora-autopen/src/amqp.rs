@@ -268,10 +268,15 @@ async fn process_message<K: KojiOps>(
     let failed_counter = crate::metrics_utils::messages_failed();
     let dropped_counter = crate::metrics_utils::messages_dropped();
 
-    let message_id = if let Some(message_id) = delivery.properties.message_id().as_ref() {
-        message_id.as_str()
+    let message_id = if let Some(message_id) =
+        delivery.properties.message_id().as_ref().and_then(|id| {
+            uuid::Uuid::parse_str(id.as_str())
+                .inspect_err(|error| tracing::warn!(?error, "Failed to parse message ID"))
+                .ok()
+        }) {
+        message_id
     } else {
-        tracing::error!("Message didn't include a message ID!");
+        tracing::error!("Message didn't include a valid message ID!");
         delivery
             .nack(BasicNackOptions {
                 multiple: false,
@@ -281,7 +286,7 @@ async fn process_message<K: KojiOps>(
         dropped_counter.increment(1);
         return Ok(());
     };
-    tracing::Span::current().record("message_id", message_id);
+    tracing::Span::current().record("message_id", tracing::field::display(message_id));
 
     if let Some(content_type) = delivery.properties.content_type()
         && content_type.as_str() != "application/json"
