@@ -191,6 +191,7 @@ impl<K: KojiOps> KojiSigner<K> {
             })?;
 
         let sigkey = koji_sigkey(cert);
+        let rpm_ids = koji_build.rpms.iter().map(|r| r.id).collect::<Vec<_>>();
         let mut signing_tasks = tokio::task::JoinSet::new();
         for rpm in koji_build.rpms.into_iter().filter(|rpm| {
             if rpm.existing_sigkeys.contains(&sigkey) {
@@ -390,6 +391,13 @@ impl<K: KojiOps> KojiSigner<K> {
                 "{} RPM signing tasks failed and will be retried later",
                 rpm_failed
             ));
+        }
+
+        // Now that all signatures are uploaded, request Koji write out an RPM copy with the signature
+        // We want to do this separately from the signing task so that if it fails, we don't resign
+        // and attempt to upload another signature for the RPM.
+        for id in rpm_ids {
+            self.koji.write_signed_rpm(id, sigkey.clone()).await?;
         }
 
         tracing::info!(
@@ -663,6 +671,7 @@ mod tests {
             assert_eq!(self.build.id, build_id);
             Ok(self.build.clone())
         }
+
         async fn add_signature(
             &self,
             rpm_id: i64,
@@ -673,6 +682,18 @@ mod tests {
                 .send((rpm_id, expected_sigkey, signed_package))?;
             Ok(())
         }
+
+        async fn write_signed_rpm(&self, rpm_id: i64, _sigkey: String) -> anyhow::Result<()> {
+            assert!(
+                self.build
+                    .rpms
+                    .iter()
+                    .find(|rpm| rpm.id == rpm_id)
+                    .is_some()
+            );
+            Ok(())
+        }
+
         async fn move_build(
             &self,
             build_id: i64,

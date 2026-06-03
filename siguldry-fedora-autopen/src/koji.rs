@@ -49,6 +49,13 @@ pub trait KojiOps: Clone + Send + Sync + 'static {
         tag_from: String,
         tag_to: String,
     ) -> impl std::future::Future<Output = anyhow::Result<i64>> + Send;
+
+    /// Request Koji write out a signed copy of the RPM.
+    fn write_signed_rpm(
+        &self,
+        rpm_id: i64,
+        sigkey: String,
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
 }
 
 /// An RPM that is part of a build.
@@ -103,6 +110,10 @@ enum KojiRequest {
         expected_sigkey: String,
         signed_package: PathBuf,
     },
+    WriteSignedRpm {
+        rpm_id: i64,
+        sigkey: String,
+    },
     MoveBuild {
         build_id: i64,
         expected_sigkey: String,
@@ -115,6 +126,7 @@ enum KojiRequest {
 enum KojiResponse {
     BuildInfo(anyhow::Result<Build>),
     AddSignature(anyhow::Result<()>),
+    WriteSignedRpm(anyhow::Result<()>),
     /// Returns the task ID of the move task
     MoveBuild(anyhow::Result<i64>),
 }
@@ -190,6 +202,13 @@ impl KojiActor {
                                     .context("Koji add_signature call failed")
                                     .map(|_| ());
                                 KojiResponse::AddSignature(result)
+                            }
+                            KojiRequest::WriteSignedRpm { rpm_id, sigkey } => {
+                                let result = bound_client
+                                    .call_method1("write_signed_rpm", (rpm_id, sigkey))
+                                    .context("Koji write_signed_rpm call failed")
+                                    .map(|_| ());
+                                KojiResponse::WriteSignedRpm(result)
                             }
                             KojiRequest::MoveBuild {
                                 build_id,
@@ -326,6 +345,26 @@ impl KojiOps for KojiHandle {
                 if self.readonly {
                     tracing::info!(
                         "Completed Koji move_build() call, but operating in read-only mode"
+                    );
+                }
+                response
+            }
+            other => panic!("Programming error; actor responded with the wrong call: {other:?}"),
+        }
+    }
+
+    #[instrument(skip(self), err)]
+    async fn write_signed_rpm(&self, rpm_id: i64, sigkey: String) -> anyhow::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.inner
+            .send((KojiRequest::WriteSignedRpm { rpm_id, sigkey }, tx))
+            .await?;
+
+        match rx.await.context("Python actor failed to respond")? {
+            KojiResponse::WriteSignedRpm(response) => {
+                if self.readonly {
+                    tracing::info!(
+                        "Completed Koji write_signed_rpm() call, but operating in read-only mode"
                     );
                 }
                 response

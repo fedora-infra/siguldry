@@ -188,6 +188,10 @@ class Client:
 
         self.client.addRPMSig(rpm_id, base64.b64encode(sighdr).decode(encoding="utf-8"))
 
+    def write_signed_rpm(self, rpm_id: int, sigkey: str):
+        if self.readonly is False:
+            self.client.writeSignedRPM(rpm_id, sigkey)
+
     def move_build(
         self, build_id: int, expected_sigkey: str, tag_from: str, tag_to: str
     ) -> int:
