@@ -3,7 +3,7 @@ name = "siguldry"
 license = "MIT"
 edition = { workspace = true }
 rust-version = { workspace = true }
-version = "0.7.1"
+version = "0.7.2"
 readme = "README.md"
 description = """
 A signing server and client.

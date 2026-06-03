@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-06-03
+
+### Fixed
+
+- The systemd units now include an Install section so they can be enabled (#214)
+
+- The `Keys` section of the Siguldry client config now actually uses the
+  CREDENTIALS_DIRECTORY environment variable value as the base for relative
+  paths used in the `passphrase_path` field, allowing systemd credentials to be
+  used as documented (#215)
+
+
 ## [0.7.1] - 2026-06-01
 
 ### Changed
