@@ -359,10 +359,16 @@ impl<K: KojiOps> KojiSigner<K> {
                     drop(signing_permit);
 
                     if !output.status.success() {
+                        // rpmsign for whatever reason dumps every IMA hash to stderr, so this could be
+                        // 10K lines of nothing interesting.
+                        let stderr = String::from_utf8_lossy(&output.stderr)
+                            .lines()
+                            .take(15)
+                            .collect::<String>();
                         tracing::error!(
                             exit_code = ?output.status.code(),
                             stdout = %String::from_utf8_lossy(&output.stdout),
-                            stderr = %String::from_utf8_lossy(&output.stderr),
+                            %stderr,
                             "Signing command failed: '{command:?}'",
                         );
 
