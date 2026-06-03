@@ -25,6 +25,8 @@ use crate::{
     koji::{KojiHandle, KojiOps, Rpm},
 };
 
+const MB: usize = 1024 * 1024;
+
 /// Derive the Koji "sigkey" from the signing certificate
 ///
 /// Koji identifies signing keys by the last 4 bytes of the OpenPGP Key ID, hex-encoded,
@@ -73,6 +75,7 @@ pub struct KojiSigner<K: KojiOps = KojiHandle> {
     http_client: reqwest::Client,
     koji: K,
     concurrency: Arc<Semaphore>,
+    storage_limit: Option<Arc<Semaphore>>,
 }
 
 impl<K: KojiOps> KojiSigner<K> {
@@ -84,6 +87,11 @@ impl<K: KojiOps> KojiSigner<K> {
         http_client: reqwest::Client,
         koji: K,
     ) -> Self {
+        let storage_limit = config
+            .rpm
+            .storage_limit_mb
+            .map(Semaphore::new)
+            .map(Arc::new);
         Self {
             config,
             pgp_home,
@@ -91,6 +99,7 @@ impl<K: KojiOps> KojiSigner<K> {
             http_client,
             koji,
             concurrency,
+            storage_limit,
         }
     }
 
@@ -243,14 +252,41 @@ impl<K: KojiOps> KojiSigner<K> {
                     "The referenced IMA certificate couldn't be found!"
                 ));
             }
+
+            let rpm_size_in_mb = rpm.size >> 20;
+            if let Some(storage_limit) = self.config.rpm.storage_limit_mb
+                && rpm.size > (storage_limit * MB).try_into()?
+            {
+                return Err(anyhow::anyhow!(
+                    "RPM is larger ({} MiB) than the configured storage limit ({} MiB) and cannot be signed",
+                    rpm.size >> 20,
+                    storage_limit
+                ));
+            }
+
             let rpm_span = tracing::info_span!("rpm", rpm.id);
             signing_tasks.spawn(
                 async move {
-                    // Hold a permit until we've finished signing.
+                    // Hold the necessary permits until we've finished signing.
+                    //
                     // We do this inside the spawned task so that each build gets its RPMs in line for permits
                     // around the same time. We may want to consider a different strategy in the future if we
                     // would prefer huge builds to be interleaved with other signing tasks.
+                    //
+                    // If storage limits are enforced, builds first acquire a concurrency permit and _then_ the
+                    // required storage space. Because permits are given out in the order requested, small RPMs
+                    // will stack up behind a huge RPM when storage is limited.
                     let signing_permit = task_signer.concurrency.acquire().await?;
+                    let storage_permit = if let Some(storage_limit) = task_signer.storage_limit {
+                        let permit_count = rpm_size_in_mb
+                            .max(1)
+                            .try_into()
+                            .expect("RPMs larger than 4 PiB aren't supported");
+                        let permit = storage_limit.acquire_many_owned(permit_count).await?;
+                        Some(permit)
+                    } else {
+                        None
+                    };
                     let _active_guard =
                         Gauge::increment(crate::metrics_utils::rpms_active(), 1_f64);
                     let path = download(&task_signer.http_client, target_dir, &rpm).await?;
@@ -352,8 +388,15 @@ impl<K: KojiOps> KojiSigner<K> {
 
                     task_signer
                         .koji
-                        .add_signature(rpm.id, expected_sigkey, path)
+                        .add_signature(rpm.id, expected_sigkey, path.clone())
                         .await?;
+
+                    // We want to remove the file ASAP, rather than relying on the tempdir cleanup
+                    // because we may be tracking storage.
+                    let _ = tokio::fs::remove_file(path).await.inspect_err(|error| {
+                        tracing::error!(?error, "Failed to remove RPM after signing");
+                    });
+                    drop(storage_permit);
 
                     Ok::<_, anyhow::Error>(())
                 }

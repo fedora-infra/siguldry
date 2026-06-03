@@ -427,8 +427,28 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rpm {
+    /// The underlying tool to use for OpenPGP signatures.
     pub signing_tool: SigningTool,
+    /// If true, when signing RPMv6 packages, an RPM v4 header signature will also be
+    /// included. This is equivalent to passing the --rpmv4 flag to rpmsign.
     pub with_rpmv4: bool,
+
+    /// If set, a limit is applied to the amount of temporary storage used for downloaded
+    /// RPMs. The value is provided in MiB.
+    ///
+    /// Because the systemd unit makes use of a private tmpfs, and because some RPMs can
+    /// be quite large, you may wish to set an upper limit on the amount of temporary
+    /// storage used to avoid "No more space on device" type errors.
+    ///
+    /// This value must be larger than the largest RPM you wish to sign; if an RPM is
+    /// larger the message will be requeued for eternity until the limit is raised or
+    /// the message is dropped.
+    ///
+    /// `rpmsign` will also conditionally make a temporary copy of the RPM when signing
+    /// if it decides the signature will not fit in the existing reserved space. This
+    /// means that the available tmpfs space should be about twice as much as what this
+    /// value is set to. You may want to adjust the `tmp.mount` options.
+    pub storage_limit_mb: Option<usize>,
 
     /// The amount of time to wait for a build to be signed successfully; if a timeout is hit
     /// the message is requeued and attempted later. Note that when using IMA signing, the time
@@ -456,6 +476,7 @@ impl Default for Rpm {
         Self {
             signing_tool: Default::default(),
             with_rpmv4: true,
+            storage_limit_mb: None,
             timeout: default_rpm_timeout(),
         }
     }
