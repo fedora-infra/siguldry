@@ -100,9 +100,9 @@ impl Default for Amqp {
             prefetch_count: 128,
             bindings: vec![Binding::default()],
             tls: Credentials {
-                ca_cert: PathBuf::from("/etc/fedora-messaging/cacert.pem"),
-                keyfile: PathBuf::from("/etc/fedora-messaging/fedora-key.pem"),
-                certfile: PathBuf::from("/etc/fedora-messaging/fedora-cert.pem"),
+                ca_certificate: PathBuf::from("/etc/fedora-messaging/cacert.pem"),
+                private_key: PathBuf::from("/etc/fedora-messaging/fedora-key.pem"),
+                certificate: PathBuf::from("/etc/fedora-messaging/fedora-cert.pem"),
             },
         }
     }
@@ -162,9 +162,56 @@ impl From<QueueDeclareOptions> for lapin::options::QueueDeclareOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Credentials {
-    pub ca_cert: PathBuf,
-    pub keyfile: PathBuf,
-    pub certfile: PathBuf,
+    pub ca_certificate: PathBuf,
+    pub private_key: PathBuf,
+    pub certificate: PathBuf,
+}
+
+impl Credentials {
+    /// Fix up any relative paths in the configuration file to use the provided credentials directory.
+    ///
+    /// # Errors
+    ///
+    /// If the referenced files don't exist, an error is returned.
+    pub fn with_credentials_dir(
+        &mut self,
+        credentials_dir: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        if self.private_key.is_absolute() {
+            tracing::warn!(
+                private_key = self.private_key.display().to_string(),
+                "Path to private key file is absolute; consider using systemd credentials"
+            );
+        } else {
+            self.private_key = credentials_dir.join(&self.private_key);
+            if !self.private_key.exists() {
+                return Err(anyhow::anyhow!(
+                    "No private key file named '{}' found in credentials directory",
+                    self.private_key.display()
+                ));
+            }
+        }
+        if !self.certificate.is_absolute() {
+            self.certificate = credentials_dir.join(&self.certificate);
+            if !self.certificate.exists() {
+                return Err(anyhow::anyhow!(
+                    "No certificate file named '{}' found in credentials directory",
+                    self.certificate.display()
+                ));
+            }
+        }
+        if !self.ca_certificate.is_absolute() {
+            self.ca_certificate = credentials_dir.join(&self.ca_certificate);
+            if !self.ca_certificate.exists() {
+                return Err(anyhow::anyhow!(
+                    "No CA certificate file named '{}' found in credentials directory",
+                    self.ca_certificate.display()
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -54,7 +54,17 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
 
-    let config: config::Config = config::load_config(opts.config, &PathBuf::from(DEFAULT_CONFIG))?;
+    let config = {
+        let mut config: config::Config =
+            config::load_config(opts.config, &PathBuf::from(DEFAULT_CONFIG))?;
+        if let Some(cred_dir) = std::env::var_os("CREDENTIALS_DIRECTORY") {
+            config
+                .amqp
+                .tls
+                .with_credentials_dir(PathBuf::from(cred_dir).as_path())?;
+        }
+        config
+    };
 
     // Spawns the HTTP server onto the current Tokio runtime.
     if let Some(metrics) = &config.metrics {

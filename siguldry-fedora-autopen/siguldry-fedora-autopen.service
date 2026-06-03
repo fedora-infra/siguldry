@@ -87,5 +87,16 @@ SystemCallFilter=@system-service
 SystemCallArchitectures=native
 SystemCallErrorNumber=EPERM
 
+# The service authenticates to the AMQP broker with a client TLS certificate.
+#
+# You can use the systemd-creds utility to encrypt the private key, and in the configuration
+# refer to it via the file name in the credstore directory.
+#
+# For example:
+# $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/siguldry.amqp_client.private_key
+#
+# In your config file you would set `amqp.tls.private_key = "siguldry.amqp_client.private_key"`
+ImportCredential=siguldry.*
+
 [Install]
 WantedBy=multi-user.target

@@ -542,26 +542,26 @@ async fn process_message<K: KojiOps>(
 #[instrument(skip_all)]
 async fn connect(config: &crate::config::Amqp) -> anyhow::Result<Connection> {
     tracing::info!("Starting connection to the AMQP broker");
-    let pem = std::fs::read_to_string(&config.tls.certfile)
+    let pem = std::fs::read_to_string(&config.tls.certificate)
         .with_context(|| {
             format!(
                 "Unable to read client certificate {}",
-                config.tls.certfile.display()
+                config.tls.certificate.display()
             )
         })?
         .into_bytes();
-    let key = std::fs::read_to_string(&config.tls.keyfile)
+    let key = std::fs::read_to_string(&config.tls.private_key)
         .with_context(|| {
             format!(
                 "Unable to read client private key {}",
-                config.tls.keyfile.display()
+                config.tls.private_key.display()
             )
         })?
         .into_bytes();
-    let cert_chain = std::fs::read_to_string(&config.tls.ca_cert).with_context(|| {
+    let cert_chain = std::fs::read_to_string(&config.tls.ca_certificate).with_context(|| {
         format!(
             "Unable to read certificate authority {}",
-            config.tls.ca_cert.display()
+            config.tls.ca_certificate.display()
         )
     })?;
     let identity = OwnedIdentity::PKCS8 { pem, key };

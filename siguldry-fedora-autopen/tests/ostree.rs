@@ -93,9 +93,9 @@ async fn process_ostree_compose() -> anyhow::Result<()> {
 [amqp]
 amqp_url = "amqp://example.com/%2Fpublic_pubsub"
 [amqp.tls]
-ca_cert = "/dev/null"
-keyfile = "/dev/null"
-certfile = "/dev/null"
+ca_certificate = "/dev/null"
+private_key = "/dev/null"
+certificate = "/dev/null"
 [[amqp.bindings]]
 exchange = "amq.topic"
 routing_keys = []
