@@ -523,7 +523,7 @@ pub struct Siguldry {
 }
 
 fn default_signing_concurreny() -> NonZeroUsize {
-    NonZeroUsize::new(1024).expect("Set a non-zero default")
+    NonZeroUsize::new(128).expect("Set a non-zero default")
 }
 
 impl Default for Siguldry {
