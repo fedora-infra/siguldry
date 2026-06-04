@@ -169,3 +169,55 @@ The server will now connect to the bridge.
 The client is primarily used via the `libsiguldry_pkcs11.so` PKCS#11 module. In order to isolate the
 credentials from the PKCS#11 module, the `siguldry-client-proxy.socket` systemd socket is provided.
 This spawns a `siguldry-client-proxy@.service` instance.
+
+### Socket Limits
+
+Systemd enforces limits on the number of concurrent units created by sockets. The [systemd default
+is 64](https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html#MaxConnections=)
+and the default set by the unit shipped by siguldry is `256`. You will want to adjust this limit if
+you want more (or fewer) concurrent signing operations.
+
+There are related system limits you must also adjust. The most important one is on the
+systemd-provided `systemd-creds.socket`, which provides a varlink interface to decrypt secrets.
+Upstream uses the default `MaxConnections=` setting, and sets the related
+[MaxConnectionsPerSource=](https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html#MaxConnectionsPerSource=)
+to 16. Each unit spawned by `siguldry-client-proxy.socket` will, assuming you use systemd-creds, use
+a connection to decrypt the client's private key and any key passphrases. Removing the
+`MaxConnectionsPerSource=` setting and bumping `MaxConnections=` equal to or slightly more than the
+value set by `siguldry-client-proxy.socket` is recommended.
+
+
+## siguldry-fedora-autopen
+
+Start and enable the `siguldry-fedora-autopen.service` unit. 
+
+> [!NOTE]
+> This unit has a dependency on the `siguldry-client-proxy.socket` unit.
+
+The configuration file for this service includes a number of limits and tunables you should consider carefully in combination with the socket limits you'ved configured for `siguldry-client-proxy.socket` and `systemd-creds.socket`. The `siguldry.concurrency` option controls how many connections to `siguldry-client-proxy.socket` the service will make.
+
+### AMQP
+
+In addition to configuring how to connect to the AMQP broker, the `amqp` configuration section includes two tunables: `prefetch_count` and `redelivery_delay`.
+
+#### Prefect Count
+
+The `prefect_count` setting controls [how many unacknowledged messages](https://www.rabbitmq.com/docs/confirms#channel-qos-prefetch) the broker will deliver. Messages are processed concurrently, and each message will result in at least one signing request, but typically will involve multiple requests. For example, a Koji build will contain multiple RPMs which must each be signed. Other, content-specific limits apply, but this is the top-level concurrency tunable.
+
+#### Redelivery Delay
+
+If a message is not processed successfully, it will be requeued and redelivered by the broker. Sometimes this is because there's a client bug, or the message is otherwise referencing "bad" data. At the moment, the AMQP client does not dead-letter messages, so it will spin forever on a bad message until an admin examines it.
+
+The `redelivery_delay` is an artifical delay applied to a message that is flagged as being previously delivered to ensure we don't spin too fast.
+
+### RPM
+
+Each RPM is signed by running an `rpmsign` subprocess. When IMA is enabled, this will start a new `siguldry-client-proxy.socket` connection so `siguldry.concurrency` roughly controls how many RPMs will be signed at the same time.
+
+However, because `rpmsign` requires the entire RPM file, another limit is available. The `rpm.storage_limit_mb` will limit, in Mebibytes, the amount of space used to download RPMs. The appropriate value for this is, unfortunately, somewhat tricky to calculate. RPMs are downloaded to `/tmp`, and `rpmsign` _may_ make a copy of the RPM while signing, so you should ensure that `tmp.mount` is configured such that it's at least twice as large as `storage_limit_mb`, and `storage_limit_mb` must also be larger than the largest RPM you wish to sign.
+
+Storage is granted in the order it is requested, so if your limit is set to `1000`, `500` is currently in use, and an RPM arrives that needs `950`, no additional RPMs will be granted space until sufficient room is available for the RPM that needs `950`.
+
+### Metrics
+
+The service provides optional Prometheus-compatible metrics. Setting the `metrics.http_listener` configuration option will enable these metrics. Be aware that if you use a port other than `9000`, you must adjust the [SocketBindAllow=](https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html#SocketBindAllow=bind-rule) setting on the `siguldry-fedora-autopen.service`.
