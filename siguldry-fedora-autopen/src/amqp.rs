@@ -80,11 +80,15 @@ pub async fn connect_and_consume<K: KojiOps>(
     }
     tracing::info!("Successfully declared all queue bindings");
 
+    let max_concurrency = config.siguldry.concurrency.get();
+    let consumed_by_gpg = pgp_home.gpg_homedirs.len();
+    let concurrency = max_concurrency.saturating_sub(consumed_by_gpg);
     tracing::info!(
-        "Signing will allow at most {} operations concurrently",
-        config.siguldry.concurrency.get()
+        "Signing will allow at most {} operations concurrently ({} connections consumed by gpg)",
+        concurrency,
+        consumed_by_gpg
     );
-    let concurrency = Arc::new(Semaphore::new(config.siguldry.concurrency.get()));
+    let concurrency = Arc::new(Semaphore::new(concurrency));
     let koji_signer = rpmsign::KojiSigner::new(
         Arc::clone(&config),
         Arc::clone(&concurrency),
