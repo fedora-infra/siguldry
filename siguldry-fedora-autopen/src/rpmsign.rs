@@ -11,13 +11,13 @@ use anyhow::Context;
 use openssl::hash::{Hasher, MessageDigest};
 use serde::{Deserialize, Serialize};
 use siguldry::protocol::{Certificate, Key};
+use tempfile::TempPath;
 use tokio::{
     io::{AsyncWriteExt, BufWriter},
     process::Command,
     sync::Semaphore,
 };
 use tracing::{Instrument, Level, instrument};
-use uuid::Uuid;
 
 use crate::{
     PgpConfig,
@@ -214,6 +214,7 @@ impl<K: KojiOps> KojiSigner<K> {
                     rpm.epoch,
                     rpm.version,
                     rpm.release,
+                    rpm.arch,
                     "Skipping RPM since it's already been signed by this key"
                 );
                 false
@@ -384,8 +385,10 @@ impl<K: KojiOps> KojiSigner<K> {
                         tracing::info!(
                             rpm.id,
                             rpm.name,
+                            rpm.epoch = rpm.epoch.unwrap_or(0),
                             rpm.version,
                             rpm.release,
+                            rpm.arch,
                             siguldry_key,
                             siguldry_key_ima,
                             "Successfully signed RPM"
@@ -394,12 +397,10 @@ impl<K: KojiOps> KojiSigner<K> {
 
                     task_signer
                         .koji
-                        .add_signature(rpm.id, expected_sigkey, path.clone())
+                        .add_signature(rpm.id, expected_sigkey, path.to_path_buf())
                         .await?;
 
-                    // We want to remove the file ASAP, rather than relying on the tempdir cleanup
-                    // because we may be tracking storage.
-                    let _ = tokio::fs::remove_file(path).await.inspect_err(|error| {
+                    let _ = path.close().inspect_err(|error| {
                         tracing::error!(?error, "Failed to remove RPM after signing");
                     });
                     drop(storage_permit);
@@ -478,25 +479,23 @@ async fn download(
     http_client: &reqwest::Client,
     dest_dir: PathBuf,
     rpm: &Rpm,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<TempPath> {
     let url = reqwest::Url::parse(&rpm.url)?;
-    // We don't have the RPM arch, and this seems like the easiest way to make a unique name
-    let destination = dest_dir.join(Uuid::new_v4().to_string());
-
     tracing::debug!(path = url.path(), "Attempting to download RPM from Koji");
+
+    // The file is removed when destination is dropped
+    let destination = tempfile::Builder::new()
+        .permissions(Permissions::from_mode(0o600))
+        .suffix(format!("-{}", rpm.filename()).as_str())
+        .tempfile_in(&dest_dir)?;
+    let (file, destination) = destination.into_parts();
+    let mut file = BufWriter::new(tokio::fs::File::from_std(file));
 
     // TODO: be more precise
     let mut response = http_client.get(url).send().await?.error_for_status()?;
     let content_length = response.content_length();
     tracing::debug!(content_length, rpm.size, "Response received");
 
-    let file = tokio::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(&destination)
-        .await?;
-    let mut file = BufWriter::new(file);
     let mut bytes_written = 0;
     let artifact_size_gauge = crate::metrics_utils::rpms_storage();
     let mut digest = Hasher::new(MessageDigest::sha256())?;
@@ -733,13 +732,7 @@ mod tests {
         }
 
         async fn write_signed_rpm(&self, rpm_id: i64, _sigkey: String) -> anyhow::Result<()> {
-            assert!(
-                self.build
-                    .rpms
-                    .iter()
-                    .find(|rpm| rpm.id == rpm_id)
-                    .is_some()
-            );
+            assert!(self.build.rpms.iter().any(|rpm| rpm.id == rpm_id));
             Ok(())
         }
 
@@ -850,6 +843,7 @@ mod tests {
             name: "hello".into(),
             version: "1".into(),
             release: "1.fc45".into(),
+            arch: "x86_64".into(),
             size: body.len() as u64,
             url,
             sha256sum,

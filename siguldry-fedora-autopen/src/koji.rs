@@ -67,10 +67,24 @@ pub struct Rpm {
     pub name: String,
     pub version: String,
     pub release: String,
+    pub arch: String,
     pub size: u64,
     pub url: String,
     pub sha256sum: String,
     pub existing_sigkeys: Vec<String>,
+}
+
+impl Rpm {
+    pub fn filename(&self) -> String {
+        format!(
+            "{}:{}-{}-{}.{}.rpm",
+            self.epoch.unwrap_or(0),
+            self.name,
+            self.version,
+            self.release,
+            self.arch
+        )
+    }
 }
 
 #[derive(Debug, Clone, Default, FromPyObject)]

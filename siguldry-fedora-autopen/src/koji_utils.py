@@ -43,10 +43,11 @@ class TagEvent:
 class Rpm:
     id: int
     draft: bool
-    epoch: Optional[int]
     name: str
+    epoch: Optional[int]
     version: str
     release: str
+    arch: str
     size: int
     # The download URL for the RPM
     url: str
@@ -142,10 +143,11 @@ class Client:
             rpm_info = Rpm(
                 id=rpm["id"],
                 draft=rpm["draft"],
-                epoch=rpm["epoch"],
                 name=rpm["name"],
+                epoch=rpm["epoch"],
                 version=rpm["version"],
                 release=rpm["release"],
+                arch=rpm["arch"],
                 size=rpm["size"],
                 url=rpm_download_url,
                 sha256sum=rpm_checksums[""]["sha256"],
