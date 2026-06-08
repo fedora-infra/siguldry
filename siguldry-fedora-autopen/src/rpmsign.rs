@@ -5,6 +5,7 @@
 
 use std::{
     collections::HashMap, fs::Permissions, os::unix::fs::PermissionsExt, path::PathBuf, sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -92,6 +93,9 @@ impl<K: KojiOps> KojiSigner<K> {
             .storage_limit_mb
             .map(Semaphore::new)
             .map(Arc::new);
+        tokio::spawn(approximate_storage_usage(
+            config.rpm.working_directory.clone(),
+        ));
         Self {
             config,
             pgp_home,
@@ -291,8 +295,6 @@ impl<K: KojiOps> KojiSigner<K> {
                     let _active_guard =
                         Gauge::increment(crate::metrics_utils::rpms_active(), 1_f64);
                     let path = download(&task_signer.http_client, target_dir, &rpm).await?;
-                    let _storage_guard =
-                        Gauge::from_gauge(crate::metrics_utils::rpms_storage(), rpm.size as f64);
 
                     let mut command = Command::new("rpmsign");
                     command
@@ -498,14 +500,12 @@ async fn download(
     tracing::debug!(content_length, rpm.size, "Response received");
 
     let mut bytes_written = 0;
-    let artifact_size_gauge = crate::metrics_utils::rpms_storage();
     let mut digest = Hasher::new(MessageDigest::sha256())?;
     while let Some(chunk) = response.chunk().await? {
         let chunk_size = chunk.len();
         tracing::trace!(?destination, chunk_size, "Writing chunk to file");
         file.write_all(&chunk).await?;
         bytes_written += chunk_size;
-        artifact_size_gauge.increment(chunk_size as f64);
         digest.update(&chunk)?;
     }
     file.shutdown().await?;
@@ -539,6 +539,45 @@ async fn download(
     Ok(destination)
 }
 
+// Track the storage used, approximately.
+async fn approximate_storage_usage(working_directory: PathBuf) {
+    let interval = Duration::from_secs(5);
+    let artifact_size_gauge = crate::metrics_utils::rpms_storage();
+    loop {
+        tokio::time::sleep(interval).await;
+
+        let mut size_in_bytes: u64 = 0;
+        let mut dirs = vec![working_directory.clone()];
+
+        while let Some(dir) = dirs.pop() {
+            let mut entries = match tokio::fs::read_dir(&dir).await {
+                Ok(entries) => entries,
+                Err(error) => {
+                    tracing::debug!(?error, ?dir, "Failed to read directory for storage usage");
+                    continue;
+                }
+            };
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                match tokio::fs::symlink_metadata(entry.path()).await {
+                    Ok(m) if m.is_symlink() => {}
+                    Ok(m) if m.is_dir() => dirs.push(entry.path()),
+                    Ok(m) => size_in_bytes += m.len(),
+                    Err(error) => {
+                        tracing::debug!(?error, ?entry, "Failed to read entry metadata");
+                    }
+                };
+            }
+        }
+
+        tracing::debug!(
+            size_in_bytes,
+            ?working_directory,
+            "Approximate storage usage"
+        );
+        artifact_size_gauge.set(size_in_bytes as f64);
+    }
+}
+
 // Wrapper that decrements on drop.
 struct Gauge {
     inner: metrics::Gauge,
@@ -549,11 +588,6 @@ impl Gauge {
     /// Increment the gauge by the given amount, then decrement by that amount on drop.
     fn increment(inner: metrics::Gauge, amount: f64) -> Self {
         inner.increment(amount);
-        Self { inner, amount }
-    }
-
-    /// Decrement the given amount from the gauge on drop.
-    fn from_gauge(inner: metrics::Gauge, amount: f64) -> Self {
         Self { inner, amount }
     }
 }
