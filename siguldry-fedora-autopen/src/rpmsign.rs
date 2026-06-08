@@ -170,16 +170,16 @@ impl<K: KojiOps> KojiSigner<K> {
         );
 
         // All permissions checks are done; set up the signing environment
-        let temp_dir_root = std::env::temp_dir();
         let temp_dir = tempfile::Builder::new()
             .permissions(Permissions::from_mode(0o700))
             .prefix(&format!("rpm-build-{}-", build.build_id))
             .rand_bytes(16)
-            .tempdir_in(&temp_dir_root)
+            .tempdir_in(&self.config.rpm.working_directory)
             .inspect_err(|error| {
                 tracing::error!(
                     ?error,
-                    "Failed to make temporary directory inside {temp_dir_root:?}"
+                    "Failed to make temporary directory inside {:?}",
+                    self.config.rpm.working_directory,
                 );
             })?;
 

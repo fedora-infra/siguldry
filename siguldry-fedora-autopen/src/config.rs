@@ -450,6 +450,21 @@ pub struct Rpm {
     /// value is set to. You may want to adjust the `tmp.mount` options.
     pub storage_limit_mb: Option<usize>,
 
+    /// The location to use as a working directory when downloading and signing RPMs.
+    ///
+    /// RPMs can be quite large, and `rpmsign` requires the entire RPM to be present even
+    /// though it only signs the header. Additionally, `rpmsign` may make a temporary copy
+    /// in $TMPDIR while signing. All this can lead to enormous memory usage when your tmpfs
+    /// is backed by memory.
+    ///
+    /// The default location is /var/tmp/, which is typically backed by persistent storage and
+    /// kept tidy by systemd. As all the files _should_ be short-lived, this shouldn't be an
+    /// issue. The amount of space used in this directory can be controlled by `storage_limit_mb`,
+    /// and is recommended as that also indirectly controls the amount of space `rpmsign` uses
+    /// via its copies in the memory-backed /tmp/ directory.
+    #[serde(default = "default_rpm_working_dir")]
+    pub working_directory: PathBuf,
+
     /// The amount of time to wait for a build to be signed successfully; if a timeout is hit
     /// the message is requeued and attempted later. Note that when using IMA signing, the time
     /// it takes to sign scales proportionally with the number of files in the RPM.
@@ -461,6 +476,10 @@ pub struct Rpm {
 
 fn default_rpm_timeout() -> Duration {
     Duration::from_secs(60 * 60)
+}
+
+fn default_rpm_working_dir() -> PathBuf {
+    PathBuf::from("/var/tmp/")
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
@@ -477,6 +496,7 @@ impl Default for Rpm {
             signing_tool: Default::default(),
             with_rpmv4: true,
             storage_limit_mb: None,
+            working_directory: default_rpm_working_dir(),
             timeout: default_rpm_timeout(),
         }
     }
