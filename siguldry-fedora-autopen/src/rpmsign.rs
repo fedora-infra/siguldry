@@ -486,6 +486,7 @@ async fn download(
     // The file is removed when destination is dropped
     let destination = tempfile::Builder::new()
         .permissions(Permissions::from_mode(0o600))
+        .prefix("pkg-")
         .suffix(format!("-{}", rpm.filename()).as_str())
         .tempfile_in(&dest_dir)?;
     let (file, destination) = destination.into_parts();
