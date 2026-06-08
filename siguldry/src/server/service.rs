@@ -256,10 +256,12 @@ async fn handle(
             }
         };
 
-        let mut db_transaction = db.begin().await?;
         let response = match outer_request.request {
             Request::WhoAmI {} => request_handler.who_am_i(),
-            Request::ListKeys {} => request_handler.list_keys(&mut db_transaction, &user).await,
+            Request::ListKeys {} => {
+                let mut db_conn = db.acquire().await?;
+                request_handler.list_keys(&mut db_conn, &user).await
+            }
             Request::Unlock { key, password } => request_handler.unlock(key, password).await,
             Request::Sign {
                 key,
@@ -267,12 +269,14 @@ async fn handle(
                 digest,
             } => request_handler.sign(&key, digest_algorithm, digest).await,
             Request::SignAll { key, digests } => request_handler.sign_all(&key, digests).await,
-            Request::GetKey { key } => request_handler.public_key(&mut db_transaction, key).await,
+            Request::GetKey { key } => {
+                let mut db_conn = db.acquire().await?;
+                request_handler.public_key(&mut db_conn, key).await
+            }
         };
 
         match response {
             Ok(response) => {
-                db_transaction.commit().await?;
                 let json_response = protocol::OuterResponse {
                     session_id: outer_request.session_id,
                     request_id: outer_request.request_id,
@@ -285,7 +289,6 @@ async fn handle(
                 conn.write_all(json_response.as_bytes()).await?;
             }
             Err(reason) => {
-                db_transaction.rollback().await?;
                 let json_response = protocol::OuterResponse {
                     session_id: outer_request.session_id,
                     request_id: outer_request.request_id,
