@@ -93,10 +93,10 @@ SystemCallErrorNumber=EPERM
 # refer to it via the file name in the credstore directory.
 #
 # For example:
-# $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/siguldry.amqp_client.private_key
+# $ systemd-creds encrypt /secure/ramfs/private-key.pem /etc/credstore.encrypted/fedora-autopen.amqp_client.private_key
 #
-# In your config file you would set `amqp.tls.private_key = "siguldry.amqp_client.private_key"`
-ImportCredential=siguldry.*
+# In your config file you would set `amqp.tls.private_key = "fedora-autopen.amqp_client.private_key"`
+ImportCredential=fedora-autopen.*
 
 [Install]
 WantedBy=multi-user.target
