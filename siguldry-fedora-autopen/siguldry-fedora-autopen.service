@@ -1,7 +1,7 @@
 [Unit]
 Description=Siguldry autosigning service
-Requires=siguldry-client-proxy.socket
-After=siguldry-client-proxy.socket
+Requires=siguldry-client-shared-proxy.socket
+After=siguldry-client-shared-proxy.socket
 
 [Service]
 Type=simple

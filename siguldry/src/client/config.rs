@@ -31,11 +31,21 @@ pub struct Config {
     /// the certificate must have the `clientAuth` extended key usage extension.
     pub credentials: Credentials,
 
+    /// Enforce a limit on the number of concurrent connections to accept when running as a proxy.
+    ///
+    /// This only applies when using the `bind` or `accept-no` proxy modes. The default is unlimited.
+    #[serde(default = "default_concurrency")]
+    pub proxy_concurrency: usize,
+
     /// A list of keys to unlock for the client.
     ///
     /// This can be set for users of the client who can't (or don't want to) call unlock or safely
     /// store a password. One example would be the PKCS#11 module used inside a build environment.
     pub keys: Vec<Key>,
+}
+
+fn default_concurrency() -> usize {
+    tokio::sync::Semaphore::MAX_PERMITS
 }
 
 impl Default for Config {
@@ -50,6 +60,7 @@ impl Default for Config {
                 certificate: PathBuf::from("siguldry.client.certificate.pem"),
                 ca_certificate: PathBuf::from("siguldry.ca_certificate.pem"),
             },
+            proxy_concurrency: default_concurrency(),
             keys: vec![],
         }
     }

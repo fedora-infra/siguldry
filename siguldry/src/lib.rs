@@ -49,6 +49,12 @@ By default, the server, bridge, and client for Siguldry along with their CLIs is
 [2]: https://crates.io/crates/siguldry-pkcs11
 */
 
+use std::{
+    num::NonZeroU32,
+    os::fd::{AsFd, FromRawFd, OwnedFd},
+};
+
+use anyhow::Context;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
@@ -120,4 +126,116 @@ pub fn raise_nofiles() -> anyhow::Result<()> {
         .context("Failed to set file limits")?;
 
     Ok(())
+}
+
+/// Check for and return any file descriptors passed in from systemd
+///
+/// Refer to sd_listen_fds (3) for details.
+///
+/// Returns the list of (optional) file descriptor name and the descriptor itself.
+#[doc(hidden)]
+#[cfg(feature = "cli")]
+pub fn listen_fds() -> Result<Vec<(Option<String>, OwnedFd)>, anyhow::Error> {
+    const SD_LISTEN_FDS_START: u32 = 3;
+    const PID_FS_MAGIC: u64 = 0x50494446;
+
+    let our_pid = std::process::id();
+
+    match std::env::var("LISTEN_PID") {
+        Ok(listen_pid) => {
+            let listen_pid = listen_pid.parse::<u32>().with_context(|| {
+                format!("Failed to parse LISTEN_PID={listen_pid} as an unsigned 32 bit integer")
+            })?;
+            if our_pid != listen_pid {
+                tracing::warn!(listen_pid, our_pid, "LISTEN_PID provided, but not for us");
+                return Ok(vec![]);
+            }
+        }
+        Err(_) => return Ok(vec![]),
+    }
+
+    // Newer systemd versions will also provide the pidfd's inode so we can double check
+    // these variables really are meant for us.
+    if let Ok(listen_pidfdid) = std::env::var("LISTEN_PIDFDID") {
+        let listen_pidfdid = listen_pidfdid.parse::<u64>().with_context(|| {
+            format!("Failed to parse LISTEN_PIDFDID={listen_pidfdid} as an unsigned 64 bit integer")
+        })?;
+        tracing::debug!("systemd provided LISTEN_PIDFDID={listen_pidfdid}");
+
+        let pidfd = rustix::process::pidfd_open(
+            rustix::process::getpid(),
+            rustix::process::PidfdFlags::empty(),
+        )
+        .context("Failed to open a pidfd for our own process")?;
+        if rustix::fs::fstatfs(&pidfd)
+            .map(|statfs| {
+                tracing::debug!(statfs.f_type, "PIDFD filesystem type");
+                statfs.f_type as u64 == PID_FS_MAGIC
+            })
+            .inspect_err(|error| {
+                tracing::info!(
+                    ?error,
+                    "Failed to read PIDFD's filesystem statistics, skipping LISTEN_PIDFDID check"
+                );
+            })
+            .unwrap_or(false)
+        {
+            let our_pidfdid = rustix::fs::fstat(&pidfd)
+                .context("Failed to stat our pidfd")?
+                .st_ino;
+            if our_pidfdid != listen_pidfdid {
+                tracing::warn!(
+                    listen_pidfdid,
+                    our_pidfdid,
+                    "LISTEN_PIDFDID provided, but not for us"
+                );
+                return Ok(vec![]);
+            } else {
+                tracing::debug!(our_pidfdid, "LISTEN_PIDFDID matches our pidfd ID");
+            }
+        }
+    }
+
+    let mut fds = vec![];
+    let fd_names = std::env::var("LISTEN_FDNAMES")
+        .map(|names| names.split(":").map(|n| n.to_string()).collect::<Vec<_>>())
+        .inspect_err(|_| tracing::debug!("No LISTEN_FDNAMES variable provided"))
+        .unwrap_or_default();
+    if let Ok(num) = std::env::var("LISTEN_FDS") {
+        let fd_count = num.parse::<NonZeroU32>().with_context(|| {
+            format!("Failed to parse LISTEN_FDS={num} as a non-zero unsigned integer")
+        })?;
+        if fd_count.get() > u32::MAX - SD_LISTEN_FDS_START {
+            return Err(anyhow::anyhow!(
+                "Number of file descriptors provided would overflow a u32"
+            ));
+        }
+
+        let mut names = fd_names.into_iter();
+        for fd in SD_LISTEN_FDS_START..SD_LISTEN_FDS_START + fd_count.get() {
+            let raw_fd = fd.try_into().with_context(|| {
+                format!("Failed to convert the file descriptor {fd} to a RawFd")
+            })?;
+
+            // Safety:
+            //
+            // systemd promises that if it sets the LISTEN_FDS environment variable to a non-zero
+            // number, it shall provide that number of valid file descriptors to the program it
+            // executes. Furthermore, these file descriptors are guaranteed to start at 3 (e.g.
+            // directly after the stdin, stdout, and stderr descriptors) and continue up to the
+            // value provided in LISTEN_FDS + 3.
+            let owned_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+
+            let old_flags =
+                rustix::io::fcntl_getfd(owned_fd.as_fd()).context("Failed to retrieve fd flags")?;
+            let mut new_flags = old_flags;
+            new_flags.insert(rustix::io::FdFlags::CLOEXEC);
+            tracing::debug!(?old_flags, ?new_flags, "Setting CLOEXEC on fd");
+            rustix::io::fcntl_setfd(owned_fd.as_fd(), new_flags)
+                .context("Failed to set CLOEXEC")?;
+            fds.push((names.next(), owned_fd));
+        }
+    }
+
+    Ok(fds)
 }

@@ -19,7 +19,7 @@ default = ["server", "cli"]
 # Enable the server APIs
 server = ["dep:cryptoki", "dep:sqlx", "dep:rustix"]
 # Build command-line interfaces for enabled components
-cli = ["dep:clap", "dep:tracing-subscriber", "tokio/rt-multi-thread", "rustix/process"]
+cli = ["dep:clap", "dep:tracing-subscriber", "tokio/rt-multi-thread", "rustix/process", "rustix/fs"]
 
 # Build the Sigul 1.2 client
 sigul-client = []
@@ -46,6 +46,9 @@ optional = true
 
 [dependencies.hex]
 version = "0.4"
+
+[dependencies.libc]
+version = "0.2"
 
 [dependencies.openssl]
 version = "0.10.81"

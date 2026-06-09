@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::Context;
 use clap::Parser;
 use siguldry::{
-    client::{Client, Config, proxy},
+    client::{Client, Config},
     config::load_config,
     signal_handler,
 };
@@ -91,20 +91,60 @@ enum Command {
     Config,
     /// Proxy commands from a local process to the server.
     ///
-    /// By default, commands and responses are sent over stdin and stdout respectively.
+    /// The mode has security implications. Running with `accept-yes` ensures clients are isolated
+    /// from one another since each connection runs as its own systemd instance. Running with
+    /// `accept-no` does not isolate clients, but does sandbox the proxy which is okay if the proxy
+    /// unlocks the signing keys.
+    ///
+    /// `bind` should only be used for testing purposes as there is no isolation from the host system.
     Proxy {
+        /// Control how the proxy accepts requests from clients.
+        #[arg(long, value_enum, default_value_t = ProxyMode::AcceptYes)]
+        mode: ProxyMode,
+
         /// If provided, bind a Unix socket to the given location and proxy clients
         /// that connect to it rather than using stdin/stdout.
         ///
         /// NOTE: Any user that has permission to read/write to this socket is able to
         /// connect to the Siguldry server and, if keys are configured to be unlocked,
         /// sign with those keys. Be *VERY* careful about the socket permissions.
-        #[arg(long)]
+        #[arg(long, required_if_eq("mode", "bind"))]
         socket: Option<PathBuf>,
     },
     /// See available keys and certificates.
     #[command(subcommand)]
     Key(KeyCommands),
+}
+
+#[derive(Clone, Debug, clap::ValueEnum)]
+enum ProxyMode {
+    /// Bind a Unix socket to the provided path and accept connections to it
+    ///
+    /// In this mode, there's no integration or dependency on systemd. This is primarily useful
+    /// for test environments and should not be used in production.
+    Bind,
+
+    /// Operate in a mode compatible with a systemd socket with the `Accept=yes` configuration
+    ///
+    /// In this mode, systemd accepts the connection and spawns a new unit instance for it; requests
+    /// are accepted over stdin and responses sent over stdout.
+    ///
+    /// In this mode, every request is isolated in its own process and sytemd sandbox. It's best used
+    /// when the client provides the secret to unlock the signing key, and when the request volume is
+    /// relatively low and maximum isolation between clients is desirable.
+    AcceptYes,
+
+    /// Operate in a mode compatible with a systemd socket with the `Accept=no` configuration
+    ///
+    /// In this mode, systemd binds the socket and passes the file descriptors on to us. A single
+    /// service is run to handle the requests. Different connections to the socket are handled by the
+    /// same process, so there is less isolation.
+    ///
+    /// Each connection still has its own client so keys unlocked by the client are not shared,
+    /// but there is no process isolation or separation via namespaces. This mode is best used
+    /// when the keys are configured to be unlocked by the proxy rather than by the user of the
+    /// socket since there are no user-provided secrets to isolate from each other.
+    AcceptNo,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -228,50 +268,143 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         },
-        Command::Proxy { socket } => {
-            let halt_token = CancellationToken::new();
-            tokio::spawn(signal_handler(halt_token.clone()));
-            if let Some(socket) = socket {
-                let listener = UnixListener::bind(&socket)
-                    .with_context(|| format!("Failed to bind to {}", &socket.display()))?;
-                let request_tracker = TaskTracker::new();
-                loop {
-                    let stream = tokio::select! {
-                        _ = halt_token.cancelled() => {
-                            tracing::info!("proxy halted; shutting down");
-                            return Ok(());
-                        }
-                        result = listener.accept() => {
-                            match result {
-                                Ok((unix_stream, _)) => {
-                                    unix_stream
-                                },
-                                Err(error) => {
-                                    tracing::error!(?socket, ?error, "Failed to accept request");
-                                    break;
-                                },
-                            }
-                        }
-                    };
-                    let (reader, writer) = tokio::io::split(stream);
-                    request_tracker.spawn(
-                        proxy(
-                            Client::new(config.clone())?,
-                            halt_token.clone(),
-                            reader,
-                            writer,
-                        )
-                        .instrument(tracing::info_span!("proxy")),
-                    );
-                }
-                request_tracker.close();
-                request_tracker.wait().await;
-            } else {
-                let requests = tokio::io::stdin();
-                let responses = tokio::io::stdout();
-                proxy(client, halt_token.clone(), requests, responses).await?;
-            }
+        Command::Proxy { mode, socket } => {
+            run_proxy(config, client, mode, socket).await?;
         }
+    }
+
+    Ok(())
+}
+
+async fn run_proxy(
+    config: Config,
+    client: Client,
+    mode: ProxyMode,
+    socket: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let halt_token = CancellationToken::new();
+    tokio::spawn(signal_handler(halt_token.clone()));
+
+    let listener = match mode {
+        ProxyMode::Bind => {
+            let socket =
+                socket.expect("Clap is configured to require this argument when bind mode is set");
+            let listener = UnixListener::bind(&socket)
+                .with_context(|| format!("Failed to bind to {}", &socket.display()))?;
+            Some(listener)
+        }
+        ProxyMode::AcceptYes => None,
+        ProxyMode::AcceptNo => {
+            let fds = siguldry::listen_fds()
+                .context("Environment variables are set, but use invalid values")?;
+            if fds.len() > 1 {
+                return Err(anyhow::anyhow!(
+                    "An unexpected number of file descriptors ({}) were provided",
+                    fds.len()
+                ));
+            }
+            let (fd_name, fd) = if let Some(value) = fds.into_iter().next() {
+                value
+            } else {
+                return Err(anyhow::anyhow!(
+                    "No file descriptors were provided; this must be run by a systemd socket with Accept=no"
+                ));
+            };
+
+            let std_listener = std::os::unix::net::UnixListener::from(fd);
+            std_listener
+                .set_nonblocking(true)
+                .context("Failed to set systemd socket to non-blocking mode")?;
+            let listener = UnixListener::from_std(std_listener)
+                .with_context(|| format!("Failed to create async listener from fd {fd_name:?}"))?;
+            tracing::info!(?fd_name, "Listening on systemd-provided socket");
+            Some(listener)
+        }
+    };
+
+    if let Some(listener) = listener {
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.proxy_concurrency));
+        let request_tracker = TaskTracker::new();
+        let mut client = client;
+        loop {
+            // Once we hit our limit, connections should stack up until they hit the `somaxconn`
+            // limit, at which point clients will start getting a connection refused error.
+            let permit = tokio::select! {
+                _ = halt_token.cancelled() => {
+                    break;
+                }
+                result = semaphore.clone().acquire_owned() => {
+                    result
+                }
+            }?;
+
+            let stream = tokio::select! {
+                _ = halt_token.cancelled() => {
+                    break;
+                }
+                result = listener.accept() => {
+                    match result {
+                        Ok((unix_stream, _)) => {
+                            unix_stream
+                        },
+                        Err(error) => {
+                            // We should be really careful here since if we break, we'll wait for existing
+                            // connections to complete and never accept new connections, and if we exit immediately
+                            // existing connections will fail. To start with, we can log errors loudly and if cases
+                            // emerge we really have to exit for, we can add them here.
+                            match error.kind() {
+                                std::io::ErrorKind::ConnectionAborted => {
+                                    tracing::debug!(?error, "Client connection was aborted");
+                                },
+                                _ => {
+                                    match error.raw_os_error() {
+                                        Some(libc::EMFILE | libc::ENFILE | libc::ENOMEM | libc::ENOBUFS) => {
+                                            tracing::warn!(?error, "Not enough system resources to open another connection - delaying before trying again!");
+                                            tokio::select! {
+                                                _ = halt_token.cancelled() => break,
+                                                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                                            }
+                                            continue;
+                                        },
+                                        errno => tracing::error!(?error, errno, "An error occurred while accepting the request"),
+                                    }
+                                }
+                            }
+                            continue;
+                        },
+                    }
+                }
+            };
+
+            let connection_halt_token = halt_token.clone();
+            let (reader, writer) = tokio::io::split(stream);
+            request_tracker.spawn(
+                async move {
+                    let _permit = permit;
+                    if let Err(error) =
+                        siguldry::client::proxy(client, connection_halt_token, reader, writer).await
+                    {
+                        tracing::warn!(?error, "Proxy connection did not shut down cleanly");
+                    }
+                }
+                .instrument(tracing::info_span!("proxy")),
+            );
+            client = Client::new(config.clone())?;
+        }
+
+        tracing::debug!("Proxy halted; shutting down");
+        request_tracker.close();
+        if !request_tracker.is_empty() {
+            tracing::info!(
+                "Waiting for {} connections to complete",
+                request_tracker.len()
+            );
+        }
+        request_tracker.wait().await;
+    } else {
+        let requests = tokio::io::stdin();
+        let responses = tokio::io::stdout();
+        siguldry::client::proxy(client, halt_token.clone(), requests, responses).await?;
     }
 
     Ok(())

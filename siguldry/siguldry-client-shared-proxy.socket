@@ -1,0 +1,22 @@
+[Unit]
+Description=Siguldry shared client proxy
+# By default both the Accept=yes flavor listens on the same socket path.
+# If, for some unconceivable reason you want both, use an override file to
+# change the path and drop this Conflicts= directive.
+Conflicts=siguldry-client-proxy.socket
+
+[Socket]
+Accept=no
+SocketUser=siguldry
+SocketGroup=siguldry
+SocketMode=0660
+ListenStream=%t/siguldry-client-proxy/siguldry-client-proxy.socket
+Service=siguldry-client-shared-proxy.service
+# In the event that you need to provide additional users access to the socket,
+# You can add a unit override snippet that includes one or more post-start
+# commands that are similar to:
+#
+#ExecStartPost=/usr/bin/setfacl -m u:kojibuilder:rwx %t/siguldry-client-proxy/siguldry-client-proxy.socket
+
+[Install]
+WantedBy=sockets.target
