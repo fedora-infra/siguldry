@@ -54,6 +54,18 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
 
+    // We really need a siguldry-common crate for stuff like this
+    let current_nofile_limits = rustix::process::getrlimit(rustix::process::Resource::Nofile);
+    let mut new_nofile_limits = current_nofile_limits;
+    new_nofile_limits.current = current_nofile_limits.maximum;
+    tracing::debug!(
+        "Raising the RLIMIT_NOFILE value from {:?} to {:?}",
+        current_nofile_limits.current,
+        new_nofile_limits.current
+    );
+    rustix::process::setrlimit(rustix::process::Resource::Nofile, new_nofile_limits)
+        .context("Failed to set file limits")?;
+
     let config = {
         let mut config: config::Config =
             config::load_config(opts.config, &PathBuf::from(DEFAULT_CONFIG))?;

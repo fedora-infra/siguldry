@@ -51,6 +51,10 @@ version = "0.13"
 default-features = false
 features = ["http2", "native-tls"]
 
+[dependencies.rustix]
+version = "1"
+features = ["process"]
+
 [dependencies.serde]
 version = "1.0.145"
 features = ["derive"]
