@@ -476,7 +476,7 @@ impl<K: KojiOps> KojiSigner<K> {
     }
 }
 
-#[instrument(skip_all, err)]
+#[instrument(skip_all, err(level = Level::WARN))]
 async fn download(
     http_client: &reqwest::Client,
     dest_dir: PathBuf,
@@ -494,8 +494,18 @@ async fn download(
     let (file, destination) = destination.into_parts();
     let mut file = BufWriter::new(tokio::fs::File::from_std(file));
 
-    // TODO: be more precise
-    let mut response = http_client.get(url).send().await?.error_for_status()?;
+    let mut response = http_client.get(url).send().await.inspect_err(|error| {
+        tracing::warn!("HTTP request to download RPM failed: {:?}", error);
+    })?;
+
+    // If the final code is not 200-299, try again later
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "HTTP request status code is not a success: {}",
+            response.status()
+        ));
+    }
+
     let content_length = response.content_length();
     tracing::debug!(content_length, rpm.size, "Response received");
 
