@@ -10,6 +10,12 @@ directory is `/etc/siguldry/`.
 > For production deployments, it is expected that the server, bridge, and any clients are
 > separate hosts.
 
+## Systemd units
+
+Units may need to be granted access to additional directories or devices. The defaults minimize what they have access to. Common cases are called out, but be aware that the systemd units will require overrides.
+
+Socket units may need their `MaxConnections` settings raised, depending on how many concurrent requests are allowed.
+
 ## systemd-creds
 
 None of the configuration files contain any secrets directly. All secrets are provided via file
