@@ -70,7 +70,7 @@ features = ["crypto-openssl"]
 version = "1"
 
 [dependencies.sqlx]
-version = "0.8"
+version = "0.9"
 features = ["runtime-tokio", "sqlite-unbundled", "macros", "migrate"]
 optional = true
 
