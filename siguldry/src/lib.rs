@@ -98,3 +98,26 @@ pub async fn signal_handler(halt_token: CancellationToken) -> Result<(), anyhow:
         }
     }
 }
+
+/// Set the process's open file limit to the maximum allowable.
+///
+/// The default soft limit is 1024 to protect programs that use syscalls that cannot
+/// operate on fd > 1024; we don't so we can opt out and use the real system limits.
+#[cfg(feature = "cli")]
+#[doc(hidden)]
+pub fn raise_nofiles() -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let current_nofile_limits = rustix::process::getrlimit(rustix::process::Resource::Nofile);
+    let mut new_nofile_limits = current_nofile_limits;
+    new_nofile_limits.current = current_nofile_limits.maximum;
+    tracing::debug!(
+        "Raising the RLIMIT_NOFILE value from {:?} to {:?}",
+        current_nofile_limits.current,
+        new_nofile_limits.current
+    );
+    rustix::process::setrlimit(rustix::process::Resource::Nofile, new_nofile_limits)
+        .context("Failed to set file limits")?;
+
+    Ok(())
+}

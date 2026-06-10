@@ -116,6 +116,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
 
+    siguldry::raise_nofiles()?;
+
     let mut config = load_config::<Config>(opts.config, PathBuf::from(DEFAULT_CONFIG).as_path())?;
     tracing::info!("Loaded configuration");
 

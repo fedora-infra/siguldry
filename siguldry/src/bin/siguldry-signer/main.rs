@@ -71,6 +71,9 @@ async fn main() -> anyhow::Result<()> {
     let registry = registry.with(log_filter);
     tracing::subscriber::set_global_default(registry)
         .expect("Programming error: set_global_default should only be called once.");
+
+    siguldry::raise_nofiles()?;
+
     let halt_token = CancellationToken::new();
     tokio::spawn(signal_handler(halt_token.clone()));
 
