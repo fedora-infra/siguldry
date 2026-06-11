@@ -166,7 +166,7 @@ enum KeyCommands {
     },
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let opts = Cli::parse();
 
