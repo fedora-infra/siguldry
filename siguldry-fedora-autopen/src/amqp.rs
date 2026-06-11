@@ -179,7 +179,10 @@ async fn consume<K: KojiOps>(
             }
             _ = halt_token.cancelled() => {
                 tracing::info!(pending_tasks=signing_tasks.len(), "Consumer halting, waiting for pending tasks to complete");
-                drain_tasks(&mut signing_tasks);
+                let result = signing_tasks.join_all().await.into_iter().collect::<Result<Vec<()>, anyhow::Error>>();
+                if let Err(error) = result {
+                    tracing::error!(?error, "One or more signing tasks did not succeed and will be retried later");
+                }
 
                 if let Err(error) = channel.close(0, "Normal shutdown".into()).await {
                     tracing::error!(?error, "Failed to gracefully shut down the AMQP channel");
