@@ -128,7 +128,7 @@ version = "0.2"
 features = ["no-env-filter"]
 
 [dev-dependencies.pyo3]
-version = "0.28"
+version = "0.29"
 features = ["auto-initialize"]
 
 [dev-dependencies.sequoia-openpgp]
