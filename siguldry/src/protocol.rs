@@ -242,9 +242,8 @@ pub(crate) fn peer_common_name<S>(stream: &SslStream<S>) -> Result<String, Error
             cert.subject_name()
                 .entries_by_nid(Nid::COMMONNAME)
                 .next()
-                .and_then(|entry| entry.data().as_utf8().ok())
+                .and_then(|entry| entry.data().to_string().ok())
         })
-        .map(|common_name| common_name.to_string())
         .ok_or(Error::MissingCommonName)
 }
 

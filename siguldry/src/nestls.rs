@@ -87,16 +87,12 @@ impl Nestls {
 
     /// Get the remote connection's commonName from its certificate.
     pub fn peer_common_name(&self) -> Option<String> {
-        self.inner
-            .ssl()
-            .peer_certificate()
-            .and_then(|cert| {
-                cert.subject_name()
-                    .entries_by_nid(Nid::COMMONNAME)
-                    .next()
-                    .and_then(|entry| entry.data().as_utf8().ok())
-            })
-            .map(|common_name| common_name.to_string())
+        self.inner.ssl().peer_certificate().and_then(|cert| {
+            cert.subject_name()
+                .entries_by_nid(Nid::COMMONNAME)
+                .next()
+                .and_then(|entry| entry.data().to_string().ok())
+        })
     }
 }
 
@@ -156,16 +152,12 @@ impl NestlsBuilder {
         tracing::debug!(?bridge_addr, "TCP connection to the bridge established");
         let mut outer_stream = tokio_openssl::SslStream::new(bridge_ssl, outer_stream)?;
         Pin::new(&mut outer_stream).connect().await?;
-        let username = outer_stream
-            .ssl()
-            .certificate()
-            .and_then(|cert| {
-                cert.subject_name()
-                    .entries_by_nid(Nid::COMMONNAME)
-                    .next()
-                    .and_then(|entry| entry.data().as_utf8().ok())
-            })
-            .map(|common_name| common_name.to_string());
+        let username = outer_stream.ssl().certificate().and_then(|cert| {
+            cert.subject_name()
+                .entries_by_nid(Nid::COMMONNAME)
+                .next()
+                .and_then(|entry| entry.data().to_string().ok())
+        });
         tracing::debug!(?username, "TLS session with the bridge established");
 
         let protocol_header: ProtocolHeader = role.into();
