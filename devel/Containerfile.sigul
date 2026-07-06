@@ -9,17 +9,18 @@
 #   # printf "my-signing-password\0" | sigul --batch -v -v sign-pe -o grub.signed.efi \
 #       signing-key codesigning grubx64.efi
 
-FROM quay.io/almalinuxorg/almalinux:9.7
+FROM quay.io/almalinuxorg/almalinux:9.8
 
 RUN dnf install -y epel-release
 RUN dnf install -y \
     cargo \
+    clang \
     gcc \
     iproute \
     nss-tools \
     opensc \
-    openssl-pkcs11 \
     openssl-devel \
+    openssl-pkcs11 \
     patch \
     pesign \
     python3-devel \
@@ -29,7 +30,8 @@ RUN dnf install -y \
     sigul \
     sigul-bridge \
     sigul-server \
-    softhsm
+    softhsm \
+    sqlite-devel
 
 # Not packaged for fedora, needed for the server. Requires pip and gcc
 RUN pip install rpm-head-signing
