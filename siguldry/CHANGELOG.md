@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.7.3] - 2026-07-06
+
+### Fixed
+
+- The server now only acquires a database connection for requests that require
+  it, which greatly improves performance with moderate to high concurrency
+  (#220)
+
+- The server, bridge, and client now all raise the limit on open files to the
+  system limit, rather than the soft limit of 1024, which is necessary when
+  issuing many concurrent requests (#229)
+
+- **Security** Client certificates with an interior NUL byte in their common
+  name no longer truncate the field to that NUL byte. If you have issued a
+  client certificate with an interior NUL byte which is the prefix of another
+  user, that client certificate can be used to list the keys they have access
+  to. The client would still need to have the key access password to sign
+  anything, however (#236)
+
+
 ## [0.7.2] - 2026-06-03
 
 ### Fixed
