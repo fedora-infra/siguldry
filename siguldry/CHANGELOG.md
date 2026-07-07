@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- The client now gracefully shuts down idle connections to the signing server
+  after a configurable `idle_timeout` (default 600 seconds). The connection is
+  transparently re-established on the next request. This should be set somewhat
+  lower than the server's idle client timeout, and larger than the client's
+  `request_timeout`.
+
+
 ## [0.7.3] - 2026-07-06
 
 ### Fixed

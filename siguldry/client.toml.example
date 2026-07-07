@@ -25,6 +25,17 @@ bridge_port = 44334
 # passphrase_path = "siguldry.signing_key.passphrase"
 keys = []
 
+# The time, in seconds, to leave an idle connection to the signing server open.
+#
+# Idle time is measured from the last time the client sent a request to the server,
+# and clients transparently restart the connection on the next request. The server
+# will also shut down idle client connections after a time (in a much less graceful
+# manner) so this value should be somewhat less than the server-set timeout. It should
+# also be *larger* than the `request_timeout` setting.
+#
+# The default idle timeout is 600 (10 minutes).
+idle_timeout = 600
+
 # The amount of time to wait before giving up on a request and retrying.
 #
 # This covers both sending requests and receiving responses. In other words, the client

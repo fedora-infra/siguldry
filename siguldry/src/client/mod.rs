@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::{sync::Arc, time::Duration};
 
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 
 use crate::error::ConnectionError;
 use crate::protocol::DigestAlgorithm;
@@ -28,6 +29,7 @@ pub use proxy::{ProxyClient, proxy};
 #[derive(Clone, Debug)]
 pub struct Client {
     config: Arc<Config>,
+    activity_tx: tokio::sync::watch::Sender<Instant>,
     // Keys to unlock on reconnection; this is a combination of keys from the config and those
     // unlocked manually via the Client::unlock call.
     keys: Arc<Mutex<Vec<Key>>>,
@@ -38,10 +40,53 @@ impl Client {
     /// Create a new client
     pub fn new(config: Config) -> Result<Self, ClientError> {
         let keys = config.keys.clone();
+        let idle_timeout = Duration::from_secs(config.idle_timeout.get());
+        let inner: Option<inner::Client> = None;
+        let inner = Arc::new(Mutex::new(inner));
+
+        let (activity_tx, mut activity_rx) = tokio::sync::watch::channel(Instant::now());
+        let watchdog_inner = Arc::clone(&inner);
+        tokio::spawn(async move {
+            let mut last_activity = *activity_rx.borrow();
+            let inner = watchdog_inner;
+
+            loop {
+                // Shutdown the active connection, if there is one, on the timeout. Exit when
+                // the client holding the sender side of the activity channel is dropped.
+                match tokio::time::timeout(idle_timeout, activity_rx.changed()).await {
+                    Ok(Ok(_)) => {
+                        last_activity = *activity_rx.borrow_and_update();
+                        tracing::trace!("Client reported activity to the watchdog");
+                    }
+                    Ok(Err(_recv_error)) => {
+                        tracing::debug!("Shutting down client watchdog");
+                        break;
+                    }
+                    Err(_elapsed) => {
+                        let mut lock_guard = inner.lock().await;
+                        if let Ok(false) = activity_rx.has_changed()
+                            && let Some(inner_client) = lock_guard.take()
+                        {
+                            drop(lock_guard);
+                            tracing::info!(
+                                "Shutting down idle connection to the server to conserve resources (idle {} seconds)",
+                                last_activity.elapsed().as_secs()
+                            );
+                            let _ = tokio::time::timeout(
+                                Duration::from_secs(5),
+                                inner_client.shutdown(),
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+        });
         Ok(Self {
             config: Arc::new(config),
             keys: Arc::new(Mutex::new(keys)),
-            inner: Arc::new(Mutex::new(None)),
+            activity_tx,
+            inner,
         })
     }
 
@@ -54,6 +99,7 @@ impl Client {
     async fn reconnecting_send(&self, request: Request) -> Result<protocol::Response, ClientError> {
         loop {
             let mut service_lock = self.inner.lock().await;
+            self.activity_tx.send_replace(Instant::now());
             let response = if let Some(mut service) = service_lock.take() {
                 match tokio::time::timeout(
                     self.config.request_timeout,

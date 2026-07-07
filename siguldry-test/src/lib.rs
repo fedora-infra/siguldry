@@ -195,8 +195,11 @@ pub struct InstanceBuilder {
     with_client_proxy: bool,
     with_sigul_import: Option<String>,
     additional_users: Vec<(String, bool)>,
+    /// Time before the server shuts down an idle client connection
     idle_client_timeout: Option<NonZeroU64>,
     connection_watchdog_timeout: Option<NonZeroU64>,
+    /// Time before a client shuts down its connection
+    idle_timeout: Option<NonZeroU64>,
 }
 
 impl InstanceBuilder {
@@ -284,6 +287,14 @@ impl InstanceBuilder {
     pub fn with_connection_watchdog_timeout(mut self, seconds: u64) -> Self {
         self.connection_watchdog_timeout =
             Some(NonZeroU64::new(seconds).expect("Use a non-zero value"));
+        self
+    }
+
+    /// Set the time, in seconds, the client will leave an idle connection to the server open.
+    ///
+    /// Not to be confused with `with_idle_client_timeout`. Names are hard, sorry.
+    pub fn with_idle_timeout(mut self, seconds: u64) -> Self {
+        self.idle_timeout = Some(NonZeroU64::new(seconds).expect("Use a non-zero value"));
         self
     }
 
@@ -630,6 +641,7 @@ impl InstanceBuilder {
             bridge_port: bridge.client_port(),
             credentials: creds.client.clone(),
             keys: keys.clone(),
+            idle_timeout: self.idle_timeout.unwrap_or(NonZeroU64::new(600).unwrap()),
             ..Default::default()
         };
         let client_config_file = tempdir.path().join("client.toml");

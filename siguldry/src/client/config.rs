@@ -3,7 +3,7 @@
 
 //! The Siguldry client configuration.
 
-use std::{path::PathBuf, time::Duration};
+use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
 use sequoia_openpgp::crypto::Password;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,19 @@ pub struct Config {
     pub bridge_hostname: String,
     /// The port on the Siguldry bridge to connect to; the default is 44334.
     pub bridge_port: u16,
+
+    /// The time, in seconds, to leave an idle connection to the signing server open.
+    ///
+    /// Idle time is measured from the last time the client sent a request to the server,
+    /// and clients transparently restart the connection on the next request. The server
+    /// will also shut down idle client connections after a time (in a much less graceful
+    /// manner) so this value should be somewhat less than the server-set timeout. It should
+    /// also be *larger* than the `request_timeout` setting.
+    ///
+    /// The default idle timeout is 600 (10 minutes).
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout: NonZeroU64,
+
     /// The amount of time to wait before giving up on a request and retrying.
     ///
     /// This covers both sending requests and receiving responses. In other words, the client
@@ -27,6 +40,7 @@ pub struct Config {
     /// within `request_timeout`, *and* it will retry if it fails to read a response to that
     /// request from the socket within `request_timeout`.
     pub request_timeout: Duration,
+
     /// The credentials to use when authenticating to the Siguldry bridge and server. Note that
     /// the certificate must have the `clientAuth` extended key usage extension.
     pub credentials: Credentials,
@@ -44,6 +58,10 @@ pub struct Config {
     pub keys: Vec<Key>,
 }
 
+const fn default_idle_timeout() -> NonZeroU64 {
+    NonZeroU64::new(600).expect("Set a non-zero default")
+}
+
 fn default_concurrency() -> usize {
     tokio::sync::Semaphore::MAX_PERMITS
 }
@@ -54,6 +72,7 @@ impl Default for Config {
             server_hostname: "server.example.com".to_string(),
             bridge_hostname: "bridge.example.com".to_string(),
             bridge_port: 44334,
+            idle_timeout: default_idle_timeout(),
             request_timeout: Duration::from_secs(30),
             credentials: Credentials {
                 private_key: PathBuf::from("siguldry.client.private_key.pem"),

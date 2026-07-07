@@ -982,3 +982,62 @@ async fn idle_client_connection_timeout_refresh() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn client_shuts_down_idle_connection() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_idle_timeout(1).build().await?;
+
+    let user = instance.client.who_am_i().await?;
+    assert_eq!("siguldry-client", &user);
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(logs_contain(
+        "Shutting down idle connection to the server to conserve resources"
+    ));
+    assert!(!logs_contain(
+        "Shutting down client connection that has been idle for"
+    ));
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn client_restarts_idle_connection() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_idle_timeout(1).build().await?;
+
+    let user = instance.client.who_am_i().await?;
+    assert_eq!("siguldry-client", &user);
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(logs_contain(
+        "Shutting down idle connection to the server to conserve resources"
+    ));
+
+    let user = instance.client.who_am_i().await?;
+    assert_eq!("siguldry-client", &user);
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn client_keeps_active_connection_open() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_idle_timeout(1).build().await?;
+
+    for _ in 0..12 {
+        let user = instance.client.who_am_i().await?;
+        assert_eq!("siguldry-client", &user);
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    assert!(!logs_contain(
+        "Shutting down idle connection to the server to conserve resources"
+    ));
+
+    instance.halt().await?;
+    Ok(())
+}
