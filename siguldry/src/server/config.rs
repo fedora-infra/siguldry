@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-use std::{num::NonZeroU16, path::PathBuf};
+use std::{
+    num::{NonZeroU16, NonZeroU64},
+    path::PathBuf,
+};
 
 use sequoia_openpgp::crypto::Password;
 use serde::{Deserialize, Serialize};
@@ -48,6 +51,23 @@ pub struct Config {
     /// bridge allows enough idle connections to cover each server's pool size. The default is 32.
     pub connection_pool_size: usize,
 
+    /// The time, in seconds, a client can be idle (e.g. not send a request) before shutting down
+    /// the connection. Well-behaved clients should voluntarily shut down their idling connection
+    /// before this timeout is hit, so if you see logs related to this in production environments,
+    /// consider adjusting the client configuration to lower its idle timeout.
+    ///
+    /// The default is 3600 (1 hour).
+    #[serde(default = "default_idle_client_timeout")]
+    pub idle_client_timeout: NonZeroU64,
+
+    /// The time, in seconds, a client connection can run without providing a heartbeat.
+    /// This is primarily to handle mis-behaving server-side handling of requests (like hardware-backed
+    /// keys never respond to signing requests).
+    ///
+    /// Be sure to set this *higher* than `idle_client_timeout`. The default is 10800 (3 hour).
+    #[serde(default = "default_connection_watchdog_timeout")]
+    pub connection_watchdog_timeout: NonZeroU64,
+
     /// The minimum length for user's access password, in *bytes*. For example, the multi-byte
     /// UTF-8 character "🪿" counts as 4 bytes.
     pub user_password_length: NonZeroU16,
@@ -78,6 +98,14 @@ pub struct Config {
     /// password.
     #[serde(default)]
     pub pkcs11_bindings: Vec<Pkcs11Binding>,
+}
+
+const fn default_idle_client_timeout() -> NonZeroU64 {
+    NonZeroU64::new(60 * 60).expect("set a non-zero default")
+}
+
+const fn default_connection_watchdog_timeout() -> NonZeroU64 {
+    NonZeroU64::new(3 * 60 * 60).expect("set a non-zero default")
 }
 
 /// The values to use when creating x509 certificates in subject names.
@@ -151,6 +179,8 @@ impl Default for Config {
         Self {
             state_directory: default_state_directory(),
             signer_socket_path: default_socket_path(),
+            idle_client_timeout: default_idle_client_timeout(),
+            connection_watchdog_timeout: default_connection_watchdog_timeout(),
             bridge_hostname: "bridge.example.com".to_string(),
             bridge_port: 44333,
             connection_pool_size: 32,

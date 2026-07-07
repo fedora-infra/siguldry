@@ -918,3 +918,67 @@ async fn user_without_access_cannot_sign() -> anyhow::Result<()> {
     instance.halt().await?;
     Ok(())
 }
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn idle_client_connection_timeout() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_idle_client_timeout(1)
+        .build()
+        .await?;
+
+    let user = instance.client.who_am_i().await?;
+    assert_eq!("siguldry-client", &user);
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(logs_contain(
+        "Shutting down client connection that has been idle for"
+    ));
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn idle_client_connection_watchdog() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_connection_watchdog_timeout(1)
+        .build()
+        .await?;
+
+    let user = instance.client.who_am_i().await?;
+    assert_eq!("siguldry-client", &user);
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(logs_contain(
+        "BUG: Shutting down client connection that hasn't shut down as expected!"
+    ));
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn idle_client_connection_timeout_refresh() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_idle_client_timeout(2)
+        .build()
+        .await?;
+
+    let user = instance.client.who_am_i().await?;
+    assert_eq!("siguldry-client", &user);
+    for _ in 0..8 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        instance.client.who_am_i().await?;
+    }
+    instance.halt().await?;
+
+    assert!(logs_contain("Reset watchdog timeout"));
+    assert!(!logs_contain(
+        "Shutting down client connection that has been idle for"
+    ));
+
+    Ok(())
+}

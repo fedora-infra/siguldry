@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     io::Write,
     net::SocketAddr,
-    num::NonZeroU16,
+    num::{NonZeroU16, NonZeroU64},
     path::{Path, PathBuf},
     process::Stdio,
     str::FromStr,
@@ -195,6 +195,8 @@ pub struct InstanceBuilder {
     with_client_proxy: bool,
     with_sigul_import: Option<String>,
     additional_users: Vec<(String, bool)>,
+    idle_client_timeout: Option<NonZeroU64>,
+    connection_watchdog_timeout: Option<NonZeroU64>,
 }
 
 impl InstanceBuilder {
@@ -270,6 +272,18 @@ impl InstanceBuilder {
     /// Create a Unix socket to proxy client requests (useful for PKCS #11 testing).
     pub fn with_client_proxy(mut self) -> Self {
         self.with_client_proxy = true;
+        self
+    }
+
+    /// Set the time, in seconds, a client can be idle before the server shuts down the connection.
+    pub fn with_idle_client_timeout(mut self, seconds: u64) -> Self {
+        self.idle_client_timeout = Some(NonZeroU64::new(seconds).expect("Use a non-zero value"));
+        self
+    }
+
+    pub fn with_connection_watchdog_timeout(mut self, seconds: u64) -> Self {
+        self.connection_watchdog_timeout =
+            Some(NonZeroU64::new(seconds).expect("Use a non-zero value"));
         self
     }
 
@@ -416,6 +430,12 @@ impl InstanceBuilder {
                 .expect("it's three geese"),
             pkcs11_bindings,
             connection_pool_size: 1,
+            idle_client_timeout: self
+                .idle_client_timeout
+                .unwrap_or(NonZeroU64::new(3600).unwrap()),
+            connection_watchdog_timeout: self
+                .connection_watchdog_timeout
+                .unwrap_or(NonZeroU64::new(10800).unwrap()),
             ..Default::default()
         };
         let server_config_file = tempdir.path().join("server.toml");

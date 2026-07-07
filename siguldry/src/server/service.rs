@@ -13,6 +13,7 @@ use sqlx::{Pool, Sqlite};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinSet,
+    time::Instant,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{Instrument, Span, instrument};
@@ -115,10 +116,39 @@ impl Server {
                         while connection_pool.len() < self.config.connection_pool_size {
                             self.accept(&mut connection_pool)?;
                         }
-                        request_tracker.spawn(
-                            handle(self.config.clone(), self.db_pool.clone(), conn)
-                                .instrument(tracing::Span::current()),
-                        );
+                        let config = self.config.clone();
+                        let db_pool = self.db_pool.clone();
+
+                        // Each connection has an idle timeout, but in the event that something
+                        // after the request hangs, this watchdog will kick in (by default) after 3
+                        // hours, which is much longer than the client idle timeout and much longer
+                        // than any request should ever take to process.
+                        let timeout = Duration::from_secs(self.config.connection_watchdog_timeout.get());
+                        request_tracker.spawn( async move {
+                            let (watcher_tx, mut watcher_rx) = tokio::sync::watch::channel(Instant::now());
+                            let handler = handle(config, watcher_tx, db_pool, conn);
+                            tokio::pin!(handler);
+
+                            let mut last_activity = Instant::now();
+                            let sleep = tokio::time::sleep_until(last_activity + timeout);
+                            tokio::pin!(sleep);
+                            loop {
+                                tokio::select! {
+                                    result = &mut handler => {
+                                        break result;
+                                    }
+                                    _ = watcher_rx.changed() => {
+                                        last_activity = *watcher_rx.borrow_and_update();
+                                        sleep.as_mut().reset(last_activity + timeout);
+                                        tracing::trace!("Reset watchdog timeout");
+                                    }
+                                    _ = &mut sleep => {
+                                        tracing::error!("BUG: Shutting down client connection that hasn't shut down as expected!");
+                                        break Ok(());
+                                    }
+                                }
+                            }
+                        }.instrument(tracing::Span::current()));
                     }
                     Some(Ok(Err(error))) => {
                         tracing::error!(?error, "Failed to accept incoming client connection");
@@ -185,6 +215,7 @@ impl Server {
 #[instrument(skip_all, err, fields(session_id = %conn.session_id(), user = conn.peer_common_name()))]
 async fn handle(
     config: Arc<Config>,
+    watchdog: tokio::sync::watch::Sender<Instant>,
     db: Pool<Sqlite>,
     mut conn: Nestls,
 ) -> Result<(), anyhow::Error> {
@@ -198,38 +229,29 @@ async fn handle(
     tracing::info!("User authenticated");
     drop(db_conn);
 
+    let idle_timeout = Duration::from_secs(config.idle_client_timeout.get());
     let mut request_handler =
         handlers::Handler::new(config.clone(), user.clone(), conn.session_id()).await?;
     loop {
-        let mut frame_buffer = [0_u8; std::mem::size_of::<protocol::Frame>()];
-        conn.read_exact(&mut frame_buffer).await?;
-        let frame = protocol::Frame::try_ref_from_bytes(&frame_buffer)
-            .map_err(|e| protocol::Error::Framing(format!("Invalid frame: {e:?}")))?;
-        if frame.is_empty() {
-            tracing::debug!(
-                "Connection sent empty frame indicating it is done; closing connection"
-            );
-            break;
-        } else {
-            tracing::debug!(?frame, "New request frame received");
-        }
-
-        let frame_size: usize = frame
-            .json_size
-            .get()
-            .try_into()
-            .context("frame size must fit in usize")?;
-        // TODO: configurable size limits
-        if frame_size > MAX_JSON_SIZE {
-            return Err(anyhow::anyhow!(
-                "JSON payload larger than {MAX_JSON_SIZE} bytes"
-            ));
-        }
-        let mut request_buffer = BytesMut::with_capacity(frame_size).limit(frame_size);
-        while request_buffer.remaining_mut() != 0 {
-            conn.read_buf(&mut request_buffer).await?;
-        }
-        let request_bytes = request_buffer.into_inner().freeze();
+        let request_bytes = match tokio::time::timeout(idle_timeout, read_frame(&mut conn)).await {
+            Ok(frame) => {
+                if let Some(bytes) = frame.context("Failed to read incoming request frame")? {
+                    watchdog.send_replace(Instant::now());
+                    bytes
+                } else {
+                    break;
+                }
+            }
+            Err(_elapsed) => {
+                tracing::warn!(
+                    "Shutting down client connection that has been idle for {} seconds",
+                    idle_timeout.as_secs()
+                );
+                let _ = request_handler.shutdown().await;
+                let _ = tokio::time::timeout(Duration::from_secs(5), conn.shutdown()).await;
+                return Ok(());
+            }
+        };
 
         let request_value = serde_json::from_slice::<serde_json::Value>(&request_bytes)?;
         let outer_request = match serde_json::from_value::<protocol::OuterRequest>(request_value) {
@@ -327,4 +349,35 @@ async fn handle(
     .context("Timed out waiting for connection to close")??;
 
     Ok(())
+}
+
+async fn read_frame(conn: &mut Nestls) -> anyhow::Result<Option<bytes::Bytes>> {
+    let mut frame_buffer = [0_u8; std::mem::size_of::<protocol::Frame>()];
+    conn.read_exact(&mut frame_buffer).await?;
+    let frame = protocol::Frame::try_ref_from_bytes(&frame_buffer)
+        .map_err(|e| protocol::Error::Framing(format!("Invalid frame: {e:?}")))?;
+    if frame.is_empty() {
+        tracing::debug!("Connection sent empty frame indicating it is done; closing connection");
+        return Ok(None);
+    } else {
+        tracing::debug!(?frame, "New request frame received");
+    }
+
+    let frame_size: usize = frame
+        .json_size
+        .get()
+        .try_into()
+        .context("frame size must fit in usize")?;
+    // TODO: configurable size limits
+    if frame_size > MAX_JSON_SIZE {
+        return Err(anyhow::anyhow!(
+            "JSON payload larger than {MAX_JSON_SIZE} bytes"
+        ));
+    }
+    let mut request_buffer = BytesMut::with_capacity(frame_size).limit(frame_size);
+    while request_buffer.remaining_mut() != 0 {
+        conn.read_buf(&mut request_buffer).await?;
+    }
+
+    Ok(Some(request_buffer.into_inner().freeze()))
 }
