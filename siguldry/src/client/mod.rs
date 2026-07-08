@@ -97,16 +97,12 @@ impl Client {
 
     // Send a request to the server, retrying if the connection fails.
     async fn reconnecting_send(&self, request: Request) -> Result<protocol::Response, ClientError> {
+        let request_timeout = Duration::from_secs(self.config.request_timeout.get());
         loop {
             let mut service_lock = self.inner.lock().await;
             self.activity_tx.send_replace(Instant::now());
             let response = if let Some(mut service) = service_lock.take() {
-                match tokio::time::timeout(
-                    self.config.request_timeout,
-                    service.send(request.clone()),
-                )
-                .await
-                {
+                match tokio::time::timeout(request_timeout, service.send(request.clone())).await {
                     Ok(Ok(response)) => {
                         *service_lock = Some(service);
                         Some(response)
@@ -186,7 +182,7 @@ impl Client {
             // Don't hold the lock while we wait for a server response
             drop(service_lock);
             if let Some(response) = response {
-                match tokio::time::timeout(self.config.request_timeout, response).await {
+                match tokio::time::timeout(request_timeout, response).await {
                     Ok(Ok(response)) => break Ok(response),
                     Ok(Err(_recv_error)) => {
                         // This case is when the task owning the connection halts before it sends us the server response
@@ -233,19 +229,17 @@ impl Client {
         };
         let conn = conn?;
         let mut client = inner::Client::new(conn);
+        let request_timeout = Duration::from_secs(self.config.request_timeout.get());
         let keys = self.keys.lock().await.clone();
         for key in keys {
             let request = protocol::Request::Unlock {
                 key: key.key_name.clone(),
                 password: key.password(),
             };
-            match tokio::time::timeout(self.config.request_timeout, client.send(request)).await {
+            match tokio::time::timeout(request_timeout, client.send(request)).await {
                 Ok(Ok(pending_response)) => {
-                    let response = match tokio::time::timeout(
-                        self.config.request_timeout,
-                        pending_response,
-                    )
-                    .await
+                    let response = match tokio::time::timeout(request_timeout, pending_response)
+                        .await
                     {
                         Ok(Ok(response)) => response,
                         Ok(Err(_error)) => {

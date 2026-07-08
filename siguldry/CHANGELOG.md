@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lower than the server's idle client timeout, and larger than the client's
   `request_timeout`.
 
+### Changed
+
+- **Breaking** The client's `request_timeout` configuration is now expressed as
+  an integer number of seconds (for example `request_timeout = 30`) rather than
+  a duration table (`[request_timeout]` with `secs` and `nanos`).
+
 
 ## [0.7.3] - 2026-07-06
 

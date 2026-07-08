@@ -3,7 +3,7 @@
 
 //! The Siguldry client configuration.
 
-use std::{num::NonZeroU64, path::PathBuf, time::Duration};
+use std::{num::NonZeroU64, path::PathBuf};
 
 use sequoia_openpgp::crypto::Password;
 use serde::{Deserialize, Serialize};
@@ -33,13 +33,16 @@ pub struct Config {
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout: NonZeroU64,
 
-    /// The amount of time to wait before giving up on a request and retrying.
+    /// The amount of time, in seconds, to wait before giving up on a request and retrying.
     ///
     /// This covers both sending requests and receiving responses. In other words, the client
     /// will retry the request on a new connection if it cannot write the request to the socket
     /// within `request_timeout`, *and* it will retry if it fails to read a response to that
     /// request from the socket within `request_timeout`.
-    pub request_timeout: Duration,
+    ///
+    /// The default is 30 seconds.
+    #[serde(default = "default_request_timeout")]
+    pub request_timeout: NonZeroU64,
 
     /// The credentials to use when authenticating to the Siguldry bridge and server. Note that
     /// the certificate must have the `clientAuth` extended key usage extension.
@@ -62,6 +65,10 @@ const fn default_idle_timeout() -> NonZeroU64 {
     NonZeroU64::new(600).expect("Set a non-zero default")
 }
 
+const fn default_request_timeout() -> NonZeroU64 {
+    NonZeroU64::new(30).expect("Set a non-zero default")
+}
+
 fn default_concurrency() -> usize {
     tokio::sync::Semaphore::MAX_PERMITS
 }
@@ -73,7 +80,7 @@ impl Default for Config {
             bridge_hostname: "bridge.example.com".to_string(),
             bridge_port: 44334,
             idle_timeout: default_idle_timeout(),
-            request_timeout: Duration::from_secs(30),
+            request_timeout: default_request_timeout(),
             credentials: Credentials {
                 private_key: PathBuf::from("siguldry.client.private_key.pem"),
                 certificate: PathBuf::from("siguldry.client.certificate.pem"),
@@ -213,36 +220,7 @@ bridge_hostname = "bridge.example.com"
 bridge_port = 44333
 another_key = 42
 
-[request_timeout]
-secs = 30
-nanos = 0
-
-[credentials]
-private_key = "siguldry.client.private_key.pem"
-certificate = "/etc/siguldry/client.cert"
-ca_certificate = "/etc/siguldry/ca.crt"
-        "#;
-
-        if let Err(error) = toml::from_str::<super::Config>(config) {
-            assert!(error.message().contains("unknown field `another_key`"));
-        } else {
-            panic!("Config should fail to load");
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn timeout_extra_key() -> anyhow::Result<()> {
-        let config = r#"
-server_hostname = "server.example.com"
-bridge_hostname = "bridge.example.com"
-bridge_port = 44333
-
-[request_timeout]
-secs = 30
-nanos = 0
-another_key = 42
+request_timeout = 30
 
 [credentials]
 private_key = "siguldry.client.private_key.pem"
