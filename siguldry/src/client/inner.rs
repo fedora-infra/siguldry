@@ -125,7 +125,14 @@ impl Client {
                 bytes_read = connection.read_buf(&mut limited_buffer) => {
                     let bytes_read = bytes_read?;
                     if bytes_read == 0 {
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        // The underlying buffer is unlimited, and we set the limit per-read,
+                        // so we know getting 0 here is a server-initiated EOF rather than a full buffer.
+                        tracing::warn!(
+                            pending_responses=pending_responses.len(),
+                            "Server sent EOF (possibly the server idle connection timeout)"
+                        );
+                        let _ = tokio::time::timeout(Duration::from_secs(5), connection.shutdown()).await;
+                        return Ok(());
                     }
                     tracing::trace!(bytes_read, "Handling incoming response data");
                 }
