@@ -246,7 +246,7 @@ async fn signing_keys(config: &config::Config) -> anyhow::Result<HashMap<String,
         for key in keys.iter() {
             let is_unlocked = client
                 .is_unlocked(key.name.clone())
-                .with_context(|| format!("Failed to check if the {} key is unlocked", &key.name))?;
+                .with_context(|| format!("Failed to check if the {} key is unlocked", key.name))?;
             if is_unlocked {
                 tracing::info!(
                     key.name,

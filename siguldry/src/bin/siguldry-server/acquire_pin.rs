@@ -38,7 +38,7 @@ pub async fn read(config: &mut Config) -> anyhow::Result<()> {
         .map(PathBuf::from)?;
     let socket_path = runtime_directory.join(SOCKET_PATH);
     let listener = UnixListener::bind(&socket_path)
-        .with_context(|| format!("Failed to bind to {}", &socket_path.display()))?;
+        .with_context(|| format!("Failed to bind to {}", socket_path.display()))?;
 
     tracing::info!(
         ?socket_path,

@@ -158,7 +158,7 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
                     {
                         let prompt = PromptPassword::new(format!(
                             "Please enter the user PIN for {}:",
-                            &binding
+                            binding
                                 .private_key
                                 .as_ref()
                                 .expect("filter for bindings with private key URIs")
@@ -223,7 +223,7 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
                 db::PublicKeyMaterial::create(
                     &mut conn,
                     &key,
-                    format!("{}-x509", &name),
+                    format!("{}-x509", name),
                     db::PublicKeyMaterialType::X509,
                     encrypted_key.x509_certificate,
                 )
@@ -231,7 +231,7 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
                 db::PublicKeyMaterial::create(
                     &mut conn,
                     &key,
-                    format!("{}-openpgp", &name),
+                    format!("{}-openpgp", name),
                     db::PublicKeyMaterialType::OpenPgpCert,
                     encrypted_key.openpgp_certificate,
                 )
@@ -283,7 +283,7 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
                 {
                     let prompt = PromptPassword::new(format!(
                         "Please enter the user PIN for {}:",
-                        &binding
+                        binding
                             .private_key
                             .as_ref()
                             .expect("filter for bindings with private key URIs")
@@ -373,7 +373,7 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
                         })?;
                     let prompt = format!(
                         "Please enter the PKCS11 binding PIN for {}:",
-                        &binding
+                        binding
                             .private_key
                             .as_ref()
                             .expect("filter for bindings with private key URIs")

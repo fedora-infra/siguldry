@@ -169,7 +169,7 @@ fn signing_times_out() -> Result<()> {
         .arg("--token=OpenSC Card")
         .arg("--certificate=whatever pesign asked for")
         .arg(format!("--infile={}", in_file.as_path().display()))
-        .arg(format!("--outfile={}", &out_file.as_path().display()));
+        .arg(format!("--outfile={}", out_file.as_path().display()));
     let (client_output, service_output) = run_command(client_command, Some(config_path))?;
 
     assert!(!client_output.status.success());
@@ -235,7 +235,7 @@ fn signing_hangs_up() -> Result<()> {
         .arg("--token=OpenSC Card")
         .arg("--certificate=whatever pesign asked for")
         .arg(format!("--infile={}", in_file.as_path().display()))
-        .arg(format!("--outfile={}", &out_file.as_path().display()));
+        .arg(format!("--outfile={}", out_file.as_path().display()));
     let (client_output, service_output) = run_command(client_command, Some(config_path))?;
 
     assert!(!client_output.status.success());
@@ -263,7 +263,7 @@ fn sign_attached() -> Result<()> {
         .arg("--token=OpenSC Card")
         .arg("--certificate=whatever pesign asked for")
         .arg(format!("--infile={}", in_file.as_path().display()))
-        .arg(format!("--outfile={}", &out_file.as_path().display()));
+        .arg(format!("--outfile={}", out_file.as_path().display()));
     let (client_output, service_output) = run_command(client_command, None)?;
 
     assert!(client_output.status.success());

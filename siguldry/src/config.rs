@@ -63,7 +63,7 @@ impl Credentials {
                 .with_context(|| {
                     format!(
                         "Failed to load CA certificate from {}",
-                        &self.ca_certificate.display()
+                        self.ca_certificate.display()
                     )
                 })?
                 .as_bytes(),
@@ -78,7 +78,7 @@ impl Credentials {
             .with_context(|| {
                 format!(
                     "Failed to load client private key from {}",
-                    &self.private_key.display()
+                    self.private_key.display()
                 )
             })?;
         acceptor
@@ -86,7 +86,7 @@ impl Credentials {
             .with_context(|| {
                 format!(
                     "Failed to load client certificate from {}",
-                    &self.certificate.display()
+                    self.certificate.display()
                 )
             })?;
         acceptor.check_private_key()?;

@@ -101,7 +101,7 @@ impl OstreeSigner {
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "OpenPGP fingerprint {} missing from gpg homedirs!",
-                    &signing_cert.fingerprint
+                    signing_cert.fingerprint
                 )
             })?;
 
@@ -165,7 +165,7 @@ impl OstreeSigner {
             .arg("refs")
             .arg(format!("--repo={}", ref_config.directory.display()))
             .arg("--force")
-            .arg(format!("--create={}", &ref_config.reference))
+            .arg(format!("--create={}", ref_config.reference))
             .arg(&ostree.commitid);
 
         let output = ref_command

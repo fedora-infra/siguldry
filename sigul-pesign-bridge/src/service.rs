@@ -46,7 +46,7 @@ pub fn listen(
 ) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
     let socket_path = context.runtime_directory.join("socket");
     let listener = UnixListener::bind(&socket_path)
-        .with_context(|| format!("Failed to bind to {}", &socket_path.display()))?;
+        .with_context(|| format!("Failed to bind to {}", socket_path.display()))?;
     for acl in context.config.socket_acl.iter() {
         tracing::info!(acl, "Applying additional access control to socket");
         let mut command = std::process::Command::new("setfacl");
@@ -85,7 +85,7 @@ pub fn listen(
     if metadata.permissions().mode() & rustix::fs::Mode::RWXO.bits() != 0 {
         tracing::error!(mode=?metadata.permissions(), "Service socket has dangerous permissions!");
         std::fs::remove_file(&socket_path)
-            .with_context(|| format!("Failed to remove socket {}", &socket_path.display()))?;
+            .with_context(|| format!("Failed to remove socket {}", socket_path.display()))?;
         return Err(anyhow!(
             "Other users have access to the socket, adjust the service umask!"
         ));
@@ -116,7 +116,7 @@ pub fn listen(
         // Remove the socket and then wait for any requests in progress to complete before
         // exiting.
         std::fs::remove_file(&socket_path)
-            .with_context(|| format!("Failed to remove socket {}", &socket_path.display()))?;
+            .with_context(|| format!("Failed to remove socket {}", socket_path.display()))?;
         tracing::debug!(socket=?socket_path, "Successfully removed socket");
         tracing::info!(
             pending_requests = request_tracker.len(),
@@ -436,7 +436,7 @@ async fn sign_attached_with_filetype(
             async {
                 let input_stream =
                     tokio::fs::File::open(&sigul_input).await.with_context(|| {
-                        format!("failed to read input file '{}'", &sigul_input.display())
+                        format!("failed to read input file '{}'", sigul_input.display())
                     })?;
                 let output_stream = tokio::fs::OpenOptions::new()
                     .write(true)
@@ -445,7 +445,7 @@ async fn sign_attached_with_filetype(
                     .open(&sigul_output)
                     .await
                     .with_context(|| {
-                        format!("failed to open output file '{}'", &sigul_output.display())
+                        format!("failed to open output file '{}'", sigul_output.display())
                     })?;
 
                 context

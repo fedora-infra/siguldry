@@ -290,7 +290,7 @@ async fn run_proxy(
             let socket =
                 socket.expect("Clap is configured to require this argument when bind mode is set");
             let listener = UnixListener::bind(&socket)
-                .with_context(|| format!("Failed to bind to {}", &socket.display()))?;
+                .with_context(|| format!("Failed to bind to {}", socket.display()))?;
             Some(listener)
         }
         ProxyMode::AcceptYes => None,

@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(socket) = opts.socket {
         let listener = UnixListener::bind(&socket)
-            .with_context(|| format!("Failed to bind to {}", &socket.display()))?;
+            .with_context(|| format!("Failed to bind to {}", socket.display()))?;
         let request_tracker = TaskTracker::new();
         loop {
             let stream = tokio::select! {

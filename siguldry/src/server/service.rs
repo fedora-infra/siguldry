@@ -197,7 +197,7 @@ impl Server {
     ) -> anyhow::Result<()> {
         let bridge_addr = format!(
             "{}:{}",
-            &self.config.bridge_hostname, self.config.bridge_port
+            self.config.bridge_hostname, self.config.bridge_port
         );
         let ssl = Ssl::new(self.server_tls_config.context())?;
         let builder = Nestls::builder(

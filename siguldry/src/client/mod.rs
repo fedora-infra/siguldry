@@ -212,7 +212,7 @@ impl Client {
             Nestls::builder(bridge_ssl, Role::Client).connect(
                 format!(
                     "{}:{}",
-                    &self.config.bridge_hostname, self.config.bridge_port
+                    self.config.bridge_hostname, self.config.bridge_port
                 ),
                 server_ssl,
             ),

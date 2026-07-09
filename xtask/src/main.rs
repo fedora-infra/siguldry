@@ -50,7 +50,7 @@ fn extract_keys() -> anyhow::Result<()> {
     let image = env::args()
         .nth(2)
         .unwrap_or_else(|| "quay.io/jeremycline/sigul-pesign-bridge-ci:latest".to_string());
-    println!("Extracting keys from {}", &image);
+    println!("Extracting keys from {}", image);
 
     let mut command = std::process::Command::new("podman");
     command.args(["create", "--name=sigul-ci-key-extract", &image]);

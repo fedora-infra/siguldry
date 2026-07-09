@@ -345,7 +345,7 @@ impl Attribute {
             let creation_time = chrono::DateTime::<chrono::Utc>::from(pgp_key.creation_time())
                 .format("%Y%m%dT%H%M%SZ")
                 .to_string();
-            let id = format!("pgp:v{version}:{key_algo}:{creation_time}:{}", &key.name);
+            let id = format!("pgp:v{version}:{key_algo}:{creation_time}:{}", key.name);
             tracing::debug!(
                 fingerprint = pgp_key.fingerprint().to_hex(),
                 id,

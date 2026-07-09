@@ -134,7 +134,7 @@ impl core::fmt::Debug for HmacKeys {
         // Manually implemented so keys aren't accidentally logged.
         f.debug_struct("HmacKeys")
             .field("header_key", &format!("{} bytes", self.header_key.len()))
-            .field("payload_key", &format!("{} bytes", &self.payload_key.len()))
+            .field("payload_key", &format!("{} bytes", self.payload_key.len()))
             .finish()
     }
 }

@@ -567,7 +567,7 @@ async fn key_create_and_list() -> anyhow::Result<()> {
     assert_eq!(key.key_name(), &key_name);
 
     let keys = client.keys("my-admin-password".into()).await?;
-    assert!(keys.iter().any(|k| *k == format!("{} (gnupg)", &key_name,)));
+    assert!(keys.iter().any(|k| *k == format!("{} (gnupg)", key_name,)));
 
     client
         .delete_key("my-admin-password".into(), key_name)
@@ -610,7 +610,7 @@ async fn key_modify() -> anyhow::Result<()> {
     let keys = client.keys("my-admin-password".into()).await?;
     assert!(
         keys.iter()
-            .any(|k| *k == format!("{} (gnupg)", &new_key_name,))
+            .any(|k| *k == format!("{} (gnupg)", new_key_name,))
     );
 
     client
@@ -788,7 +788,7 @@ pub async fn key_rsa_import() -> anyhow::Result<()> {
     let keys = client.keys("my-admin-password".into()).await?;
     assert!(
         keys.iter()
-            .any(|k| *k == format!("{} ({})", &key_name, KeyType::Rsa))
+            .any(|k| *k == format!("{} ({})", key_name, KeyType::Rsa))
     );
 
     client
@@ -833,7 +833,7 @@ pub async fn key_ecc_import() -> anyhow::Result<()> {
     let keys = client.keys("my-admin-password".into()).await?;
     assert!(
         keys.iter()
-            .any(|k| *k == format!("{} ({})", &key_name, KeyType::Ecc))
+            .any(|k| *k == format!("{} ({})", key_name, KeyType::Ecc))
     );
 
     client
