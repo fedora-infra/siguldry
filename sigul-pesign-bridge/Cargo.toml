@@ -37,7 +37,7 @@ features = ["net"]
 
 [dependencies.siguldry]
 path = "../siguldry"
-version = ">=0.6, <0.8"
+version = ">=0.6, <0.9"
 default-features = false
 features = ["sigul-client"]
 

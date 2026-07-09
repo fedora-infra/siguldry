@@ -6,21 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [0.8.0] - 2026-07-09
 
 ### Added
+
+- The client proxy now comes with an `Accept=no` systemd socket variant. When run
+  in this mode, systemd starts a single service instance for the proxy. While this
+  reduces the isolation between client connections, in scenarios where the client
+  proxy is configured to unlock the keys (and thus, no secrets are being provided
+  by clients) it performs much better, particularly in highly concurrent scenarios.
+  The new socket unit is named `siguldry-client-shared-proxy.socket` (#221)
 
 - The client now gracefully shuts down idle connections to the signing server
   after a configurable `idle_timeout` (default 600 seconds). The connection is
   transparently re-established on the next request. This should be set somewhat
   lower than the server's idle client timeout, and larger than the client's
-  `request_timeout`.
+  `request_timeout` (#241)
+
+- The server has a new configuration option, `idle_client_timeout`, which defaults
+  to 1 hour. When a client connection has not submitted a request within that time,
+  the server shuts it down. This is a compliment to the client-initiated timeout and
+  should only impact mis-behaving clients (#240)
+
+- The server has a new configuration option, `connection_watchdog_timeout`, which
+  defaults to 3 hours. Request handlers check in with the watchdog while processing
+  requests, and failure to do so will result in the client connection being terminated
+  if the timeout is reached without a check-in. This is to protect against faults on
+  the server, like if a signing request is sent to the helper over IPC and a response
+  is never received by cause the helper deadlocks, queries unresponsive hardware, etc.
+  The watchdog logs at an error level and this should be investigated carefully if it
+  is observed by administrators (#240)
 
 ### Changed
 
+- The client now makes use of Tokio's multi-thread runtime rather than its single
+  thread runtime so that when running in `Accept=no` mode it can take advantage
+  of all available cores (#221)
+
 - **Breaking** The client's `request_timeout` configuration is now expressed as
   an integer number of seconds (for example `request_timeout = 30`) rather than
-  a duration table (`[request_timeout]` with `secs` and `nanos`).
+  a `[request_timeout]` table with `secs` and `nanos` (#241)
 
 
 ## [0.7.3] - 2026-07-06
