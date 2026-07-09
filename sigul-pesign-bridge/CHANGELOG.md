@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-07-09
+
+### Changed
+
+- Maximum supported version of Siguldry raised to 0.8 (#242)
+
+- The systemd unit now includes an [Install] section so it can now be enabled to start on boot (#214)
+
+
 ## [0.10.0] - 2026-04-20
 
 ### Changed
