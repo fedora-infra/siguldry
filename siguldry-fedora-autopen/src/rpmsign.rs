@@ -93,9 +93,6 @@ impl<K: KojiOps> KojiSigner<K> {
             .storage_limit_mb
             .map(Semaphore::new)
             .map(Arc::new);
-        tokio::spawn(approximate_storage_usage(
-            config.rpm.working_directory.clone(),
-        ));
         Self {
             config,
             pgp_home,
@@ -546,9 +543,11 @@ async fn download(
 }
 
 // Track the storage used, approximately.
-async fn approximate_storage_usage(working_directory: PathBuf) {
+pub async fn approximate_storage_usage(
+    working_directory: PathBuf,
+    artifact_size_gauge: metrics::Gauge,
+) {
     let interval = Duration::from_secs(5);
-    let artifact_size_gauge = crate::metrics_utils::rpms_storage();
     loop {
         tokio::time::sleep(interval).await;
 

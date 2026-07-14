@@ -86,6 +86,12 @@ async fn main() -> anyhow::Result<()> {
     let halt_token = CancellationToken::new();
     tokio::spawn(signal_handler(halt_token.clone()));
 
+    // Exports metrics for RPM's storage usage
+    tokio::spawn(rpmsign::approximate_storage_usage(
+        config.rpm.working_directory.clone(),
+        crate::metrics_utils::rpms_storage(),
+    ));
+
     let temp_dir_root = std::env::temp_dir();
     let pgp_dir = tempfile::Builder::new()
         .permissions(Permissions::from_mode(0o700))
@@ -111,24 +117,10 @@ async fn main() -> anyhow::Result<()> {
     let pgp_home = Arc::new(pgp_home);
     let config = Arc::new(config);
 
-    match opts.command {
-        cli::Command::Consume => run_consumer(config, pgp_home, signing_keys, halt_token).await,
-        cli::Command::Process { file } => {
-            process_message(config, pgp_home, signing_keys, file).await
-        }
-    }
-}
-
-async fn run_consumer(
-    config: Arc<config::Config>,
-    pgp_home: Arc<PgpConfig>,
-    signing_keys: Arc<HashMap<String, Key>>,
-    halt_token: CancellationToken,
-) -> anyhow::Result<()> {
     let koji_actor = koji::KojiActor::new(config.koji.clone())?;
-
     let koji_url = reqwest::Url::parse(&config.koji.url)?;
     let koji_host = koji_url.host_str().unwrap().to_string();
+
     let retry_policy = reqwest::retry::for_host(koji_host).classify_fn(|request| {
         if request.error().is_some() {
             request.retryable()
@@ -154,13 +146,78 @@ async fn run_consumer(
         .retry(retry_policy)
         .build()?;
 
+    let max_concurrency = config.siguldry.concurrency.get();
+    let consumed_by_gpg = pgp_home.gpg_homedirs.len();
+    let concurrency = max_concurrency.saturating_sub(consumed_by_gpg);
+    tracing::info!(
+        "Signing will allow at most {} operations concurrently ({} connections consumed by gpg)",
+        concurrency,
+        consumed_by_gpg
+    );
+    let concurrency = Arc::new(Semaphore::new(concurrency));
+
+    let result = match opts.command {
+        cli::Command::Consume => {
+            run_consumer(
+                config,
+                pgp_home,
+                signing_keys,
+                concurrency,
+                http_client,
+                koji_actor.handle(),
+                halt_token,
+            )
+            .await
+        }
+        cli::Command::Process { file } => {
+            process_message(config, pgp_home, signing_keys, file).await
+        }
+    };
+    koji_actor.shutdown()?;
+
+    result
+}
+
+async fn run_consumer<K: koji::KojiOps>(
+    config: Arc<config::Config>,
+    pgp_home: Arc<PgpConfig>,
+    signing_keys: Arc<HashMap<String, Key>>,
+    concurrency: Arc<Semaphore>,
+    http_client: reqwest::Client,
+    koji: K,
+    halt_token: CancellationToken,
+) -> anyhow::Result<()> {
     loop {
+        // All tasks spawned by these functions should be using `JoinSet` so they're aborted
+        // on drop, which is why this is included inside the loop. If the connection fails we
+        // want to abort all current work and start fresh.
+        let koji_signer = rpmsign::KojiSigner::new(
+            Arc::clone(&config),
+            Arc::clone(&concurrency),
+            Arc::clone(&pgp_home),
+            Arc::clone(&signing_keys),
+            http_client.clone(),
+            koji.clone(),
+        );
+        let ostree_signer = crate::ostree::OstreeSigner::new(
+            Arc::clone(&config),
+            Arc::clone(&concurrency),
+            Arc::clone(&pgp_home),
+            Arc::clone(&signing_keys),
+        );
+        let coreos_signer = coreos::CoreOsSigner::new(
+            Arc::clone(&config),
+            Arc::clone(&concurrency),
+            http_client.clone(),
+            Arc::clone(&pgp_home),
+            Arc::clone(&signing_keys),
+        )?;
+
         if let Err(error) = amqp::connect_and_consume(
             config.clone(),
-            http_client.clone(),
-            pgp_home.clone(),
-            signing_keys.clone(),
-            koji_actor.handle(),
+            koji_signer,
+            ostree_signer,
+            coreos_signer,
             halt_token.clone(),
         )
         .await
@@ -174,8 +231,6 @@ async fn run_consumer(
 
         crate::metrics_utils::amqp_reconnects().increment(1);
     }
-
-    koji_actor.shutdown()?;
 
     Ok(())
 }

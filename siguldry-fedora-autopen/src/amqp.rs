@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
 use lapin::{
@@ -14,21 +14,19 @@ use lapin::{
     tcp::{OwnedIdentity, OwnedTLSConfig},
     types::{AMQPValue, FieldTable},
 };
-use siguldry::protocol::Key;
-use tokio::{sync::Semaphore, task::JoinSet};
+use tokio::task::JoinSet;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, instrument};
 
-use crate::{PgpConfig, config::Config, coreos, koji::KojiOps, ostree, rpmsign};
+use crate::{config::Config, coreos, koji::KojiOps, ostree, rpmsign};
 
 // Handle a single connection.
 pub async fn connect_and_consume<K: KojiOps>(
     config: Arc<crate::config::Config>,
-    http_client: reqwest::Client,
-    pgp_home: Arc<PgpConfig>,
-    signing_keys: Arc<HashMap<String, Key>>,
-    koji_handle: K,
+    koji_signer: rpmsign::KojiSigner<K>,
+    ostree_signer: crate::ostree::OstreeSigner,
+    coreos_signer: coreos::CoreOsSigner,
     halt_token: CancellationToken,
 ) -> anyhow::Result<()> {
     let connection = tokio::select! {
@@ -80,36 +78,6 @@ pub async fn connect_and_consume<K: KojiOps>(
     }
     tracing::info!("Successfully declared all queue bindings");
 
-    let max_concurrency = config.siguldry.concurrency.get();
-    let consumed_by_gpg = pgp_home.gpg_homedirs.len();
-    let concurrency = max_concurrency.saturating_sub(consumed_by_gpg);
-    tracing::info!(
-        "Signing will allow at most {} operations concurrently ({} connections consumed by gpg)",
-        concurrency,
-        consumed_by_gpg
-    );
-    let concurrency = Arc::new(Semaphore::new(concurrency));
-    let koji_signer = rpmsign::KojiSigner::new(
-        Arc::clone(&config),
-        Arc::clone(&concurrency),
-        Arc::clone(&pgp_home),
-        Arc::clone(&signing_keys),
-        http_client.clone(),
-        koji_handle.clone(),
-    );
-    let ostree_signer = crate::ostree::OstreeSigner::new(
-        Arc::clone(&config),
-        Arc::clone(&concurrency),
-        Arc::clone(&pgp_home),
-        Arc::clone(&signing_keys),
-    );
-    let coreos_signer = coreos::CoreOsSigner::new(
-        Arc::clone(&config),
-        Arc::clone(&concurrency),
-        http_client.clone(),
-        Arc::clone(&pgp_home),
-        Arc::clone(&signing_keys),
-    )?;
     let publish_channel = connection
         .create_channel()
         .await

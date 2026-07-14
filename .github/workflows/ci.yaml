@@ -93,6 +93,7 @@ jobs:
             pkcs11-provider \
             pkg-config \
             python3-devel \
+            python3-koji \
             sequoia-sq \
             siguldry-pkcs11 \
             sqlite-devel
@@ -186,6 +187,7 @@ jobs:
             pkcs11-provider \
             pkg-config \
             python3-devel \
+            python3-koji \
             sequoia-sq \
             siguldry-pkcs11 \
             sqlite-devel

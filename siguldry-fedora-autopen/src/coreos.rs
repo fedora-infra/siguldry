@@ -316,7 +316,7 @@ impl CoreOsSigner {
                 .take()
                 .expect("stdin must be configured as piped");
 
-            let stream_result = tokio::spawn(async move {
+            let stream_result = async move {
                 // More than enough for streaming to stdin; the HTTP client has a global read
                 // timeout and doesn't need to be wrapped in a timeout here.
                 let write_timeout = Duration::from_secs(10);
@@ -336,7 +336,7 @@ impl CoreOsSigner {
                     .finish()
                     .context("Failed to complete message digest")?;
                 Ok::<_, anyhow::Error>(digest)
-            });
+            };
 
             let (download_task, output_task) =
                 tokio::join!(stream_result, child.wait_with_output());
@@ -359,9 +359,7 @@ impl CoreOsSigner {
             // Since we're streaming into the signing tool and not buffering anything,
             // this is where we confirm the file matches the advertised checksum.
             // If the digest doesn't match, we discard the signature and try again later.
-            let actual_digest = download_task
-                .context("Failed to join the task writing to stdin")?
-                .context("Failed to download and digest file")?;
+            let actual_digest = download_task.context("Failed to download and digest file")?;
             if expected_digest.as_slice() != actual_digest.as_ref() {
                 tracing::error!(
                     artifact.checksum,

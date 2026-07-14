@@ -103,6 +103,16 @@ routing_keys = []
 [siguldry]
 client_proxy_socket = "{proxy_socket}"
 
+[koji]
+url = "https://example.com"
+instance = "primary"
+readonly = true
+tags = []
+
+[koji.auth]
+authmethod = "kerberos"
+principal = "nobody@EXAMPLE.COM"
+
 [[ostree]]
 reference = "{reference}"
 directory = "{repo_dir}"
