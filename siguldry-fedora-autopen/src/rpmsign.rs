@@ -269,19 +269,15 @@ impl<K: KojiOps> KojiSigner<K> {
                 ));
             }
 
+            // Acquire a signing permit before spawning the task so that large builds with hundreds or
+            // thousands of packages don't get in line all at the same time. This does mean for big build
+            // the total signing time will be larger, but won't inconvenient the majority of builds and
+            // other signing requests that need only a few signatures.
+            let signing_permit = Arc::clone(&self.concurrency).acquire_owned().await?;
             let rpm_span = tracing::info_span!("rpm", rpm.id);
             signing_tasks.spawn(
                 async move {
-                    // Hold the necessary permits until we've finished signing.
-                    //
-                    // We do this inside the spawned task so that each build gets its RPMs in line for permits
-                    // around the same time. We may want to consider a different strategy in the future if we
-                    // would prefer huge builds to be interleaved with other signing tasks.
-                    //
-                    // If storage limits are enforced, builds first acquire a concurrency permit and _then_ the
-                    // required storage space. Because permits are given out in the order requested, small RPMs
-                    // will stack up behind a huge RPM when storage is limited.
-                    let signing_permit = task_signer.concurrency.acquire().await?;
+                    let signing_permit = signing_permit;
                     let storage_permit = if let Some(storage_limit) = task_signer.storage_limit {
                         let permit_count = rpm_size_in_mb
                             .max(1)
