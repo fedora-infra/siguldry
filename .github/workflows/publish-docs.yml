@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
 
       - name: Install mdbook
-        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # 2.82.7
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # 2.86.7
         with:
           tool: mdbook
 
