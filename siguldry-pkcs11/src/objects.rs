@@ -15,10 +15,11 @@ use cryptoki_sys::{
     CKA_ALWAYS_SENSITIVE, CKA_CERTIFICATE_TYPE, CKA_CHECK_VALUE, CKA_CLASS, CKA_COPYABLE,
     CKA_DECRYPT, CKA_EC_PARAMS, CKA_EC_POINT, CKA_ENCRYPT, CKA_EXTRACTABLE, CKA_ID, CKA_ISSUER,
     CKA_KEY_TYPE, CKA_LABEL, CKA_MODULUS, CKA_MODULUS_BITS, CKA_NEVER_EXTRACTABLE,
-    CKA_PUBLIC_EXPONENT, CKA_PUBLIC_KEY_INFO, CKA_SENSITIVE, CKA_SERIAL_NUMBER, CKA_SIGN,
-    CKA_SIGN_RECOVER, CKA_SUBJECT, CKA_TOKEN, CKA_TRUSTED, CKA_UNWRAP, CKA_VALUE, CKA_VERIFY,
-    CKA_WRAP, CKC_X_509, CKK_EC, CKK_RSA, CKO_CERTIFICATE, CKO_PRIVATE_KEY, CKO_PUBLIC_KEY,
-    CKR_ATTRIBUTE_TYPE_INVALID, CKR_BUFFER_TOO_SMALL, CKR_OK,
+    CKA_PARAMETER_SET, CKA_PUBLIC_EXPONENT, CKA_PUBLIC_KEY_INFO, CKA_SENSITIVE, CKA_SERIAL_NUMBER,
+    CKA_SIGN, CKA_SIGN_RECOVER, CKA_SUBJECT, CKA_TOKEN, CKA_TRUSTED, CKA_UNWRAP, CKA_VALUE,
+    CKA_VERIFY, CKA_WRAP, CKC_X_509, CKK_EC, CKK_EC_EDWARDS, CKK_ML_DSA, CKK_RSA, CKO_CERTIFICATE,
+    CKO_PRIVATE_KEY, CKO_PUBLIC_KEY, CKP_ML_DSA_65, CKP_ML_DSA_87, CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_BUFFER_TOO_SMALL, CKR_OK,
 };
 
 #[derive(Debug, Clone)]
@@ -190,6 +191,19 @@ impl Attribute {
 
     fn from_public_key(key: &Key) -> anyhow::Result<HashMap<u64, Attribute>> {
         let mut attrs = Self::common_attributes(key)?;
+        if matches!(
+            key.key_algorithm,
+            KeyAlgorithm::Mldsa65 | KeyAlgorithm::Mldsa87
+        ) {
+            let public_key = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+            attrs.insert(
+                CKA_VALUE,
+                Attribute {
+                    attribute_type: CKA_VALUE,
+                    value: public_key.raw_public_key()?,
+                },
+            );
+        }
         let class = (CKO_PUBLIC_KEY as CK_OBJECT_CLASS).to_ne_bytes().to_vec();
         attrs.insert(
             CKA_CLASS,
@@ -334,18 +348,42 @@ impl Attribute {
             // Finally, ECDSA keys are documented as needing the hash algorithm and symmetric encryption
             // algorithm after the key algorithm (separated by -, e.g. "rsa-sha256-aes128"), but we
             // don't support that currently either.
+            //
+            // TODO: Seems like they now use the pkcs11 APIs to discover key type and this doesn't need
+            // to be so convoluted?
             let cert = sequoia_openpgp::Cert::from_bytes(cert.certificate.as_bytes())?;
             let pgp_key = cert.primary_key().key();
-            let version = pgp_key.version();
-            let key_algo = match key.key_algorithm {
-                KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => "rsa",
-                KeyAlgorithm::P256 => "ecdsa",
-                _ => return Err(anyhow::anyhow!("Unsupported key algorithm")),
+            let version = match (key.hybrid_key_name.is_some(), key.key_algorithm) {
+                (true, KeyAlgorithm::Mldsa65) => {
+                    format!("v{}pq:mldsa65+ed25519", pgp_key.version())
+                }
+                (true, KeyAlgorithm::Ed25519) => format!("v{}t:mldsa65+ed25519", pgp_key.version()),
+                (true, KeyAlgorithm::Mldsa87) => format!("v{}pq:mldsa87+ed448", pgp_key.version()),
+                (true, KeyAlgorithm::Ed448) => format!("v{}t:mldsa87+ed448", pgp_key.version()),
+                (true, algorithm) => {
+                    return Err(anyhow::anyhow!("Unsupported key algorithm {algorithm}"));
+                }
+                (false, algorithm) => {
+                    let key_algo = match algorithm {
+                        KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => "rsa",
+                        KeyAlgorithm::P256 => "ecdsa",
+                        KeyAlgorithm::Ed25519 => "ed25519",
+                        KeyAlgorithm::Ed448 => "ed448",
+                        KeyAlgorithm::Mldsa65 => "mldsa65",
+                        KeyAlgorithm::Mldsa87 => "mldsa87",
+                        _ => return Err(anyhow::anyhow!("Unsupported key algorithm")),
+                    };
+
+                    format!("v{}:{key_algo}", pgp_key.version())
+                }
             };
             let creation_time = chrono::DateTime::<chrono::Utc>::from(pgp_key.creation_time())
                 .format("%Y%m%dT%H%M%SZ")
                 .to_string();
-            let id = format!("pgp:v{version}:{key_algo}:{creation_time}:{}", key.name);
+            let id = format!(
+                "pgp:{version}:{creation_time}:{}",
+                pgp_key.fingerprint().to_hex()
+            );
             tracing::debug!(
                 fingerprint = pgp_key.fingerprint().to_hex(),
                 id,
@@ -617,6 +655,90 @@ impl Attribute {
                     );
                 }
                 let mechanisms = crate::ECDSA_MECHANISMS
+                    .into_iter()
+                    .flat_map(|m| m.to_ne_bytes())
+                    .collect();
+                attrs.insert(
+                    CKA_ALLOWED_MECHANISMS,
+                    Attribute {
+                        attribute_type: CKA_ALLOWED_MECHANISMS,
+                        value: mechanisms,
+                    },
+                );
+            }
+            KeyAlgorithm::Ed25519 | KeyAlgorithm::Ed448 => {
+                attrs.insert(
+                    CKA_KEY_TYPE,
+                    Attribute {
+                        attribute_type: CKA_KEY_TYPE,
+                        value: CKK_EC_EDWARDS.to_ne_bytes().to_vec(),
+                    },
+                );
+
+                // Unlike P256, PKCS#11 v3.2 Section 6.3.5, table 66 indicates the public key is _not_ DER-encoded,
+                // but is just the "public key bytes as defined in RFC 8032".
+                //
+                // The PARAMS is still a DER-encoded ANSI X9.62 Parameters value like the EC keys.
+                //
+                // For the OIDs, see https://www.rfc-editor.org/rfc/rfc8410.html#section-3
+                let pubkey = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+                let (pubkey_bytes, oid) = if pubkey.is_a(openssl::pkey::KeyType::ED25519) {
+                    (pubkey.raw_public_key()?, asn1::oid!(1, 3, 101, 112))
+                } else if pubkey.is_a(openssl::pkey::KeyType::ED448) {
+                    (pubkey.raw_public_key()?, asn1::oid!(1, 3, 101, 113))
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Key type indicated it was a {} key, but OpenSSL failed to ID it as such",
+                        key.key_algorithm
+                    ));
+                };
+                let oid_bytes = asn1::write_single(&oid)?;
+                attrs.insert(
+                    CKA_EC_PARAMS,
+                    Attribute {
+                        attribute_type: CKA_EC_PARAMS,
+                        value: oid_bytes,
+                    },
+                );
+                attrs.insert(
+                    CKA_EC_POINT,
+                    Attribute {
+                        attribute_type: CKA_EC_POINT,
+                        value: pubkey_bytes,
+                    },
+                );
+            }
+            KeyAlgorithm::Mldsa65 | KeyAlgorithm::Mldsa87 => {
+                attrs.insert(
+                    CKA_KEY_TYPE,
+                    Attribute {
+                        attribute_type: CKA_KEY_TYPE,
+                        value: CKK_ML_DSA.to_ne_bytes().to_vec(),
+                    },
+                );
+                let parameter_set = match key.key_algorithm {
+                    KeyAlgorithm::Mldsa65 => CKP_ML_DSA_65,
+                    KeyAlgorithm::Mldsa87 => CKP_ML_DSA_87,
+                    _ => unreachable!(),
+                };
+                attrs.insert(
+                    CKA_PARAMETER_SET,
+                    Attribute {
+                        attribute_type: CKA_PARAMETER_SET,
+                        value: parameter_set.to_ne_bytes().to_vec(),
+                    },
+                );
+
+                let public_key =
+                    openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+                attrs.insert(
+                    CKA_PUBLIC_KEY_INFO,
+                    Attribute {
+                        attribute_type: CKA_PUBLIC_KEY_INFO,
+                        value: public_key.public_key_to_der()?,
+                    },
+                );
+                let mechanisms = crate::ML_DSA_MECHANISMS
                     .into_iter()
                     .flat_map(|m| m.to_ne_bytes())
                     .collect();

@@ -221,8 +221,7 @@ async fn list_keys() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new().with_all_keys().build().await?;
 
     let keys = instance.client.list_keys().await?;
-    // OpenPGP key + CA key + codesigning key + EC key
-    assert_eq!(4, keys.len());
+    assert_eq!(12, keys.len());
 
     instance.halt().await?;
     Ok(())
@@ -240,8 +239,7 @@ async fn client_proxy_list_keys() -> anyhow::Result<()> {
     let mut client_proxy = ProxyClient::new(instance.client_proxy_socket())?;
 
     let keys = tokio::task::spawn_blocking(move || client_proxy.list_keys()).await??;
-    // OpenPGP key + CA key + codesigning key + EC key
-    assert_eq!(4, keys.len());
+    assert_eq!(12, keys.len());
 
     instance.halt().await?;
     Ok(())
@@ -737,6 +735,268 @@ async fn hsm_rsa_prehashed_signature_with_pkcs11_binding() -> anyhow::Result<()>
     assert_eq!("Verified OK\n", stdout);
 
     instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn ed25519_signature() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_ed25519_key().build().await?;
+    let data = "🦡🍄🍄🦡🦡🦡".as_bytes();
+
+    instance
+        .client
+        .unlock(
+            keys::ED25519_KEY_NAME.to_string(),
+            keys::ED25519_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+    let key = instance
+        .client
+        .get_key(keys::ED25519_KEY_NAME.to_string())
+        .await?;
+
+    let hash = openssl::hash::hash(DigestAlgorithm::Sha3_512.into(), data)?;
+    let digest = hex::encode(hash);
+
+    let signature = instance
+        .client
+        .sign(
+            keys::ED25519_KEY_NAME.to_string(),
+            DigestAlgorithm::Sha3_512,
+            digest,
+        )
+        .await?;
+
+    let cert =
+        openssl::x509::X509::from_pem(key.certificates.first().unwrap().certificate.as_bytes())?;
+    assert!(cert.public_key()?.is_a(openssl::pkey::KeyType::ED25519));
+
+    let pubkey_path = instance.state_dir.path().join("ed25519-pubkey.pem");
+    std::fs::write(&pubkey_path, &key.public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, signature.value())?;
+    let data_path = instance.state_dir.path().join("data");
+    // pkeyutl with Ed25519 only supports "pure" signatures
+    std::fs::write(&data_path, hash)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("pkeyutl")
+        .arg("-verify")
+        .arg("-in")
+        .arg(data_path)
+        .arg("-pubin")
+        .arg("-inkey")
+        .arg(pubkey_path)
+        .arg("-sigfile")
+        .arg(sig_path)
+        .output()
+        .await?;
+    let stdout = String::from_utf8(output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert_eq!("Signature Verified Successfully\n", stdout);
+    assert_eq!("", stderr);
+    assert!(output.status.success());
+
+    instance.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn ed448_signature() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_ed448_key().build().await?;
+    let data = "🦡🍄🦡🦡🍄🦡".as_bytes();
+
+    instance
+        .client
+        .unlock(
+            keys::ED448_KEY_NAME.to_string(),
+            keys::ED448_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+    let key = instance
+        .client
+        .get_key(keys::ED448_KEY_NAME.to_string())
+        .await?;
+
+    let hash = openssl::hash::hash(DigestAlgorithm::Sha3_512.into(), data)?;
+    let digest = hex::encode(hash);
+
+    let signature = instance
+        .client
+        .sign(
+            keys::ED448_KEY_NAME.to_string(),
+            DigestAlgorithm::Sha3_512,
+            digest,
+        )
+        .await?;
+
+    let cert =
+        openssl::x509::X509::from_pem(key.certificates.first().unwrap().certificate.as_bytes())?;
+    assert!(cert.public_key()?.is_a(openssl::pkey::KeyType::ED448));
+
+    let pubkey_path = instance.state_dir.path().join("ed448-pubkey.pem");
+    std::fs::write(&pubkey_path, &key.public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, signature.value())?;
+    let data_path = instance.state_dir.path().join("data");
+    // pkeyutl with Ed448 only supports "pure" signatures
+    std::fs::write(&data_path, hash)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("pkeyutl")
+        .arg("-verify")
+        .arg("-in")
+        .arg(data_path)
+        .arg("-pubin")
+        .arg("-inkey")
+        .arg(pubkey_path)
+        .arg("-sigfile")
+        .arg(sig_path)
+        .output()
+        .await?;
+    let stdout = String::from_utf8(output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert_eq!("Signature Verified Successfully\n", stdout);
+    assert_eq!("", stderr);
+    assert!(output.status.success());
+
+    instance.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn mldsa65_signature() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_mldsa65_key().build().await?;
+    let data = "🦡🦡🦡🦡🍄🍄".as_bytes();
+
+    instance
+        .client
+        .unlock(
+            keys::MLDSA65_KEY_NAME.to_string(),
+            keys::MLDSA65_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+    let key = instance
+        .client
+        .get_key(keys::MLDSA65_KEY_NAME.to_string())
+        .await?;
+
+    let public_key = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+    let mu_digest = siguldry::calculate_mu(public_key.as_ref(), data)?;
+    let digest = hex::encode(mu_digest);
+
+    let signature = instance
+        .client
+        .sign(
+            keys::MLDSA65_KEY_NAME.to_string(),
+            DigestAlgorithm::MldsaMu,
+            digest,
+        )
+        .await?;
+
+    let cert =
+        openssl::x509::X509::from_pem(key.certificates.first().unwrap().certificate.as_bytes())?;
+    assert!(cert.public_key()?.is_a(openssl::pkey::KeyType::ML_DSA_65));
+
+    let pubkey_path = instance.state_dir.path().join("mldsa65-pubkey.pem");
+    std::fs::write(&pubkey_path, &key.public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, signature.value())?;
+    let data_path = instance.state_dir.path().join("data");
+    std::fs::write(&data_path, data)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("pkeyutl")
+        .arg("-verify")
+        .arg("-rawin")
+        .arg("-in")
+        .arg(data_path)
+        .arg("-pubin")
+        .arg("-inkey")
+        .arg(pubkey_path)
+        .arg("-sigfile")
+        .arg(sig_path)
+        .output()
+        .await?;
+    let stdout = String::from_utf8(output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert_eq!("Signature Verified Successfully\n", stdout);
+    assert_eq!("", stderr);
+    assert!(output.status.success());
+
+    instance.halt().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn mldsa87_signature() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new().with_mldsa87_key().build().await?;
+    let data = "🍄🦡🍄🦡🦡🦡".as_bytes();
+
+    instance
+        .client
+        .unlock(
+            keys::MLDSA87_KEY_NAME.to_string(),
+            keys::MLDSA87_KEY_PASSWORD.to_string(),
+        )
+        .await?;
+    let key = instance
+        .client
+        .get_key(keys::MLDSA87_KEY_NAME.to_string())
+        .await?;
+
+    let public_key = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+    let mu_digest = siguldry::calculate_mu(public_key.as_ref(), data)?;
+    let digest = hex::encode(mu_digest);
+
+    let signature = instance
+        .client
+        .sign(
+            keys::MLDSA87_KEY_NAME.to_string(),
+            DigestAlgorithm::MldsaMu,
+            digest,
+        )
+        .await?;
+
+    let cert =
+        openssl::x509::X509::from_pem(key.certificates.first().unwrap().certificate.as_bytes())?;
+    assert!(cert.public_key()?.is_a(openssl::pkey::KeyType::ML_DSA_87));
+
+    let pubkey_path = instance.state_dir.path().join("mldsa87-pubkey.pem");
+    std::fs::write(&pubkey_path, &key.public_key)?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+    std::fs::write(&sig_path, signature.value())?;
+    let data_path = instance.state_dir.path().join("data");
+    std::fs::write(&data_path, data)?;
+    let mut command = tokio::process::Command::new("openssl");
+    let output = command
+        .arg("pkeyutl")
+        .arg("-verify")
+        .arg("-rawin")
+        .arg("-in")
+        .arg(data_path)
+        .arg("-pubin")
+        .arg("-inkey")
+        .arg(pubkey_path)
+        .arg("-sigfile")
+        .arg(sig_path)
+        .output()
+        .await?;
+    let stdout = String::from_utf8(output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert_eq!("Signature Verified Successfully\n", stdout);
+    assert_eq!("", stderr);
+    assert!(output.status.success());
+
+    instance.halt().await?;
+
     Ok(())
 }
 

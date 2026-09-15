@@ -50,14 +50,20 @@ impl Handler {
         user: &User,
     ) -> Result<Response, ServerError> {
         let mut keys = vec![];
-        for key in db::Key::list_by_user(conn, user).await? {
-            let certificates = certs_for_key(conn, &key).await?;
+        let user_keys = db::Key::list_by_user(conn, user).await?;
+        for key in &user_keys {
+            let certificates = certs_for_key(conn, key).await?;
+            let hybrid_key_name = key
+                .hybrid_pair_id
+                .and_then(|id| user_keys.iter().find(|k| k.id == id))
+                .map(|k| k.name.clone());
             keys.push(protocol::Key {
-                name: key.name,
+                name: key.name.clone(),
                 key_algorithm: key.key_algorithm,
-                handle: key.handle,
-                public_key: key.public_key,
+                handle: key.handle.clone(),
+                public_key: key.public_key.clone(),
                 certificates,
+                hybrid_key_name,
             });
         }
         tracing::debug!(
@@ -88,6 +94,7 @@ impl Handler {
     ) -> Result<Response, ServerError> {
         let key = db::Key::get(conn, &key_name).await?;
         let certificates = certs_for_key(conn, &key).await?;
+        let hybrid_key_name = key.find_hybrid(conn).await?.map(|k| k.name);
         tracing::debug!("GetKey request successfully processed");
 
         Ok(Response::GetKey {
@@ -97,6 +104,7 @@ impl Handler {
                 handle: key.handle,
                 public_key: key.public_key,
                 certificates,
+                hybrid_key_name,
             },
         })
     }

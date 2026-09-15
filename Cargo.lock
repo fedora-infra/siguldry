@@ -3389,6 +3389,7 @@ dependencies = [
  "hex",
  "libc",
  "openssl",
+ "ossl",
  "proptest",
  "pyo3",
  "rustix",

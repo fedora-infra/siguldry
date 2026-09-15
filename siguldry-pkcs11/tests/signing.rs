@@ -414,11 +414,15 @@ async fn openssl_provider_sign_and_verify(
         .arg("-out")
         .arg(&sig_path)
         .arg("-passin")
-        .arg(format!("pass:{password}"))
-        .arg("-pkeyopt")
-        .arg(format!("digest:{digest}"));
+        .arg(format!("pass:{password}"));
     if matches!(key_algorithm, KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K) {
         sign_command.arg("-pkeyopt").arg("rsa_padding_mode:pkcs1");
+    }
+    if !matches!(
+        key_algorithm,
+        KeyAlgorithm::Mldsa65 | KeyAlgorithm::Mldsa87 | KeyAlgorithm::Ed25519 | KeyAlgorithm::Ed448
+    ) {
+        sign_command.arg("-pkeyopt").arg(format!("digest:{digest}"));
     }
     let output = sign_command.output().await?;
     assert!(
@@ -429,24 +433,34 @@ async fn openssl_provider_sign_and_verify(
     );
 
     let mut verify_command = tokio::process::Command::new("openssl");
-    let output = verify_command
-        .arg("dgst")
-        .arg(format!("-{digest}"))
+    verify_command
+        .arg("pkeyutl")
         .arg("-verify")
-        .arg(&pubkey_path)
-        .arg("-signature")
-        .arg(&sig_path)
-        .arg(&data_path)
-        .output()
-        .await?;
+        .arg("-rawin")
+        .arg("-in")
+        .arg(data_path)
+        .arg("-pubin")
+        .arg("-inkey")
+        .arg(pubkey_path)
+        .arg("-sigfile")
+        .arg(sig_path);
+    if matches!(
+        key_algorithm,
+        KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K | KeyAlgorithm::P256
+    ) {
+        verify_command.arg("-digest").arg(digest.to_string());
+    }
+    let debug_cli = format!("verify command: '{:?}'", verify_command);
+    let output = verify_command.output().await?;
     assert!(
         output.status.success(),
-        "openssl dgst -{digest} -verify failed:\nstdout: {}\nstderr: {}",
+        "{} failed:\nstdout: {}\nstderr: {}",
+        debug_cli,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
     let stdout = String::from_utf8(output.stdout)?;
-    assert_eq!("Verified OK\n", stdout);
+    assert_eq!("Signature Verified Successfully\n", stdout);
 
     Ok(())
 }
@@ -555,6 +569,126 @@ async fn sign_sha512_ecdsa_openssl_provider() -> anyhow::Result<()> {
         expected_pubkey.key_algorithm,
         keys::EC_KEY_NAME,
         keys::EC_KEY_PASSWORD,
+        &expected_pubkey.public_key,
+        data,
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn sign_ed25519_openssl_provider() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_ed25519_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let data = "🐈‍⬛🐈🐅🐆".as_bytes();
+    // OpenSSL won't do any hashing of inputs and all signatures are "pure". For now we arbitrarily
+    // restrict the pkcs11 module to only accept 32 or 64 byte inputs.
+    let digest = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), data)?;
+    let expected_pubkey = instance
+        .client
+        .get_key(keys::ED25519_KEY_NAME.to_string())
+        .await?;
+
+    openssl_provider_sign_and_verify(
+        instance.state_dir.path(),
+        // It's not actually used and it'd be more correct to say "None" or "Raw" for the digest algorithm
+        DigestAlgorithm::Sha256,
+        expected_pubkey.key_algorithm,
+        keys::ED25519_KEY_NAME,
+        keys::ED25519_KEY_PASSWORD,
+        &expected_pubkey.public_key,
+        &digest,
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn sign_ed448_openssl_provider() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_ed448_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let data = "🐈‍⬛🐈🐅🐆".as_bytes();
+    // OpenSSL won't do any hashing of inputs and all signatures are "pure". For now we arbitrarily
+    // restrict the pkcs11 module to only accept 32 or 64 byte inputs.
+    let digest = openssl::hash::hash(openssl::hash::MessageDigest::sha3_512(), data)?;
+    let expected_pubkey = instance
+        .client
+        .get_key(keys::ED448_KEY_NAME.to_string())
+        .await?;
+
+    openssl_provider_sign_and_verify(
+        instance.state_dir.path(),
+        // It's not actually used and it'd be more correct to say "None" or "Raw" for the digest algorithm
+        DigestAlgorithm::Sha3_512,
+        expected_pubkey.key_algorithm,
+        keys::ED448_KEY_NAME,
+        keys::ED448_KEY_PASSWORD,
+        &expected_pubkey.public_key,
+        &digest,
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn sign_mldsa65_openssl_provider() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_mldsa65_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let data = "🍄🦡🦡🦡🦡🍄".as_bytes();
+    let expected_pubkey = instance
+        .client
+        .get_key(keys::MLDSA65_KEY_NAME.to_string())
+        .await?;
+
+    openssl_provider_sign_and_verify(
+        instance.state_dir.path(),
+        DigestAlgorithm::MldsaMu,
+        expected_pubkey.key_algorithm,
+        keys::MLDSA65_KEY_NAME,
+        keys::MLDSA65_KEY_PASSWORD,
+        &expected_pubkey.public_key,
+        data,
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn sign_mldsa87_openssl_provider() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_mldsa87_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let data = "🦭👍🦭👍🦭👍".as_bytes();
+    let expected_pubkey = instance
+        .client
+        .get_key(keys::MLDSA87_KEY_NAME.to_string())
+        .await?;
+
+    openssl_provider_sign_and_verify(
+        instance.state_dir.path(),
+        DigestAlgorithm::MldsaMu,
+        expected_pubkey.key_algorithm,
+        keys::MLDSA87_KEY_NAME,
+        keys::MLDSA87_KEY_PASSWORD,
         &expected_pubkey.public_key,
         data,
     )
@@ -682,11 +816,6 @@ async fn sign_rsa4k_gnupg_pkcs11_scd_protected_auth() -> anyhow::Result<()> {
 }
 
 // Use Sequoia's cryptoki backend to sign using the pkcs11 module.
-//
-// Note: This test only works with a version of sequoia that supports
-// PKCS11. Once it's released and Fedora updates, enable this test.
-// You can test locally with a build from
-// https://github.com/neverpanic/fosdem-rpm-pqc-signing-demo/
 #[tokio::test]
 #[tracing_test::traced_test]
 #[ignore = "Sequoia doesn't yet support PKCS11"]
@@ -714,6 +843,256 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
     tokio::fs::write(&certificate_path, cert.certificate.as_bytes()).await?;
     let password_path = instance.state_dir.path().join("password");
     tokio::fs::write(&password_path, keys::PGP_KEY_PASSWORD.as_bytes()).await?;
+
+    let sequoia_home = instance.state_dir.path().join("sequoia_home");
+    let mut command = tokio::process::Command::new("sq");
+    let output = command
+        .env("SEQUOIA_HOME", &sequoia_home)
+        .arg("--batch")
+        .arg("cert")
+        .arg("import")
+        .arg(&certificate_path)
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "'sq --batch cert import {}' failed:\nstdout: {}\nstderr: {}",
+        certificate_path.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let mut command = tokio::process::Command::new("sq");
+    let output = command
+        .env("SEQUOIA_HOME", &sequoia_home)
+        .arg("--batch")
+        .arg("pki")
+        .arg("link")
+        .arg("add")
+        .arg(format!("--cert={}", cert.fingerprint))
+        .arg("--all")
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "'sq --batch pki link add --cert={} --all' failed:\nstdout: {}\nstderr: {}",
+        cert.fingerprint,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let cryptoki_config_dir = sequoia_home.join("config/keystore/cryptoki");
+    tokio::fs::create_dir_all(&cryptoki_config_dir).await?;
+    let cryptoki_config_path = cryptoki_config_dir.join("config.toml");
+    tokio::fs::write(
+        &cryptoki_config_path,
+        format!("[[modules]]\npath = \"{}\"\n", module_path().display()),
+    )
+    .await?;
+    let mut command = tokio::process::Command::new("sq");
+    let output = command
+        .stdin(std::process::Stdio::null())
+        .env("SEQUOIA_HOME", &sequoia_home)
+        .env("RUST_LOG", "trace")
+        .env("SEQUOIA_CRYPTOKI_MODULE", module_path())
+        .env(
+            "LIBSIGULDRY_PKCS11_PROXY_PATH",
+            instance.client_proxy_socket(),
+        )
+        .arg("--batch")
+        .arg(format!("--password-file={}", password_path.display()))
+        .arg("sign")
+        .arg(format!("--signer={}", cert.fingerprint))
+        .arg(format!("--signature-file={}", sig_path.display()))
+        .arg(&data_path)
+        .output()
+        .await?;
+
+    assert!(
+        output.status.success(),
+        "'sq --batch sign --signer={} --signature-file={} {}' failed:\nstdout: {}\nstderr: {}",
+        cert.fingerprint,
+        sig_path.display(),
+        data_path.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let mut command = tokio::process::Command::new("sq");
+    let output = command
+        .env("SEQUOIA_HOME", &sequoia_home)
+        .arg("--batch")
+        .arg("verify")
+        .arg(format!("--signature-file={}", sig_path.display()))
+        .arg(&data_path)
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "'sq --batch verify --signature-file={} {}' failed:\nstdout: {}\nstderr: {}",
+        sig_path.display(),
+        data_path.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+#[ignore = "Sequoia doesn't yet support PKCS11"]
+async fn sign_ed25519_via_sequoia() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_ed25519_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let data = "🦡🦡🦡🍄🦡🍄".as_bytes();
+    let data_path = instance.state_dir.path().join("data");
+    tokio::fs::write(&data_path, data).await?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+
+    let expected_pubkey = instance
+        .client
+        .get_key(keys::ED25519_KEY_NAME.to_string())
+        .await?;
+    let certificate_path = instance.state_dir.path().join("signing_key.asc");
+    let cert = expected_pubkey
+        .openpgp_certificates()
+        .first()
+        .cloned()
+        .unwrap();
+    tokio::fs::write(&certificate_path, cert.certificate.as_bytes()).await?;
+    let password_path = instance.state_dir.path().join("password");
+    tokio::fs::write(&password_path, keys::ED25519_KEY_PASSWORD.as_bytes()).await?;
+
+    let sequoia_home = instance.state_dir.path().join("sequoia_home");
+    let mut command = tokio::process::Command::new("sq");
+    let output = command
+        .env("SEQUOIA_HOME", &sequoia_home)
+        .arg("--batch")
+        .arg("cert")
+        .arg("import")
+        .arg(&certificate_path)
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "'sq --batch cert import {}' failed:\nstdout: {}\nstderr: {}",
+        certificate_path.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let mut command = tokio::process::Command::new("sq");
+    let output = command
+        .env("SEQUOIA_HOME", &sequoia_home)
+        .arg("--batch")
+        .arg("pki")
+        .arg("link")
+        .arg("add")
+        .arg(format!("--cert={}", cert.fingerprint))
+        .arg("--all")
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "'sq --batch pki link add --cert={} --all' failed:\nstdout: {}\nstderr: {}",
+        cert.fingerprint,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let cryptoki_config_dir = sequoia_home.join("config/keystore/cryptoki");
+    tokio::fs::create_dir_all(&cryptoki_config_dir).await?;
+    let cryptoki_config_path = cryptoki_config_dir.join("config.toml");
+    tokio::fs::write(
+        &cryptoki_config_path,
+        format!("[[modules]]\npath = \"{}\"\n", module_path().display()),
+    )
+    .await?;
+    let mut command = tokio::process::Command::new("sq");
+    let output = command
+        .stdin(std::process::Stdio::null())
+        .env("SEQUOIA_HOME", &sequoia_home)
+        .env("RUST_LOG", "trace")
+        .env("SEQUOIA_CRYPTOKI_MODULE", module_path())
+        .env(
+            "LIBSIGULDRY_PKCS11_PROXY_PATH",
+            instance.client_proxy_socket(),
+        )
+        .arg("--batch")
+        .arg(format!("--password-file={}", password_path.display()))
+        .arg("sign")
+        .arg(format!("--signer={}", cert.fingerprint))
+        .arg(format!("--signature-file={}", sig_path.display()))
+        .arg(&data_path)
+        .output()
+        .await?;
+
+    assert!(
+        output.status.success(),
+        "'sq --batch sign --signer={} --signature-file={} {}' failed:\nstdout: {}\nstderr: {}",
+        cert.fingerprint,
+        sig_path.display(),
+        data_path.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let mut command = tokio::process::Command::new("sq");
+    let output = command
+        .env("SEQUOIA_HOME", &sequoia_home)
+        .arg("--batch")
+        .arg("verify")
+        .arg(format!("--signature-file={}", sig_path.display()))
+        .arg(&data_path)
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "'sq --batch verify --signature-file={} {}' failed:\nstdout: {}\nstderr: {}",
+        sig_path.display(),
+        data_path.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    instance.halt().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+#[ignore = "Sequoia doesn't yet support PKCS11"]
+async fn sign_mldsa65_ed25519_hybrid() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_pgp_mldsa65_hybrid_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let data = "🪱🦡🦡🦡🍄🦡🍄".as_bytes();
+    let data_path = instance.state_dir.path().join("data");
+    tokio::fs::write(&data_path, data).await?;
+    let sig_path = instance.state_dir.path().join("data.sig");
+
+    let expected_pubkey = instance
+        .client
+        .get_key(keys::PGP_MLDSA65_HYBRID_KEY_NAME.to_string())
+        .await?;
+    let certificate_path = instance.state_dir.path().join("signing_key.asc");
+    let cert = expected_pubkey
+        .openpgp_certificates()
+        .first()
+        .cloned()
+        .unwrap();
+    tokio::fs::write(&certificate_path, cert.certificate.as_bytes()).await?;
+    let password_path = instance.state_dir.path().join("password");
+    tokio::fs::write(
+        &password_path,
+        keys::PGP_MLDSA65_ED25519_KEY_PASSWORD.as_bytes(),
+    )
+    .await?;
 
     let sequoia_home = instance.state_dir.path().join("sequoia_home");
     let mut command = tokio::process::Command::new("sq");

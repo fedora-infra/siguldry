@@ -55,6 +55,7 @@ use std::{
 };
 
 use anyhow::Context;
+use openssl::hash::{Hasher, MessageDigest};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
@@ -74,6 +75,51 @@ pub(crate) mod nestls;
 pub mod protocol;
 #[cfg(feature = "server")]
 pub mod server;
+
+/// Calculate the mu value for ML-DSA signatures.
+///
+/// This function does not support a context at the moment.
+#[doc(hidden)]
+pub fn calculate_mu(
+    public_key: &openssl::pkey::PKeyRef<openssl::pkey::Public>,
+    message: &[u8],
+) -> Result<[u8; 64], openssl::error::ErrorStack> {
+    let mut hasher = begin_mu(public_key)?;
+    hasher.update(message)?;
+    let mut mu_digest = [0_u8; 64];
+    hasher.finish_xof(&mut mu_digest)?;
+
+    Ok(mu_digest)
+}
+
+/// Prepare a Hasher for calculating Mu.
+///
+/// The hasher returned has been fed:
+///
+/// SHAKE256(public_key, 64) || 0x00 || context_len || context
+///
+/// All that remains to calculate Mu is to update the hasher with the message and call
+/// `finish_xof()` with a 64 byte target buffer.
+pub fn begin_mu(
+    public_key: &openssl::pkey::PKeyRef<openssl::pkey::Public>,
+) -> Result<Hasher, openssl::error::ErrorStack> {
+    // Prepare the hash object with the 64-byte SHAKE256 hash of the public key, a null byte,
+    // the length of the context as a single byte, and then the context (maximum of 255 bytes).
+    let mut pubkey_hash = [0_u8; 64];
+    openssl::hash::hash_xof(
+        MessageDigest::shake_256(),
+        public_key.raw_public_key()?.as_slice(),
+        &mut pubkey_hash,
+    )?;
+    let mut hasher = Hasher::new(MessageDigest::shake_256())?;
+    hasher.update(&pubkey_hash)?;
+    hasher.update(&[0_u8])?;
+
+    // Context, not currently something we care about
+    hasher.update(&[0_u8])?;
+
+    Ok(hasher)
+}
 
 /// Install and manage signal handlers for the process.
 ///

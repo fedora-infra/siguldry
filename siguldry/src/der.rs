@@ -43,6 +43,7 @@ pub(crate) fn encode_digest_info(
         DigestAlgorithm::Sha512 => OID_SHA512,
         DigestAlgorithm::Sha3_256 => OID_SHA3_256,
         DigestAlgorithm::Sha3_512 => OID_SHA3_512,
+        DigestAlgorithm::MldsaMu => todo!(),
     };
 
     let digest_info = DigestInfo {

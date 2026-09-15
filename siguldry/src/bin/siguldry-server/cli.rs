@@ -319,8 +319,27 @@ pub enum KeyCommands {
     /// both X509 and OpenPGP as long as the key type is valid for both.
     Create {
         /// The key algorithm to use.
-        #[arg(short, long, value_enum, default_value_t)]
+        #[arg(short, long, value_enum, default_value_t, ignore_case = true)]
         algorithm: KeyAlgorithm,
+
+        /// Create a hybrid key pair that meets the requirements for Sequoia OpenPGP.
+        ///
+        /// OpenPGP hybrid key pairs are actually two separate keys with several special
+        /// requirements.  Keys using ML-DSA-65 must be paired with an Ed25519 key, and keys using
+        /// ML-DSA-87 must be paired with an Ed448 key. Additionally, OpenPGP tooling exposed these
+        /// two keys as a single key to users, so the tooling expects the keys to use the same
+        /// password to access them.
+        ///
+        /// When this flag is passed, two keys are created with the same password, and the other
+        /// key's name is the same as this key's name with the algorithm as a suffix. Other
+        /// management commands like issuing OpenPGP certificates and granting or removing user
+        /// access take into account that it's part of a hybrid pair and will operate on both keys,
+        /// and either key can be referenced in those commands.
+        ///
+        /// As an example, if the key name provided is "my-signing-key" and the algorithm is
+        /// ML-DSA-87, a second key will be created named "my-signing-key-ed448".
+        #[arg(long)]
+        openpgp_hybrid_pair: bool,
 
         /// A file containing the password needed to unlock and use the key.
         ///
@@ -458,6 +477,9 @@ pub enum UserCommands {
     /// 1. PKCS#11 PIN (if needed).
     /// 2. Existing user's access password.
     /// 3. New user's password.
+    ///
+    /// Note: if the key was created with "--openpgp-hybrid-pair", granting access to either key
+    /// in the pair grants the user access to both keys.
     GrantKeyAccess {
         /// A file containing the PIN for the PKCS#11 token used in binding (if any).
         ///
@@ -488,6 +510,9 @@ pub enum UserCommands {
     },
 
     /// Remove a user's access to a key.
+    ///
+    /// Note: if the key was created with "--openpgp-hybrid-pair", removing access to either key
+    /// in the pair removes the user's access to both keys.
     RevokeKeyAccess {
         /// The name of the key to revoke access from.
         key: String,
@@ -497,4 +522,44 @@ pub enum UserCommands {
 
     /// List all users in the database.
     List {},
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_algorithm_is_case_insensitive() {
+        for (value, expected) in [
+            ("RSA2K", KeyAlgorithm::Rsa2K),
+            ("RSA4K", KeyAlgorithm::Rsa4K),
+            ("P256", KeyAlgorithm::P256),
+            ("ED25519", KeyAlgorithm::Ed25519),
+            ("ED448", KeyAlgorithm::Ed448),
+            ("MLDSA65", KeyAlgorithm::Mldsa65),
+            ("MLDSA87", KeyAlgorithm::Mldsa87),
+        ] {
+            for value in [value, value.to_lowercase().as_str()] {
+                let cli = Cli::try_parse_from([
+                    "siguldry-server",
+                    "manage",
+                    "key",
+                    "create",
+                    "--algorithm",
+                    value,
+                    "admin",
+                    "key-name",
+                ])
+                .unwrap();
+
+                match cli.command {
+                    Command::Manage(ManagementCommands::Key(KeyCommands::Create {
+                        algorithm,
+                        ..
+                    })) => assert_eq!(algorithm, expected),
+                    _ => panic!("Incorrect command"),
+                }
+            }
+        }
+    }
 }

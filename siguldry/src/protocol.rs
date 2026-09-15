@@ -65,11 +65,9 @@
 //! |        Frame Header       |
 //! |---------------------------|
 //! | u64 | JSON size (bytes)   |
-//! | u64 | Binary size (bytes) |
 //! |---------------------------|
 
 use openssl::nid::Nid;
-use sequoia_openpgp::cert::CipherSuite;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
@@ -375,13 +373,12 @@ pub enum Request {
         /// The password to unlock the key with.
         password: String,
     },
-    /// Request an RSA or ECDSA signature.
+
+    /// Request an RSA, ECDSA, EdDSA, or ML-DSA signature.
     ///
-    /// The type of signature is dependant on the type of the given key.
-    ///
-    /// # RSA
-    ///
-    /// For RSA key types, the PKCS #1 padding mode is used.
+    /// The type of signature is dependant on the type of the given key. For EdDSA and ML-DSA, only
+    /// the pure forms are currently supported.  Refer to [`SignaturePayload`] for the format of the
+    /// signature.
     Sign {
         /// The signing key to use. This key must be unlocked.
         key: String,
@@ -479,11 +476,15 @@ impl Signature {
                 r_and_s.extend_from_slice(&s);
                 Some(r_and_s)
             }
+            SignaturePayload::PureEdDSA(eddsa_sig) => Some(eddsa_sig.clone()),
+            SignaturePayload::PureMLDSA(mldsa_sig) => Some(mldsa_sig.clone()),
         }
     }
 }
 
 /// Contains the actual signature.
+///
+/// All signature values are Base64 encoded versions of the structures described.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SignaturePayload {
@@ -491,10 +492,28 @@ pub enum SignaturePayload {
     /// RFC 8017 Section 9.2.
     #[serde(with = "base64")]
     RSA(Vec<u8>),
+
     /// Signatures with P256 keys are DER-encoded ECDSASignature structures as
     /// described in RFC 3279 Section 2.2.3.
     #[serde(with = "base64")]
     P256(Vec<u8>),
+
+    /// The PureEdDSA signature bytes.
+    ///
+    /// This will be either 64 bytes for Ed25519 signatures, with the first 32 octets being
+    /// the R value, and the second 32 octets being the S value (little-endian) as decribed
+    /// in RFC 8032 Section 5.1.6, or it will be 114 bytes for Ed448 signatures, with the
+    /// first 57 octets being the R value, and the second 57 octets being the S value
+    /// (little-endian) as described in RFC 8032 Section 5.2.6.
+    #[serde(with = "base64")]
+    PureEdDSA(Vec<u8>),
+
+    /// ML-DSA signatures are encoded as the raw signature bytes defined by the sigEncode() function
+    /// in FIPS 204, Section 7.2.
+    ///
+    /// For ML-DSA-65, this should be 3309 bytes and for ML-DSA-87, it should be 4627 bytes.
+    #[serde(with = "base64")]
+    PureMLDSA(Vec<u8>),
 }
 
 impl std::ops::Deref for SignaturePayload {
@@ -502,7 +521,10 @@ impl std::ops::Deref for SignaturePayload {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            SignaturePayload::RSA(value) | SignaturePayload::P256(value) => value,
+            SignaturePayload::RSA(value)
+            | SignaturePayload::P256(value)
+            | SignaturePayload::PureEdDSA(value)
+            | SignaturePayload::PureMLDSA(value) => value,
         }
     }
 }
@@ -559,6 +581,8 @@ pub struct Key {
     pub public_key: String,
     /// A list of certificates associated with this key.
     pub certificates: Vec<Certificate>,
+    /// The name of the key's hybrid pair, if it has one.
+    pub hybrid_key_name: Option<String>,
 }
 
 impl Key {
@@ -585,6 +609,7 @@ impl Key {
 /// This enumeration matches the values in the database's `key_algorithms` table.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "cli", value(rename_all = "lower"))]
 #[non_exhaustive]
 pub enum KeyAlgorithm {
     /// 2048 bit RSA keys.
@@ -594,6 +619,18 @@ pub enum KeyAlgorithm {
     Rsa4K,
     /// NIST P-256 ECC keys (also known as prime256v1 and secp256r1).
     P256,
+    /// Elliptic curve keys for EdDSA signatures using Curve25519
+    Ed25519,
+    /// Elliptic curve keys for EdDSA signatures using Curve448
+    Ed448,
+    /// ML-DSA-65 Module Lattice keys
+    ///
+    /// Refer to NIST FIPS 204 for details.
+    Mldsa65,
+    /// ML-DSA-87 Module Lattice keys
+    ///
+    /// Refer to NIST FIPS 204 for details.
+    Mldsa87,
 }
 
 impl KeyAlgorithm {
@@ -602,6 +639,21 @@ impl KeyAlgorithm {
             KeyAlgorithm::Rsa2K => "rsa2k",
             KeyAlgorithm::Rsa4K => "rsa4k",
             KeyAlgorithm::P256 => "P256",
+            KeyAlgorithm::Ed25519 => "ed25519",
+            KeyAlgorithm::Ed448 => "ed448",
+            KeyAlgorithm::Mldsa65 => "mldsa65",
+            KeyAlgorithm::Mldsa87 => "mldsa87",
+        }
+    }
+
+    /// Return the algorithm's valid hybrid pair based on RFC 9980.
+    pub const fn openpgp_hybrid_pair_algorithm(&self) -> Option<Self> {
+        match self {
+            KeyAlgorithm::Ed25519 => Some(KeyAlgorithm::Mldsa65),
+            KeyAlgorithm::Ed448 => Some(KeyAlgorithm::Mldsa87),
+            KeyAlgorithm::Mldsa65 => Some(KeyAlgorithm::Ed25519),
+            KeyAlgorithm::Mldsa87 => Some(KeyAlgorithm::Ed448),
+            _ => None,
         }
     }
 }
@@ -612,18 +664,12 @@ impl std::fmt::Display for KeyAlgorithm {
             KeyAlgorithm::Rsa2K => "RSA 2048",
             KeyAlgorithm::Rsa4K => "RSA 4096",
             KeyAlgorithm::P256 => "NIST P-256",
+            KeyAlgorithm::Ed25519 => "Ed25519",
+            KeyAlgorithm::Ed448 => "Ed448",
+            KeyAlgorithm::Mldsa65 => "ML-DSA-65",
+            KeyAlgorithm::Mldsa87 => "ML-DSA-87",
         };
         write!(f, "{s}")
-    }
-}
-
-impl From<KeyAlgorithm> for CipherSuite {
-    fn from(value: KeyAlgorithm) -> Self {
-        match value {
-            KeyAlgorithm::Rsa2K => CipherSuite::RSA2k,
-            KeyAlgorithm::Rsa4K => CipherSuite::RSA4k,
-            KeyAlgorithm::P256 => CipherSuite::P256,
-        }
     }
 }
 
@@ -635,6 +681,10 @@ impl TryFrom<&str> for KeyAlgorithm {
             "rsa2k" => Ok(Self::Rsa2K),
             "rsa4k" => Ok(Self::Rsa4K),
             "P256" => Ok(Self::P256),
+            "ed25519" => Ok(Self::Ed25519),
+            "ed448" => Ok(Self::Ed448),
+            "mldsa65" => Ok(Self::Mldsa65),
+            "mldsa87" => Ok(Self::Mldsa87),
             _ => Err(anyhow::anyhow!("Unknown key type '{value}'!")),
         }
     }
@@ -656,17 +706,36 @@ impl From<String> for KeyAlgorithm {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum DigestAlgorithm {
+    /// The input is not hashed or has been prepared by the caller in an unknown way.
+    ///
+    /// Size limits to the input vary by signing algorithm. For RSA, it's dependent on the
+    /// key size, for example. Passing [`DigestAlgorithm::None`] impacts the signature format
+    /// for RSA signatures: it will not be wrapped in a `DigestInfo` structure. This is rarely
+    /// what you would want. For algorithms like Ed25519, this is the only acceptable value.
+    //None,
     Sha256,
     Sha512,
     Sha3_256,
     Sha3_512,
+    /// The μ value for an ML-DSA signature.
+    ///
+    /// μ is a SHAKE256 digest with a 64 byte output. It's calculated from some content M by
+    /// performing the following:
+    ///
+    /// 1. Take the SHAKE256 digest of the signing key's raw public key, 64 byte output. This is
+    ///    the value 𝑡𝑟 from FIPS 204, algorithm 7.
+    /// 2. Start a new SHAKE256 hasher and absorb 𝑡𝑟 || null byte || len(context) || context || M
+    /// 3. Finalize the hasher and squeeze out a 64 byte digest.
+    MldsaMu,
 }
 
 impl DigestAlgorithm {
     /// The size, in bytes, of the digest algorithm
     pub fn size(self) -> usize {
-        let algorithm: openssl::hash::MessageDigest = self.into();
-        algorithm.size()
+        match self {
+            DigestAlgorithm::Sha256 | DigestAlgorithm::Sha3_256 => 32,
+            DigestAlgorithm::Sha3_512 | DigestAlgorithm::Sha512 | DigestAlgorithm::MldsaMu => 64,
+        }
     }
 }
 
@@ -677,6 +746,7 @@ impl std::fmt::Display for DigestAlgorithm {
             DigestAlgorithm::Sha512 => "sha512",
             DigestAlgorithm::Sha3_256 => "sha3-256",
             DigestAlgorithm::Sha3_512 => "sha3-512",
+            DigestAlgorithm::MldsaMu => "ML-DSA μ",
         };
         write!(f, "{name}")
     }
@@ -689,6 +759,7 @@ impl From<DigestAlgorithm> for openssl::hash::MessageDigest {
             DigestAlgorithm::Sha512 => openssl::hash::MessageDigest::sha512(),
             DigestAlgorithm::Sha3_256 => openssl::hash::MessageDigest::sha3_256(),
             DigestAlgorithm::Sha3_512 => openssl::hash::MessageDigest::sha3_512(),
+            DigestAlgorithm::MldsaMu => todo!("Switch to try_into or do something else here"),
         }
     }
 }
@@ -700,6 +771,7 @@ impl From<DigestAlgorithm> for &'static openssl::md::MdRef {
             DigestAlgorithm::Sha512 => openssl::md::Md::sha512(),
             DigestAlgorithm::Sha3_256 => openssl::md::Md::sha3_256(),
             DigestAlgorithm::Sha3_512 => openssl::md::Md::sha3_512(),
+            DigestAlgorithm::MldsaMu => todo!("Switch to try_into or do something else here"),
         }
     }
 }
@@ -854,12 +926,13 @@ mod tests {
                         handle: "key-handle".into(),
                         public_key: "public key".into(),
                         certificates: vec![],
+                        hybrid_key_name: None,
                     },
                 },
                 concat!(
                     r#"{"get_key":{"key":{"name":"test-key","#,
                     r#""key_algorithm":"P256","handle":"key-handle","#,
-                    r#""public_key":"public key","certificates":[]}}}"#,
+                    r#""public_key":"public key","certificates":[],"hybrid_key_name":null}}}"#,
                 ),
             ),
             (
@@ -918,6 +991,14 @@ mod tests {
         let payloads = [
             (SignaturePayload::RSA(vec![0, 0, 0]), r#"{"RSA":"AAAA"}"#),
             (SignaturePayload::P256(vec![8, 1, 68]), r#"{"P256":"CAFE"}"#),
+            (
+                SignaturePayload::PureEdDSA(vec![0, 0, 0]),
+                r#"{"PureEdDSA":"AAAA"}"#,
+            ),
+            (
+                SignaturePayload::PureMLDSA(vec![8, 1, 68]),
+                r#"{"PureMLDSA":"CAFE"}"#,
+            ),
         ];
 
         for (payload, expected) in payloads {
@@ -938,6 +1019,7 @@ mod tests {
                 fingerprint: "fingerprint".into(),
                 name: "test-certificate".into(),
             }],
+            hybrid_key_name: None,
         };
         assert_eq!(
             serde_json::to_string(&key).unwrap(),
@@ -946,7 +1028,7 @@ mod tests {
                 r#""handle":"key-handle","public_key":"public key","#,
                 r#""certificates":[{"certificate":"certificate","#,
                 r#""certificate_type":"X509","fingerprint":"fingerprint","#,
-                r#""name":"test-certificate"}]}"#,
+                r#""name":"test-certificate"}],"hybrid_key_name":null}"#,
             ),
         );
 
@@ -962,6 +1044,10 @@ mod tests {
             (KeyAlgorithm::Rsa2K, r#""Rsa2K""#),
             (KeyAlgorithm::Rsa4K, r#""Rsa4K""#),
             (KeyAlgorithm::P256, r#""P256""#),
+            (KeyAlgorithm::Ed25519, r#""Ed25519""#),
+            (KeyAlgorithm::Ed448, r#""Ed448""#),
+            (KeyAlgorithm::Mldsa65, r#""Mldsa65""#),
+            (KeyAlgorithm::Mldsa87, r#""Mldsa87""#),
         ];
         for (key_algorithm, expected) in key_algorithms {
             assert_eq!(serde_json::to_string(&key_algorithm).unwrap(), expected);

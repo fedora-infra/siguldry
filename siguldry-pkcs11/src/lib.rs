@@ -30,13 +30,13 @@ use cryptoki_sys::{
     CK_USER_TYPE, CK_UTF8CHAR, CK_UTF8CHAR_PTR, CK_VERSION, CK_VERSION_PTR, CKF_LOGIN_REQUIRED,
     CKF_PROTECTED_AUTHENTICATION_PATH, CKF_SIGN, CKF_TOKEN_INITIALIZED, CKF_TOKEN_PRESENT,
     CKF_USER_PIN_INITIALIZED, CKM_ECDSA, CKM_ECDSA_SHA3_256, CKM_ECDSA_SHA3_512, CKM_ECDSA_SHA256,
-    CKM_ECDSA_SHA512, CKM_RSA_PKCS, CKM_SHA3_256_RSA_PKCS, CKM_SHA3_512_RSA_PKCS,
-    CKM_SHA256_RSA_PKCS, CKM_SHA512_RSA_PKCS, CKR_ARGUMENTS_BAD, CKR_ATTRIBUTE_SENSITIVE,
-    CKR_ATTRIBUTE_TYPE_INVALID, CKR_BUFFER_TOO_SMALL, CKR_CANT_LOCK,
-    CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_CRYPTOKI_NOT_INITIALIZED, CKR_FUNCTION_FAILED,
-    CKR_MECHANISM_INVALID, CKR_NEED_TO_CREATE_THREADS, CKR_OBJECT_HANDLE_INVALID, CKR_OK,
-    CKR_OPERATION_ACTIVE, CKR_OPERATION_NOT_INITIALIZED, CKR_PIN_INCORRECT,
-    CKR_SESSION_HANDLE_INVALID, CKR_SLOT_ID_INVALID, CKR_USER_ALREADY_LOGGED_IN,
+    CKM_ECDSA_SHA512, CKM_EDDSA, CKM_ML_DSA, CKM_RSA_PKCS, CKM_SHA3_256_RSA_PKCS,
+    CKM_SHA3_512_RSA_PKCS, CKM_SHA256_RSA_PKCS, CKM_SHA512_RSA_PKCS, CKP_ML_DSA_65, CKP_ML_DSA_87,
+    CKR_ARGUMENTS_BAD, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID, CKR_BUFFER_TOO_SMALL,
+    CKR_CANT_LOCK, CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_CRYPTOKI_NOT_INITIALIZED,
+    CKR_FUNCTION_FAILED, CKR_MECHANISM_INVALID, CKR_NEED_TO_CREATE_THREADS,
+    CKR_OBJECT_HANDLE_INVALID, CKR_OK, CKR_OPERATION_ACTIVE, CKR_OPERATION_NOT_INITIALIZED,
+    CKR_PIN_INCORRECT, CKR_SESSION_HANDLE_INVALID, CKR_SLOT_ID_INVALID, CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN, CKR_USER_TYPE_INVALID, CKU_USER,
 };
 
@@ -78,6 +78,20 @@ const ECDSA_MECHANISMS: [CK_MECHANISM_TYPE; 5] = [
     CKM_ECDSA_SHA3_256,
     CKM_ECDSA_SHA3_512,
 ];
+
+/// Supported mechanisms for ML-DSA keys.
+///
+/// We don't support any of the HashML mechanisms at the moment. This single mechanism
+/// accepts the raw message M from FIPS 204 Algorithm 2 (ML-DSA.Sign). The message is
+/// digested using the SHAKE256 algorithm, which is not configurable for this mechanism.
+const ML_DSA_MECHANISMS: [CK_MECHANISM_TYPE; 1] = [CKM_ML_DSA];
+
+/// Supported mechanisms for Edwards curve keys.
+///
+/// This mechanism has an optional parameter, CK_EDDSA_PARAMS, which allows the user to
+/// specify a pre-hash flag and context data. Refer to RFC 8032 and RFC 8410 for the
+/// signature scheme definitions.
+const ED_DSA_MECHANISMS: [CK_MECHANISM_TYPE; 1] = [CKM_EDDSA];
 
 static LOGGING: LazyLock<()> = LazyLock::new(|| {
     let log_filter = EnvFilter::builder()
@@ -806,6 +820,12 @@ extern "C" fn C_GetMechanismList(
             RSA_PKCS_MECHANISMS.as_slice()
         }
         protocol::KeyAlgorithm::P256 => ECDSA_MECHANISMS.as_slice(),
+        protocol::KeyAlgorithm::Ed25519 | protocol::KeyAlgorithm::Ed448 => {
+            ED_DSA_MECHANISMS.as_slice()
+        }
+        protocol::KeyAlgorithm::Mldsa65 | protocol::KeyAlgorithm::Mldsa87 => {
+            ML_DSA_MECHANISMS.as_slice()
+        }
         _ => {
             tracing::error!("Server key type is unsupported by this module");
             return CKR_ARGUMENTS_BAD;
@@ -874,6 +894,20 @@ extern "C" fn C_GetMechanismInfo(
                 return CKR_MECHANISM_INVALID;
             }
             (256, 256)
+        }
+        protocol::KeyAlgorithm::Ed25519 | protocol::KeyAlgorithm::Ed448 => {
+            if !ED_DSA_MECHANISMS.contains(&type_) {
+                return CKR_MECHANISM_INVALID;
+            }
+            // According to Section 6.3.14, the only valid values are 255 and 448
+            // for RFC 8032 and 8410 respectively. We support both.
+            (255, 448)
+        }
+        protocol::KeyAlgorithm::Mldsa65 | protocol::KeyAlgorithm::Mldsa87 => {
+            if !ML_DSA_MECHANISMS.contains(&type_) {
+                return CKR_MECHANISM_INVALID;
+            }
+            (CKP_ML_DSA_65, CKP_ML_DSA_87)
         }
         _ => {
             tracing::error!("Server key type is unsupported by this module");

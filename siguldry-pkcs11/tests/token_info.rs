@@ -340,3 +340,155 @@ async fn mechanism_list_for_p256_key() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn mechanism_list_for_ed25519_key() -> anyhow::Result<()> {
+    let _instance = InstanceBuilder::new()
+        .with_ed25519_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+
+    let mechanism_list = tokio::task::spawn_blocking(|| {
+        let pkcs11 = initialize_module()?;
+        let slots = pkcs11.get_all_slots()?;
+        let slot = slots
+            .iter()
+            .find(|slot| {
+                if let Ok(info) = pkcs11.get_slot_info(**slot)
+                    && info.slot_description() == keys::ED25519_KEY_NAME
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let mechanism_list = pkcs11.get_mechanism_list(*slot)?;
+        Ok::<_, anyhow::Error>(mechanism_list)
+    })
+    .await??;
+
+    assert_eq!(
+        mechanism_list,
+        &[MechanismType::EDDSA],
+        "Module should support pure EdDSA signing with Ed25519 keys"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn mechanism_list_for_ed448_key() -> anyhow::Result<()> {
+    let _instance = InstanceBuilder::new()
+        .with_ed448_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+
+    let mechanism_list = tokio::task::spawn_blocking(|| {
+        let pkcs11 = initialize_module()?;
+        let slots = pkcs11.get_all_slots()?;
+        let slot = slots
+            .iter()
+            .find(|slot| {
+                if let Ok(info) = pkcs11.get_slot_info(**slot)
+                    && info.slot_description() == keys::ED448_KEY_NAME
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let mechanism_list = pkcs11.get_mechanism_list(*slot)?;
+        Ok::<_, anyhow::Error>(mechanism_list)
+    })
+    .await??;
+
+    assert_eq!(
+        mechanism_list,
+        &[MechanismType::EDDSA],
+        "Module should support pure EdDSA signing with Ed448 keys"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn mechanism_list_for_mldsa65_key() -> anyhow::Result<()> {
+    let _instance = InstanceBuilder::new()
+        .with_mldsa65_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+
+    let mechanism_list = tokio::task::spawn_blocking(|| {
+        let pkcs11 = initialize_module()?;
+        let slots = pkcs11.get_all_slots()?;
+        let slot = slots
+            .iter()
+            .find(|slot| {
+                if let Ok(info) = pkcs11.get_slot_info(**slot)
+                    && info.slot_description() == keys::MLDSA65_KEY_NAME
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let mechanism_list = pkcs11.get_mechanism_list(*slot)?;
+        Ok::<_, anyhow::Error>(mechanism_list)
+    })
+    .await??;
+
+    assert_eq!(
+        mechanism_list,
+        &[MechanismType::ML_DSA],
+        "Module should support the standard (not prehashed) ML-DSA signing mechanism"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn mechanism_list_for_mldsa87_key() -> anyhow::Result<()> {
+    let _instance = InstanceBuilder::new()
+        .with_mldsa87_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+
+    let mechanism_list = tokio::task::spawn_blocking(|| {
+        let pkcs11 = initialize_module()?;
+        let slots = pkcs11.get_all_slots()?;
+        let slot = slots
+            .iter()
+            .find(|slot| {
+                if let Ok(info) = pkcs11.get_slot_info(**slot)
+                    && info.slot_description() == keys::MLDSA87_KEY_NAME
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let mechanism_list = pkcs11.get_mechanism_list(*slot)?;
+        Ok::<_, anyhow::Error>(mechanism_list)
+    })
+    .await??;
+
+    assert_eq!(
+        mechanism_list,
+        &[MechanismType::ML_DSA],
+        "Module should support the standard (not prehashed) ML-DSA signing mechanism"
+    );
+
+    Ok(())
+}

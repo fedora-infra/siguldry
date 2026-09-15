@@ -7,7 +7,14 @@
 //! v1.5, ECDSA, etc).
 
 use anyhow::Context;
-use cryptoki::{mechanism::Mechanism, session::Session};
+use cryptoki::{
+    mechanism::{
+        Mechanism,
+        dsa::SignAdditionalContext,
+        eddsa::{EddsaParams, EddsaSignatureScheme},
+    },
+    session::Session,
+};
 use openssl::{pkey::PKey, pkey_ctx::PkeyCtx};
 
 use crate::{
@@ -32,18 +39,87 @@ pub fn sign_with_softkey(
             ));
         }
 
-        let mut ctx = PkeyCtx::new(pkey)?;
-        ctx.sign_init()?;
-        ctx.set_signature_md(algorithm.into())?;
-        if key.key_algorithm == KeyAlgorithm::Rsa4K {
-            // PKCS #1 should be the default, but lets be explicit about it.
-            ctx.set_rsa_padding(openssl::rsa::Padding::PKCS1)?;
-        }
-        let mut signature = vec![];
-        ctx.sign_to_vec(&hash, &mut signature)?;
+        let signature = match key.key_algorithm {
+            KeyAlgorithm::Mldsa65 | KeyAlgorithm::Mldsa87 => {
+                // Wonkiness ahead: the openssl crate does not yet expose an API for signing
+                // with ML-DSA. The ossl crate, spun out from kryoptic does, so for now we use
+                // that here. It's not ideal, and once the openssl crate does expose the APIs
+                // we need we should probably switch.
+
+                // Convert the key to ossl's object
+                let mut seed = ossl::OsslSecret::new(32);
+                let seed_length = pkey
+                    .seed_into(&mut seed)
+                    .context("Failed to extract the ML-DSA private key seed")?;
+                assert!(seed_length == 32);
+                let key_data = ossl::pkey::PkeyData::Mlkey(ossl::pkey::MlkeyData {
+                    pubkey: None,
+                    prikey: None,
+                    seed: Some(seed),
+                });
+                let (key_type, signature_algorithm) = match key.key_algorithm {
+                    KeyAlgorithm::Mldsa65 => (
+                        ossl::pkey::EvpPkeyType::Mldsa65,
+                        ossl::signature::SigAlg::Mldsa65,
+                    ),
+                    KeyAlgorithm::Mldsa87 => (
+                        ossl::pkey::EvpPkeyType::Mldsa87,
+                        ossl::signature::SigAlg::Mldsa87,
+                    ),
+                    _ => unreachable!(),
+                };
+                let context = ossl::OsslContext::new_lib_ctx();
+                let mut pkey = ossl::pkey::EvpPkey::import(&context, key_type, key_data)
+                    .context("Failed to import the ML-DSA private key")?;
+
+                let mut parameters = ossl::OsslParamBuilder::with_capacity(2);
+                // TODO add tunables for this
+                parameters.add_owned_int(c"deterministic", 1)?;
+                parameters.add_owned_int(c"mu", 1)?;
+                let parameters = parameters.finalize();
+                let mut signer = ossl::signature::OsslSignature::new(
+                    &context,
+                    ossl::signature::SigOp::Sign,
+                    signature_algorithm,
+                    &mut pkey,
+                    Some(&parameters),
+                )
+                .context("Failed to initialize ML-DSA signing")?;
+                let signature_length = signer.sign(&hash, None)?;
+                let mut signature = vec![0; signature_length];
+                let signature_length = signer.sign(&hash, Some(&mut signature))?;
+                // the openssl crate truncates and notes the length you get from the initial probe may
+                // not match the actual length?
+                signature.truncate(signature_length);
+
+                signature
+            }
+            KeyAlgorithm::Ed25519 | KeyAlgorithm::Ed448 => {
+                let mut signer = openssl::sign::Signer::new_without_digest(pkey)?;
+                signer.sign_oneshot_to_vec(&hash)?
+            }
+            _ => {
+                let mut ctx = PkeyCtx::new(pkey)?;
+                ctx.sign_init()?;
+                ctx.set_signature_md(algorithm.into())?;
+                if matches!(key.key_algorithm, KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K) {
+                    // PKCS #1 should be the default, but lets be explicit about it.
+                    ctx.set_rsa_padding(openssl::rsa::Padding::PKCS1)?;
+                }
+                let mut signature = vec![];
+                ctx.sign_to_vec(&hash, &mut signature)?;
+                signature
+            }
+        };
         let signature = match key.key_algorithm {
             KeyAlgorithm::Rsa2K | KeyAlgorithm::Rsa4K => protocol::SignaturePayload::RSA(signature),
             KeyAlgorithm::P256 => protocol::SignaturePayload::P256(signature),
+            KeyAlgorithm::Ed25519 | KeyAlgorithm::Ed448 => {
+                protocol::SignaturePayload::PureEdDSA(signature)
+            }
+            KeyAlgorithm::Mldsa65 | KeyAlgorithm::Mldsa87 => {
+                protocol::SignaturePayload::PureMLDSA(signature)
+            }
         };
 
         tracing::info!(digest_algorithm=%algorithm, digest=hex_hash, "Signature issued");
@@ -90,6 +166,15 @@ pub fn sign_with_pkcs11(
                 // ECDSA mechanism expects raw hash bytes
                 (Mechanism::Ecdsa, hash)
             }
+            KeyAlgorithm::Ed25519 | KeyAlgorithm::Ed448 => (
+                Mechanism::Eddsa(EddsaParams::new(EddsaSignatureScheme::Pure)),
+                hash,
+            ),
+            KeyAlgorithm::Mldsa65 | KeyAlgorithm::Mldsa87 => (
+                // TODO: Allow hedge type to be configured somewhere
+                Mechanism::MlDsa(SignAdditionalContext::new(Default::default(), None)),
+                hash,
+            ),
         };
 
         let signature = session
@@ -113,6 +198,8 @@ pub fn sign_with_pkcs11(
                 let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_private_components(r, s)?;
                 SignaturePayload::P256(ecdsa_sig.to_der()?)
             }
+            KeyAlgorithm::Ed25519 | KeyAlgorithm::Ed448 => SignaturePayload::PureEdDSA(signature),
+            KeyAlgorithm::Mldsa65 | KeyAlgorithm::Mldsa87 => SignaturePayload::PureMLDSA(signature),
         };
 
         tracing::info!(digest_algorithm=%algorithm, digest=hex_hash, "Signature issued");
@@ -132,6 +219,9 @@ mod tests {
     use std::process::Command;
 
     use anyhow::Result;
+    use ossl::OsslContext;
+    use ossl::pkey::{EvpPkey, EvpPkeyType, MlkeyData, PkeyData};
+    use ossl::signature::{OsslSignature, SigAlg, SigOp};
     use sequoia_openpgp::crypto::Password;
     use tempfile::TempDir;
     use zerocopy::IntoBytes;
@@ -143,6 +233,37 @@ mod tests {
     use crate::server::crypto::binding::decrypt_private_key;
     use crate::server::crypto::test_utils::setup_hsm;
     use crate::server::crypto::token::import_pkcs11_token;
+
+    fn verify_mldsa_signature(
+        key_algorithm: KeyAlgorithm,
+        public_key_pem: &str,
+        data: &[u8],
+        signature: &[u8],
+    ) -> Result<()> {
+        let (pkey_type, signature_algorithm) = match key_algorithm {
+            KeyAlgorithm::Mldsa65 => (EvpPkeyType::Mldsa65, SigAlg::Mldsa65),
+            KeyAlgorithm::Mldsa87 => (EvpPkeyType::Mldsa87, SigAlg::Mldsa87),
+            _ => unreachable!("The test only verifies ML-DSA keys"),
+        };
+        let public_key = PKey::public_key_from_pem(public_key_pem.as_bytes())?;
+        let key_data = PkeyData::Mlkey(MlkeyData {
+            pubkey: Some(public_key.raw_public_key()?),
+            prikey: None,
+            seed: None,
+        });
+        let context = OsslContext::new_lib_ctx();
+        let mut public_key = EvpPkey::import(&context, pkey_type, key_data)?;
+        let parameters = ossl::signature::mldsa_params(false, None, false)?;
+        let mut verifier = OsslSignature::new(
+            &context,
+            SigOp::Verify,
+            signature_algorithm,
+            &mut public_key,
+            parameters.as_ref(),
+        )?;
+        verifier.verify(data, Some(signature))?;
+        Ok(())
+    }
 
     #[test]
     fn encode_decode_digest_info() -> Result<()> {
@@ -308,15 +429,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sign_with_pkcs11_mldsa_keys() -> Result<()> {
+        let hsm = setup_hsm()?;
+        let db_pool = db::pool("sqlite::memory:", false).await?;
+        db::migrate(&db_pool).await?;
+        let mut conn = db_pool.begin().await?;
+
+        let token = import_pkcs11_token(
+            &mut conn,
+            PathBuf::from("/usr/lib64/pkcs11/libkryoptic_pkcs11.so"),
+            None,
+            hsm.user_pin.clone(),
+        )
+        .await?;
+        let pkcs11 = token.intialize()?;
+        let slot = token.slot(&pkcs11)?;
+        let session = pkcs11.open_ro_session(slot)?;
+        session.login(cryptoki::session::UserType::User, Some(&hsm.user_pin))?;
+
+        let data = b"test data for PKCS11 ML-DSA signing";
+        let digest = openssl::hash::hash(openssl::hash::MessageDigest::sha256(), data)?;
+        let hex_hash = hex::encode(digest);
+        let keys = db::Key::list(&mut conn).await?;
+        for key_algorithm in [KeyAlgorithm::Mldsa65, KeyAlgorithm::Mldsa87] {
+            let key = keys
+                .iter()
+                .find(|key| key.key_algorithm == key_algorithm)
+                .expect("Should have an ML-DSA key");
+            let signatures = super::sign_with_pkcs11(
+                key,
+                &session,
+                vec![(DigestAlgorithm::Sha256, hex_hash.clone())],
+            )?;
+            let signature = signatures.first().unwrap().signature.as_ref();
+            verify_mldsa_signature(key_algorithm, &key.public_key, &digest, signature)?;
+        }
+        pkcs11.finalize()?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn sign_with_softkey_rsa() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let user_password = Password::from("test-key-password");
 
         let key_algorithm = KeyAlgorithm::Rsa4K;
-        let encrypted_key = crypto::create_encrypted_key(
+        let (encrypted_key, _) = crypto::create_encrypted_key(
             &crate::server::Config::default(),
             user_password.clone(),
             key_algorithm,
+            None,
             Default::default(),
             Default::default(),
         )?;
@@ -389,10 +552,11 @@ mod tests {
         let user_password = Password::from("test-key-password");
 
         let key_algorithm = KeyAlgorithm::P256;
-        let encrypted_key = crypto::create_encrypted_key(
+        let (encrypted_key, _) = crypto::create_encrypted_key(
             &crate::server::Config::default(),
             user_password.clone(),
             key_algorithm,
+            None,
             Default::default(),
             Default::default(),
         )?;
@@ -454,6 +618,53 @@ mod tests {
             "OpenSSL CLI verification failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sign_with_softkey_mldsa_keys() -> Result<()> {
+        let data = b"test data for softkey ML-DSA signing";
+
+        for key_algorithm in [KeyAlgorithm::Mldsa65, KeyAlgorithm::Mldsa87] {
+            let key_type = match key_algorithm {
+                KeyAlgorithm::Mldsa65 => openssl::pkey::KeyType::ML_DSA_65,
+                KeyAlgorithm::Mldsa87 => openssl::pkey::KeyType::ML_DSA_87,
+                _ => unreachable!(),
+            };
+            let mut seed = [0; 32];
+            openssl::rand::rand_priv_bytes(&mut seed)?;
+            let pkey = PKey::private_key_from_seed(None, key_type, None, &seed)?;
+            let encrypted_pem = pkey.private_key_to_pem_pkcs8_passphrase(
+                openssl::symm::Cipher::aes_256_cbc(),
+                b"test-key-password",
+            )?;
+            let pkey = PKey::private_key_from_pem_passphrase(&encrypted_pem, b"test-key-password")?;
+            let key = db::Key {
+                id: 1,
+                hybrid_pair_id: None,
+                name: "test-mldsa-softkey".to_string(),
+                key_algorithm,
+                handle: "test-handle".to_string(),
+                key_material: Some("test-key-material".to_string()),
+                public_key: String::from_utf8(pkey.public_key_to_pem()?)?,
+                pkcs11_token_id: None,
+                pkcs11_key_id: None,
+            };
+
+            // TODO factor this into a helper, calculate mu
+            let pubkey = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+            let mu_digest = crate::calculate_mu(&pubkey, data)?;
+            let hex_hash = hex::encode(mu_digest);
+
+            let signatures = super::sign_with_softkey(
+                &key,
+                &pkey,
+                vec![(DigestAlgorithm::MldsaMu, hex_hash.clone())],
+            )?;
+            let signature = signatures.first().unwrap().signature.as_ref();
+            verify_mldsa_signature(key_algorithm, &key.public_key, data, signature)?;
+        }
 
         Ok(())
     }

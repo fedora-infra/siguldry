@@ -6,11 +6,11 @@ use tracing::instrument;
 
 use cryptoki_sys::{
     CK_BYTE_PTR, CK_MECHANISM, CK_OBJECT_HANDLE, CK_RV, CK_SESSION_HANDLE, CK_ULONG, CKM_ECDSA,
-    CKM_ECDSA_SHA3_256, CKM_ECDSA_SHA3_512, CKM_ECDSA_SHA256, CKM_ECDSA_SHA512, CKM_RSA_PKCS,
-    CKM_SHA3_256_RSA_PKCS, CKM_SHA3_512_RSA_PKCS, CKM_SHA256_RSA_PKCS, CKM_SHA512_RSA_PKCS,
-    CKR_ARGUMENTS_BAD, CKR_BUFFER_TOO_SMALL, CKR_CRYPTOKI_NOT_INITIALIZED, CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR, CKR_KEY_HANDLE_INVALID, CKR_MECHANISM_INVALID, CKR_OK, CKR_OPERATION_ACTIVE,
-    CKR_OPERATION_NOT_INITIALIZED, CKR_SESSION_HANDLE_INVALID,
+    CKM_ECDSA_SHA3_256, CKM_ECDSA_SHA3_512, CKM_ECDSA_SHA256, CKM_ECDSA_SHA512, CKM_EDDSA,
+    CKM_ML_DSA, CKM_RSA_PKCS, CKM_SHA3_256_RSA_PKCS, CKM_SHA3_512_RSA_PKCS, CKM_SHA256_RSA_PKCS,
+    CKM_SHA512_RSA_PKCS, CKR_ARGUMENTS_BAD, CKR_BUFFER_TOO_SMALL, CKR_CRYPTOKI_NOT_INITIALIZED,
+    CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR, CKR_KEY_HANDLE_INVALID, CKR_MECHANISM_INVALID, CKR_OK,
+    CKR_OPERATION_ACTIVE, CKR_OPERATION_NOT_INITIALIZED, CKR_SESSION_HANDLE_INVALID,
 };
 
 use crate::objects::Object;
@@ -49,12 +49,59 @@ pub extern "C" fn C_SignInit(
     let key = session.key.clone();
     tracing::info!(key.name, hKey, mechanism, "Beginning signing with key");
     let digest_algorithm = match mechanism {
-        CKM_ECDSA | CKM_RSA_PKCS => {
-            // These mechanisms do _not_ hash the data; the caller is expected to do so
+        CKM_ECDSA | CKM_RSA_PKCS | CKM_EDDSA => {
+            // These mechanisms do _not_ hash the data; the caller is expected to do so.
+            // While the acceptable input size varies between these mechanisms, we currently
+            // only accept digest-sized arguments.
+            //
+            // This could be a problem for broad support but until I better understand what
+            // things don't work with this approach I'll leave it as-is.
             session.signing_state = Some(SigningState {
                 multipart: false,
                 mechanism,
                 hasher: None,
+            });
+            return CKR_OK;
+        }
+        CKM_ML_DSA => {
+            // ML-DSA doesn't allow for selecting the digest algorithm. Furthermore, Siguldry only
+            // supports accepting Mu, which includes the public key hash and context. Refer to FIPS
+            // 204, ML-DSA.Sign_internal (Algorithm 7, step 6). Specifically, it is defined as:
+            //
+            // 𝑡𝑟 = SHAKE256(raw_public_key, 64)
+            // M' = BytesToBits(IntegerToBytes(0, 1) ∥ IntegerToBytes(|𝑐𝑡𝑥|, 1) ∥ 𝑐𝑡𝑥) ∥ 𝑀
+            // 𝜇 = SHAKE256(BytesToBits(𝑡𝑟)||𝑀', 64)
+
+            let pubkey = match openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes()) {
+                Ok(pubkey) => pubkey,
+                Err(error) => {
+                    tracing::error!(key.public_key, ?error, "Public key PEM could not be parsed");
+                    return CKR_GENERAL_ERROR;
+                }
+            };
+            if !pubkey.is_a(openssl::pkey::KeyType::ML_DSA_65)
+                && !pubkey.is_a(openssl::pkey::KeyType::ML_DSA_87)
+            {
+                tracing::error!(
+                    ?key.key_algorithm,
+                    "OpenSSL did not recognize the referenced key as ML-DSA-65 or ML-DSA-87"
+                );
+                return CKR_MECHANISM_INVALID;
+            }
+
+            // Prepare the hash object with the 64-byte SHAKE256 hash of the public key, a null byte,
+            // the length of the context as a single byte, and then the context (maximum of 255 bytes).
+            let hasher = match siguldry::begin_mu(&pubkey) {
+                Ok(hasher) => hasher,
+                Err(error) => {
+                    tracing::error!(?error, "Failed to prepare a hasher object to calculate Mu");
+                    return CKR_GENERAL_ERROR;
+                }
+            };
+            session.signing_state = Some(SigningState {
+                multipart: false,
+                mechanism,
+                hasher: Some(hasher),
             });
             return CKR_OK;
         }
@@ -171,20 +218,36 @@ pub extern "C" fn C_SignFinal(
     let hasher = if let Some(hasher) = &mut signing_state.hasher {
         hasher
     } else {
-        tracing::error!("Multi-part signing is not supported for CKM_ECDSA");
+        tracing::error!(
+            signing_state.mechanism,
+            "Multi-part signing is not supported for this mechanism"
+        );
         session.reset_signing_state();
         return CKR_ARGUMENTS_BAD;
     };
-    let data_hex = match hasher.finish() {
-        Ok(digest) => hex::encode(digest),
-        Err(error) => {
-            tracing::error!(?error, "Failed to finalize openssl hasher");
-            session.reset_signing_state();
-            return CKR_GENERAL_ERROR;
+    let data_hex = if signing_state.mechanism == CKM_ML_DSA {
+        let mut digest = [0_u8; 64];
+        match hasher.finish_xof(&mut digest) {
+            Ok(_) => hex::encode(digest),
+            Err(error) => {
+                tracing::error!(?error, "Failed to finalize openssl hasher");
+                session.reset_signing_state();
+                return CKR_GENERAL_ERROR;
+            }
+        }
+    } else {
+        match hasher.finish() {
+            Ok(digest) => hex::encode(digest),
+            Err(error) => {
+                tracing::error!(?error, "Failed to finalize openssl hasher");
+                session.reset_signing_state();
+                return CKR_GENERAL_ERROR;
+            }
         }
     };
 
     let digest = match signing_state.mechanism {
+        CKM_ML_DSA => DigestAlgorithm::MldsaMu,
         CKM_SHA256_RSA_PKCS | CKM_ECDSA_SHA256 => DigestAlgorithm::Sha256,
         CKM_SHA512_RSA_PKCS | CKM_ECDSA_SHA512 => DigestAlgorithm::Sha512,
         CKM_SHA3_256_RSA_PKCS | CKM_ECDSA_SHA3_256 => DigestAlgorithm::Sha3_256,
@@ -251,57 +314,108 @@ pub extern "C" fn C_Sign(
 
     let data = unsafe { core::slice::from_raw_parts(pData as *const u8, ulDataLen as usize) };
     if session.signature.is_none() {
-        let (digest_algorithm, data_hex) = if signing_state.mechanism == CKM_ECDSA {
-            // For ECDSA we don't actually know what the digest algorithm was, if any. However, we restrict
-            // the set of valid input from the specification here (sorry) since the server API expects the
-            // digest algorithm at the moment.
-            let digest_algorithm = match data.len() {
-                32 => DigestAlgorithm::Sha256,
-                64 => DigestAlgorithm::Sha512,
-                len => {
-                    tracing::error!(
-                        len,
-                        "Unsupported data length for ECDSA mechanism (hash your input)"
-                    );
-                    session.reset_signing_state();
-                    return CKR_ARGUMENTS_BAD;
-                }
-            };
-            (digest_algorithm, hex::encode(data))
-        } else if signing_state.mechanism == CKM_RSA_PKCS {
-            // For this mechanism, we don't compute message digest or encode it with a DigestInfo
-            // structure. The maximum input size is the key modulus in bits minus 11, but we
-            // introduce some restrictions here due to the current Siguldry API: the input _MUST_
-            // be a DigestInfo structure which we unpack, send to the server, and repack.
-            if let Ok((algorithm, digest)) = siguldry::der::decode_digest_info(data) {
-                (algorithm, hex::encode(digest))
-            } else {
-                tracing::error!("Failed to parse DigestInfo");
-                session.reset_signing_state();
-                return CKR_GENERAL_ERROR;
+        let (digest_algorithm, data_hex) = match signing_state.mechanism {
+            CKM_ECDSA => {
+                // For ECDSA we don't actually know what the digest algorithm was, if any. However, we restrict
+                // the set of valid input from the specification here (sorry) since the server API expects the
+                // digest algorithm at the moment.
+                let digest_algorithm = match data.len() {
+                    32 => DigestAlgorithm::Sha256,
+                    64 => DigestAlgorithm::Sha512,
+                    len => {
+                        tracing::error!(
+                            len,
+                            "Unsupported data length for ECDSA mechanism (hash your input)"
+                        );
+                        session.reset_signing_state();
+                        return CKR_ARGUMENTS_BAD;
+                    }
+                };
+                (digest_algorithm, hex::encode(data))
             }
-        } else {
-            let algorithm = match signing_state.mechanism {
-                CKM_SHA256_RSA_PKCS | CKM_ECDSA_SHA256 => DigestAlgorithm::Sha256,
-                CKM_SHA512_RSA_PKCS | CKM_ECDSA_SHA512 => DigestAlgorithm::Sha512,
-                CKM_SHA3_256_RSA_PKCS | CKM_ECDSA_SHA3_256 => DigestAlgorithm::Sha3_256,
-                CKM_SHA3_512_RSA_PKCS | CKM_ECDSA_SHA3_512 => DigestAlgorithm::Sha3_512,
-                unsupported_mechanism => {
-                    tracing::error!(unsupported_mechanism, "Unsupported mechanism provided");
-                    session.reset_signing_state();
-                    return CKR_MECHANISM_INVALID;
-                }
-            };
-
-            let data_hex = match openssl::hash::hash(algorithm.into(), data) {
-                Ok(digest) => hex::encode(digest),
-                Err(error) => {
-                    tracing::error!(?error, "Failed to finalize openssl hasher");
+            CKM_RSA_PKCS => {
+                // For this mechanism, we don't compute message digest or encode it with a DigestInfo
+                // structure. The maximum input size is the key modulus in bits minus 11 bytes, but we
+                // introduce some restrictions here due to the current Siguldry API: the input _MUST_
+                // be a DigestInfo structure which we unpack, send to the server, and repack.
+                if let Ok((algorithm, digest)) = siguldry::der::decode_digest_info(data) {
+                    (algorithm, hex::encode(digest))
+                } else {
+                    tracing::error!("Failed to parse DigestInfo");
                     session.reset_signing_state();
                     return CKR_GENERAL_ERROR;
                 }
-            };
-            (algorithm, data_hex)
+            }
+            CKM_EDDSA => {
+                // The output here is the raw 64 byte (Ed25519) or 114 byte (Ed448) signature, like with ECDSA.
+                // Like then it's probably okay to only accept sha256/sha512-looking things for now, even though
+                // that's not technically right.
+                //
+                // TODO do more proper Raw/None digest and apply a reasonable size limit
+                let digest_algorithm = match data.len() {
+                    32 => DigestAlgorithm::Sha256,
+                    64 => DigestAlgorithm::Sha512,
+                    len => {
+                        tracing::error!(
+                            len,
+                            "Unsupported data length for ECDSA mechanism (hash your input)"
+                        );
+                        session.reset_signing_state();
+                        return CKR_ARGUMENTS_BAD;
+                    }
+                };
+                (digest_algorithm, hex::encode(data))
+            }
+            CKM_ML_DSA => {
+                let pubkey =
+                    openssl::pkey::PKey::public_key_from_pem(session.key.public_key.as_bytes())
+                        .unwrap();
+                if !pubkey.is_a(openssl::pkey::KeyType::ML_DSA_65)
+                    && !pubkey.is_a(openssl::pkey::KeyType::ML_DSA_87)
+                {
+                    tracing::error!(
+                        key.algorithm = ?session.key.key_algorithm,
+                        "OpenSSL did not recognize the referenced key as ML-DSA-65 or ML-DSA-87"
+                    );
+                    return CKR_MECHANISM_INVALID;
+                }
+
+                let digest = match siguldry::calculate_mu(&pubkey, data) {
+                    Ok(digest) => digest,
+                    Err(error) => {
+                        tracing::error!(
+                            ?error,
+                            "Failed to calculate the Mu valid for this signature"
+                        );
+                        return CKR_GENERAL_ERROR;
+                    }
+                };
+
+                (DigestAlgorithm::MldsaMu, hex::encode(digest))
+            }
+            hashing_mechanism => {
+                let algorithm = match hashing_mechanism {
+                    CKM_SHA256_RSA_PKCS | CKM_ECDSA_SHA256 => DigestAlgorithm::Sha256,
+                    CKM_SHA512_RSA_PKCS | CKM_ECDSA_SHA512 => DigestAlgorithm::Sha512,
+                    CKM_SHA3_256_RSA_PKCS | CKM_ECDSA_SHA3_256 => DigestAlgorithm::Sha3_256,
+                    CKM_SHA3_512_RSA_PKCS | CKM_ECDSA_SHA3_512 => DigestAlgorithm::Sha3_512,
+                    unsupported_mechanism => {
+                        tracing::error!(unsupported_mechanism, "Unsupported mechanism provided");
+                        session.reset_signing_state();
+                        return CKR_MECHANISM_INVALID;
+                    }
+                };
+
+                let data_hex = match openssl::hash::hash(algorithm.into(), data) {
+                    Ok(digest) => hex::encode(digest),
+                    Err(error) => {
+                        tracing::error!(?error, "Failed to finalize openssl hasher");
+                        session.reset_signing_state();
+                        return CKR_GENERAL_ERROR;
+                    }
+                };
+                (algorithm, data_hex)
+            }
         };
 
         match CLIENT

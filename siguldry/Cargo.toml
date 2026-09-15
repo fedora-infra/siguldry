@@ -53,6 +53,13 @@ version = "0.2"
 [dependencies.openssl]
 version = "0.10.81"
 
+# The main openssl crate still doesn't support signing with ML-DSA keys;
+# we can use the bindings kryoptic has for now.
+[dependencies.ossl]
+version = "1.5.2"
+default-features = false
+features = ["openssl-sys"]
+
 [dependencies.rustix]
 version = "1"
 features = ["termios", "stdio"]
