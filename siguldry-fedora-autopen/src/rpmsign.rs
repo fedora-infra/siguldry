@@ -899,6 +899,7 @@ mod tests {
                     fingerprint: "DEADBEEF".to_string(),
                     name: "demo-openpgp".to_string(),
                 }],
+                hybrid_key_name: None,
             },
         );
         keys

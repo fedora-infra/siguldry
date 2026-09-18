@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use cryptoki::{
     context::{CInitializeArgs, CInitializeFlags, Pkcs11},
-    object::{Attribute, AttributeType, KeyType, ObjectClass},
+    object::{Attribute, AttributeType, KeyType, MlDsaParameterSetType, ObjectClass},
     types::AuthPin,
 };
 use openssl::{nid::Nid, x509};
@@ -123,6 +123,7 @@ async fn import_pkcs11_token_private(
     struct TokenKey {
         label: String,
         key_type: cryptoki::object::KeyType,
+        parameter_set: Option<cryptoki::object::ParameterSetType>,
         public_key_der: Option<Vec<u8>>,
         // SN, PEM-encoded cert
         x509_certificate_pem: Option<(String, String)>,
@@ -133,6 +134,7 @@ async fn import_pkcs11_token_private(
         AttributeType::Id,
         AttributeType::Label,
         AttributeType::KeyType,
+        AttributeType::ParameterSet,
         AttributeType::Class,
     ];
     for object in session
@@ -147,6 +149,7 @@ async fn import_pkcs11_token_private(
         let mut key_id = None;
         let mut label = None;
         let mut key_type = None;
+        let mut parameter_set = None;
 
         for attr in attributes {
             match attr {
@@ -155,6 +158,7 @@ async fn import_pkcs11_token_private(
                     label = String::from_utf8(l).ok();
                 }
                 Attribute::KeyType(kt) => key_type = Some(kt),
+                Attribute::ParameterSet(ps) => parameter_set = Some(ps),
                 _ => {}
             }
         }
@@ -165,6 +169,7 @@ async fn import_pkcs11_token_private(
                 TokenKey {
                     label,
                     key_type,
+                    parameter_set,
                     public_key_der: None,
                     x509_certificate_pem: None,
                 },
@@ -300,6 +305,40 @@ async fn import_pkcs11_token_private(
                         }
                     }
                 }
+                cryptoki::object::KeyType::EC_EDWARDS => {
+                    if public_key.is_a(openssl::pkey::KeyType::ED25519) {
+                        KeyAlgorithm::Ed25519
+                    } else if public_key.is_a(openssl::pkey::KeyType::ED448) {
+                        KeyAlgorithm::Ed448
+                    } else {
+                        tracing::warn!(
+                            label = key_info.label,
+                            "Found unsupported Edwards curve key; skipping"
+                        );
+                        continue;
+                    }
+                }
+                cryptoki::object::KeyType::ML_DSA => {
+                    match key_info.parameter_set.map(MlDsaParameterSetType::from) {
+                        Some(MlDsaParameterSetType::ML_DSA_65) => KeyAlgorithm::Mldsa65,
+                        Some(MlDsaParameterSetType::ML_DSA_87) => KeyAlgorithm::Mldsa87,
+                        Some(unsupported) => {
+                            tracing::warn!(
+                                label = key_info.label,
+                                %unsupported,
+                                "Found unsupported ML-DSA key; skipping"
+                            );
+                            continue;
+                        }
+                        None => {
+                            tracing::warn!(
+                                label = key_info.label,
+                                "ML-DSA key is missing parameter set; skipping"
+                            );
+                            continue;
+                        }
+                    }
+                }
                 unsupported => {
                     tracing::warn!(
                         label = key_info.label,
@@ -365,7 +404,21 @@ mod tests {
         .await?;
 
         let keys = db::Key::list(&mut conn).await?;
-        assert_eq!(keys.len(), 2);
+        assert_eq!(keys.len(), 6);
+        assert!(keys.iter().any(|k| k.key_algorithm == KeyAlgorithm::P256));
+        assert!(
+            keys.iter()
+                .any(|k| k.key_algorithm == KeyAlgorithm::Ed25519)
+        );
+        assert!(keys.iter().any(|k| k.key_algorithm == KeyAlgorithm::Ed448));
+        assert!(
+            keys.iter()
+                .any(|k| k.key_algorithm == KeyAlgorithm::Mldsa65)
+        );
+        assert!(
+            keys.iter()
+                .any(|k| k.key_algorithm == KeyAlgorithm::Mldsa87)
+        );
         for key in keys {
             if key.key_algorithm == KeyAlgorithm::Rsa4K {
                 let certs =

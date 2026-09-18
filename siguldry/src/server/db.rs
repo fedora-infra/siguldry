@@ -10,7 +10,10 @@ use cryptoki::{
     session::Session,
     slot::Slot,
 };
-use sqlx::{Pool, Sqlite, SqliteConnection, SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{
+    Pool, Sqlite, SqliteConnection, SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteQueryResult},
+};
 use tracing::instrument;
 
 use crate::protocol::KeyAlgorithm;
@@ -431,6 +434,34 @@ impl Key {
             .map(|result| result.rows_affected())
     }
 
+    pub async fn associate_hybrid(
+        &self,
+        conn: &mut SqliteConnection,
+        other: &Key,
+    ) -> Result<SqliteQueryResult, sqlx::Error> {
+        sqlx::query!(
+            "UPDATE keys SET hybrid_pair_id = $1 WHERE id = $2",
+            other.id,
+            self.id
+        )
+        .execute(&mut *conn)
+        .await
+    }
+
+    /// Fetch the hybrid pair this key is part of if it exists.
+    pub async fn find_hybrid(
+        &self,
+        conn: &mut SqliteConnection,
+    ) -> Result<Option<Key>, sqlx::Error> {
+        sqlx::query_as!(
+            Key,
+            "SELECT * FROM keys WHERE hybrid_pair_id = $1;",
+            self.id
+        )
+        .fetch_optional(&mut *conn)
+        .await
+    }
+
     pub fn get_pkcs11_private_key(&self, session: &Session) -> anyhow::Result<ObjectHandle> {
         let key_id = self
             .pkcs11_key_id
@@ -666,10 +697,14 @@ mod tests {
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
-        assert_eq!(3, key_algorithms.len());
+        assert_eq!(7, key_algorithms.len());
         assert!(key_algorithms.contains(&KeyAlgorithm::Rsa2K));
         assert!(key_algorithms.contains(&KeyAlgorithm::Rsa4K));
         assert!(key_algorithms.contains(&KeyAlgorithm::P256));
+        assert!(key_algorithms.contains(&KeyAlgorithm::Ed25519));
+        assert!(key_algorithms.contains(&KeyAlgorithm::Ed448));
+        assert!(key_algorithms.contains(&KeyAlgorithm::Mldsa65));
+        assert!(key_algorithms.contains(&KeyAlgorithm::Mldsa87));
 
         Ok(())
     }
@@ -790,7 +825,7 @@ mod tests {
             &mut conn,
             "test-name",
             "unique-handle",
-            KeyAlgorithm::P256,
+            KeyAlgorithm::Ed25519,
             Some("secret"),
             "public-key",
             None,
@@ -801,7 +836,7 @@ mod tests {
             &mut conn,
             "another-test-name",
             "another-unique-handle",
-            KeyAlgorithm::P256,
+            KeyAlgorithm::Mldsa65,
             Some("secret"),
             "public-key",
             None,
@@ -812,7 +847,7 @@ mod tests {
             &mut conn,
             "yet-another-test-name",
             "yet-another-unique-handle",
-            KeyAlgorithm::P256,
+            KeyAlgorithm::Mldsa65,
             Some("secret"),
             "public-key",
             None,
@@ -820,11 +855,7 @@ mod tests {
         )
         .await?;
 
-        let result = sqlx::query("UPDATE keys SET hybrid_pair_id = ? WHERE id = ?")
-            .bind(key_1.id)
-            .bind(key_1.id)
-            .execute(&mut *conn)
-            .await;
+        let result = key_1.associate_hybrid(&mut conn, &key_1).await;
         if let Err(error) = result {
             let check = error
                 .as_database_error()
@@ -839,22 +870,14 @@ mod tests {
         }
 
         // The database trigger should update key_2's hybrid_pair_id as well.
-        sqlx::query("UPDATE keys SET hybrid_pair_id = ? WHERE id = ?")
-            .bind(key_2.id)
-            .bind(key_1.id)
-            .execute(&mut *conn)
-            .await?;
+        key_1.associate_hybrid(&mut conn, &key_2).await?;
         let updated_key_1 = Key::get(&mut conn, "test-name").await?;
         let updated_key_2 = Key::get(&mut conn, "another-test-name").await?;
         assert_eq!(updated_key_1.hybrid_pair_id, Some(key_2.id));
         assert_eq!(updated_key_2.hybrid_pair_id, Some(key_1.id));
 
         // If a pair is set you can't change just one side
-        let result = sqlx::query("UPDATE keys SET hybrid_pair_id = ? WHERE id = ?")
-            .bind(key_3.id)
-            .bind(key_1.id)
-            .execute(&mut *conn)
-            .await;
+        let result = key_1.associate_hybrid(&mut conn, &key_3).await;
         assert!(result.is_err(), "Trigger allowed hybrid_pair_id update");
 
         // ... but you can unset the key.

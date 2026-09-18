@@ -47,11 +47,25 @@ optional = true
 [dependencies.hex]
 version = "0.4"
 
+# Needed for openssl-sys and should be dropped as a direct dependency when
+# openssl-sys is dropped.
+[dependencies.foreign-types]
+version = "0.3"
+
 [dependencies.libc]
 version = "0.2"
 
 [dependencies.openssl]
 version = "0.10.81"
+
+# The main openssl crate still doesn't support signing with ML-DSA keys.
+# With great care we can use the bindings directly. This does restrict support
+# to OpenSSL exclusively. Once the high level openssl crate supports ML-DSA
+# signatures this dependency and the dependency on foreign-types should be
+# dropped.
+[dependencies.openssl-sys]
+version = "0.9.117"
+default-features = false
 
 [dependencies.rustix]
 version = "1"

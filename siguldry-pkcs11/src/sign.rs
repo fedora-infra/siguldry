@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) Microsoft Corporation.
 
+use openssl::hash::MessageDigest;
 use siguldry::protocol::DigestAlgorithm;
 use tracing::instrument;
 
@@ -293,7 +294,19 @@ pub extern "C" fn C_Sign(
                 }
             };
 
-            let data_hex = match openssl::hash::hash(algorithm.into(), data) {
+            let md = match algorithm {
+                DigestAlgorithm::Sha256 => MessageDigest::sha256(),
+                DigestAlgorithm::Sha512 => MessageDigest::sha512(),
+                DigestAlgorithm::Sha3_256 => MessageDigest::sha3_256(),
+                DigestAlgorithm::Sha3_512 => MessageDigest::sha3_512(),
+                unsupported => {
+                    tracing::error!(?unsupported, "Unsupported digest algorithm");
+                    session.reset_signing_state();
+                    return CKR_MECHANISM_INVALID;
+                }
+            };
+
+            let data_hex = match openssl::hash::hash(md, data) {
                 Ok(digest) => hex::encode(digest),
                 Err(error) => {
                     tracing::error!(?error, "Failed to finalize openssl hasher");

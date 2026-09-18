@@ -27,6 +27,7 @@ use sequoia_openpgp::crypto::Password;
 use siguldry::{
     bridge, client,
     config::Credentials,
+    protocol::KeyAlgorithm,
     server::{self, Pkcs11Binding},
 };
 use tokio::{net::UnixListener, process::Command, task::JoinHandle};
@@ -142,6 +143,18 @@ pub mod keys {
     pub const PGP_EC_KEY_PASSWORD: &str = "🐉🐉🐉🐉🐉";
     pub const PGP_EC_KEY_EMAIL: &str = "Test Signing <sign@example.com>";
 
+    // Keys created with --openpgp-hybrid-pair and the first algorithm specified is mldsa65
+    pub const PGP_MLDSA65_HYBRID_KEY_NAME: &str = "test-pgp-mldsa65";
+    pub const PGP_ED25519_HYBRID_KEY_NAME: &str = "test-pgp-mldsa65-ed25519";
+    pub const PGP_MLDSA65_ED25519_KEY_PASSWORD: &str = "🍩🍩🍩🍩🍩🍩";
+    pub const PGP_MLDSA65_ED25519_KEY_EMAIL: &str = "hybrid key <mldsa65+ed25519@example.com>";
+
+    // Keys created with --openpgp-hybrid-pair and the first algorithm specified is mldsa87
+    pub const PGP_MLDSA87_HYBRID_KEY_NAME: &str = "test-pgp-mldsa87";
+    pub const PGP_ED448_HYBRID_KEY_NAME: &str = "test-pgp-mldsa87-ed448";
+    pub const PGP_MLDSA87_ED448_KEY_PASSWORD: &str = "🍙🍙🍙🍙";
+    pub const PGP_MLDSA87_ED448_KEY_EMAIL: &str = "hybrid key <mldsa87+ed448@example.com>";
+
     pub const CA_CERT_NAME: &str = "test-ca-cert";
     pub const CA_KEY_NAME: &str = "test-ca-key";
     pub const CA_KEY_PASSWORD: &str = "🦀🦀🦀🦀";
@@ -152,11 +165,29 @@ pub mod keys {
     pub const EC_KEY_NAME: &str = "test-ec-key";
     pub const EC_KEY_PASSWORD: &str = "🌙🌙🌙🌙";
 
+    pub const ED25519_KEY_NAME: &str = "test-ed25519-key";
+    pub const ED25519_CERT_NAME: &str = "test-ed25519-cert";
+    pub const ED25519_KEY_PASSWORD: &str = "🪱🪱🪱🪱🪱🪱🪱";
+
+    pub const ED448_KEY_NAME: &str = "test-ed448-key";
+    pub const ED448_CERT_NAME: &str = "test-ed448-cert";
+    pub const ED448_KEY_PASSWORD: &str = "🍝🍝🍝🍝🍝🍝";
+
+    pub const MLDSA65_KEY_NAME: &str = "test-mldsa65-key";
+    pub const MLDSA65_CERT_NAME: &str = "test-mldsa65-cert";
+    pub const MLDSA65_KEY_PASSWORD: &str = "🤺🤺🤺🤺🤺🤺";
+
+    pub const MLDSA87_KEY_NAME: &str = "test-mldsa87-key";
+    pub const MLDSA87_CERT_NAME: &str = "test-mldsa87-cert";
+    pub const MLDSA87_KEY_PASSWORD: &str = "🪜🪜🪜🪜🪜🪜🪜🪜";
+
     pub const HSM_PIN: &str = "very-secret-pin";
     pub const HSM_ACCESS_PASSWORD: &str = "🦆🦆🦆🦆🪿";
 
     pub const HSM_EC_KEY_NAME: &str = "test-hsm-ec-key";
     pub const HSM_RSA_KEY_NAME: &str = "test-hsm-rsa-key";
+    pub const HSM_MLDSA_65_KEY_NAME: &str = "test-hsm-ml-dsa-65-key";
+    pub const HSM_MLDSA_87_KEY_NAME: &str = "test-hsm-ml-dsa-87-key";
 
     /// ID used for the PKCS#11 binding key
     pub const HSM_BINDING_KEY_ID: u8 = 99;
@@ -187,11 +218,18 @@ pub struct InstanceBuilder {
     with_pgp_rfc9580_keys: bool,
     with_pgp_key: bool,
     with_pgp_ec_key: bool,
+    with_pgp_mldsa65_hybrid: bool,
+    with_pgp_mldsa87_hybrid: bool,
     with_ca_key: bool,
     with_codesigning_key: bool,
     with_ec_key: bool,
+    with_ed25519_key: bool,
+    with_ed448_key: bool,
+    with_mldsa65_key: bool,
+    with_mldsa87_key: bool,
     with_hsm_ec_key: bool,
     with_hsm_rsa_key: bool,
+    with_hsm_mldsa_keys: bool,
     with_hsm: bool,
     with_pkcs11_binding: bool,
     with_client_proxy: bool,
@@ -241,6 +279,16 @@ impl InstanceBuilder {
         self
     }
 
+    pub fn with_pgp_mldsa87_hybrid_key(mut self) -> Self {
+        self.with_pgp_mldsa87_hybrid = true;
+        self
+    }
+
+    pub fn with_pgp_mldsa65_hybrid_key(mut self) -> Self {
+        self.with_pgp_mldsa65_hybrid = true;
+        self
+    }
+
     pub fn with_codesigning_key(mut self) -> Self {
         self.with_ca_key = true;
         self.with_codesigning_key = true;
@@ -250,6 +298,30 @@ impl InstanceBuilder {
     pub fn with_ec_key(mut self) -> Self {
         self.with_ca_key = true;
         self.with_ec_key = true;
+        self
+    }
+
+    pub fn with_ed25519_key(mut self) -> Self {
+        self.with_ca_key = true;
+        self.with_ed25519_key = true;
+        self
+    }
+
+    pub fn with_ed448_key(mut self) -> Self {
+        self.with_ca_key = true;
+        self.with_ed448_key = true;
+        self
+    }
+
+    pub fn with_mldsa65_key(mut self) -> Self {
+        self.with_ca_key = true;
+        self.with_mldsa65_key = true;
+        self
+    }
+
+    pub fn with_mldsa87_key(mut self) -> Self {
+        self.with_ca_key = true;
+        self.with_mldsa87_key = true;
         self
     }
 
@@ -264,6 +336,13 @@ impl InstanceBuilder {
         self.with_hsm = true;
         self.with_ca_key = true;
         self.with_hsm_rsa_key = true;
+        self
+    }
+
+    pub fn with_hsm_ml_dsa_keys(mut self) -> Self {
+        self.with_hsm = true;
+        self.with_ca_key = true;
+        self.with_hsm_mldsa_keys = true;
         self
     }
 
@@ -330,6 +409,12 @@ impl InstanceBuilder {
         self.with_ec_key = true;
         self.with_hsm_rsa_key = true;
         self.with_hsm_ec_key = true;
+        self.with_ed25519_key = true;
+        self.with_ed448_key = true;
+        self.with_mldsa65_key = true;
+        self.with_mldsa87_key = true;
+        self.with_pgp_mldsa65_hybrid = true;
+        self.with_pgp_mldsa87_hybrid = true;
         self
     }
 
@@ -550,6 +635,87 @@ impl InstanceBuilder {
                 maybe_auto_unlock.push((keys::PGP_EC_KEY_NAME, keys::PGP_EC_KEY_PASSWORD));
             }
 
+            if self.with_pgp_mldsa65_hybrid {
+                // It's actually two keys in a trenchcoat
+                Self::run_server_command(
+                    &server_bin,
+                    &server_config_file,
+                    &[
+                        "manage",
+                        "key",
+                        "create",
+                        "--algorithm",
+                        "mldsa65",
+                        "--openpgp-hybrid-pair",
+                        "siguldry-client",
+                        keys::PGP_MLDSA65_HYBRID_KEY_NAME,
+                    ],
+                    Some(&format!("{}\n", keys::PGP_MLDSA65_ED25519_KEY_PASSWORD)),
+                )?;
+                let stdin = if self.with_pkcs11_binding {
+                    format!(
+                        "{}\n{}\n",
+                        keys::HSM_PIN,
+                        keys::PGP_MLDSA65_ED25519_KEY_PASSWORD,
+                    )
+                } else {
+                    format!("{}\n", keys::PGP_MLDSA65_ED25519_KEY_PASSWORD,)
+                };
+                Self::run_server_command(
+                    &server_bin,
+                    &server_config_file,
+                    &[
+                        "manage",
+                        "key",
+                        "openpgp",
+                        "--user-name=siguldry-client",
+                        format!("--key-name={}", keys::PGP_MLDSA65_HYBRID_KEY_NAME).as_str(),
+                        "--openpgp-cert-name=openpgp-cert",
+                        "--openpgp-profile=rfc9580",
+                        format!("--openpgp-user-id={}", keys::PGP_MLDSA65_ED25519_KEY_EMAIL)
+                            .as_str(),
+                    ],
+                    Some(&stdin),
+                )?;
+                maybe_auto_unlock.push((
+                    keys::PGP_MLDSA65_HYBRID_KEY_NAME,
+                    keys::PGP_MLDSA65_ED25519_KEY_PASSWORD,
+                ));
+                maybe_auto_unlock.push((
+                    keys::PGP_ED25519_HYBRID_KEY_NAME,
+                    keys::PGP_MLDSA65_ED25519_KEY_PASSWORD,
+                ));
+            }
+
+            if self.with_pgp_mldsa87_hybrid {
+                Self::run_server_command(
+                    &server_bin,
+                    &server_config_file,
+                    &[
+                        "manage",
+                        "key",
+                        "create",
+                        "--algorithm",
+                        "mldsa87",
+                        "--openpgp-hybrid-pair",
+                        "--openpgp-cert-name=openpgp-cert",
+                        "--openpgp-profile=rfc9580",
+                        format!("--openpgp-user-id={}", keys::PGP_MLDSA87_ED448_KEY_EMAIL).as_str(),
+                        "siguldry-client",
+                        keys::PGP_MLDSA87_HYBRID_KEY_NAME,
+                    ],
+                    Some(&format!("{}\n", keys::PGP_MLDSA87_ED448_KEY_PASSWORD)),
+                )?;
+                maybe_auto_unlock.push((
+                    keys::PGP_MLDSA87_HYBRID_KEY_NAME,
+                    keys::PGP_MLDSA87_ED448_KEY_PASSWORD,
+                ));
+                maybe_auto_unlock.push((
+                    keys::PGP_ED448_HYBRID_KEY_NAME,
+                    keys::PGP_MLDSA87_ED448_KEY_PASSWORD,
+                ));
+            }
+
             if self.with_ca_key {
                 self.create_ca_key(&server_bin, &server_config_file)?;
                 maybe_auto_unlock.push((keys::CA_KEY_NAME, keys::CA_KEY_PASSWORD));
@@ -563,6 +729,13 @@ impl InstanceBuilder {
                 if self.with_hsm_ec_key {
                     Self::create_hsm_ec_key(&pkcs11, slot, &user_pin)?;
                     maybe_auto_unlock.push((keys::HSM_EC_KEY_NAME, keys::HSM_ACCESS_PASSWORD));
+                }
+                if self.with_hsm_mldsa_keys {
+                    Self::create_hsm_mldsa_keys(&pkcs11, slot, &user_pin)?;
+                    maybe_auto_unlock
+                        .push((keys::HSM_MLDSA_65_KEY_NAME, keys::HSM_ACCESS_PASSWORD));
+                    maybe_auto_unlock
+                        .push((keys::HSM_MLDSA_87_KEY_NAME, keys::HSM_ACCESS_PASSWORD));
                 }
 
                 Self::run_server_command(
@@ -592,8 +765,63 @@ impl InstanceBuilder {
             }
 
             if self.with_ec_key {
-                self.create_ec_key(&server_bin, &server_config_file)?;
+                self.create_key(
+                    &server_bin,
+                    &server_config_file,
+                    KeyAlgorithm::P256,
+                    keys::EC_KEY_NAME,
+                    keys::EC_KEY_PASSWORD,
+                    "test-ec-cert",
+                )?;
                 maybe_auto_unlock.push((keys::EC_KEY_NAME, keys::EC_KEY_PASSWORD));
+            }
+
+            if self.with_ed25519_key {
+                self.create_key(
+                    &server_bin,
+                    &server_config_file,
+                    KeyAlgorithm::Ed25519,
+                    keys::ED25519_KEY_NAME,
+                    keys::ED25519_KEY_PASSWORD,
+                    keys::ED25519_CERT_NAME,
+                )?;
+                maybe_auto_unlock.push((keys::ED25519_KEY_NAME, keys::ED25519_KEY_PASSWORD));
+            }
+
+            if self.with_ed448_key {
+                self.create_key(
+                    &server_bin,
+                    &server_config_file,
+                    KeyAlgorithm::Ed448,
+                    keys::ED448_KEY_NAME,
+                    keys::ED448_KEY_PASSWORD,
+                    keys::ED448_CERT_NAME,
+                )?;
+                maybe_auto_unlock.push((keys::ED448_KEY_NAME, keys::ED448_KEY_PASSWORD));
+            }
+
+            if self.with_mldsa65_key {
+                self.create_key(
+                    &server_bin,
+                    &server_config_file,
+                    KeyAlgorithm::Mldsa65,
+                    keys::MLDSA65_KEY_NAME,
+                    keys::MLDSA65_KEY_PASSWORD,
+                    keys::MLDSA65_CERT_NAME,
+                )?;
+                maybe_auto_unlock.push((keys::MLDSA65_KEY_NAME, keys::MLDSA65_KEY_PASSWORD));
+            }
+
+            if self.with_mldsa87_key {
+                self.create_key(
+                    &server_bin,
+                    &server_config_file,
+                    KeyAlgorithm::Mldsa87,
+                    keys::MLDSA87_KEY_NAME,
+                    keys::MLDSA87_KEY_PASSWORD,
+                    keys::MLDSA87_CERT_NAME,
+                )?;
+                maybe_auto_unlock.push((keys::MLDSA87_KEY_NAME, keys::MLDSA87_KEY_PASSWORD));
             }
         }
 
@@ -778,22 +1006,23 @@ impl InstanceBuilder {
             .env("SIGULDRY_SERVER_CONFIG", config_file)
             .args(args);
 
-        if let Some(input) = stdin_input {
+        let result = if let Some(input) = stdin_input {
             command.stdin(Stdio::piped());
             let mut child = command.spawn()?;
             let mut stdin = child.stdin.take().unwrap();
             stdin.write_all(input.as_bytes())?;
             drop(stdin);
-            let result = child.wait_with_output()?;
-            if !result.status.success() {
-                bail!("Command failed: {:?}", args);
-            }
+            child.wait_with_output()
         } else {
-            let result = command.output()?;
-            if !result.status.success() {
-                bail!("Command failed: {:?}", args);
-            }
+            command.output()
+        }?;
+
+        if !result.status.success() {
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            bail!("Command {args:?} failed: stdout:\n{stdout}\nstderr:\n{stderr}\n");
         }
+
         Ok(())
     }
 
@@ -825,6 +1054,88 @@ impl InstanceBuilder {
             )
         })?;
 
+        Ok(())
+    }
+
+    fn create_hsm_ec_key(pkcs11: &Pkcs11, slot: Slot, user_pin: &AuthPin) -> anyhow::Result<()> {
+        let id = Attribute::Id(vec![42]);
+        let label = Attribute::Label(keys::HSM_EC_KEY_NAME.as_bytes().to_vec());
+        let _ = pkcs11.open_rw_session(slot).and_then(|session| {
+            session.login(UserType::User, Some(user_pin))?;
+
+            // Annoyingly it doesn't seem possible to convert a named curve Nid to ASN.1 in
+            // OpenSSL, so we manually create it from the OID for NIST P-256.
+            let p256_oid = asn1::oid!(1, 2, 840, 10045, 3, 1, 7);
+            let p256_oid_bytes = asn1::write_single(&p256_oid).unwrap();
+            session.generate_key_pair(
+                &Mechanism::EccKeyPairGen,
+                &[
+                    id.clone(),
+                    label.clone(),
+                    Attribute::Token(true),
+                    Attribute::Private(false),
+                    Attribute::EcParams(p256_oid_bytes),
+                    Attribute::Verify(true),
+                    Attribute::Encrypt(true),
+                ],
+                &[
+                    id.clone(),
+                    label.clone(),
+                    Attribute::Token(true),
+                    Attribute::Private(true),
+                    Attribute::Sensitive(true),
+                    Attribute::Sign(true),
+                    Attribute::Decrypt(true),
+                ],
+            )
+        })?;
+
+        Ok(())
+    }
+
+    fn create_hsm_mldsa_keys(
+        pkcs11: &Pkcs11,
+        slot: Slot,
+        user_pin: &AuthPin,
+    ) -> anyhow::Result<()> {
+        pkcs11.open_rw_session(slot).and_then(|session| {
+            session.login(UserType::User, Some(user_pin))?;
+            for (id, label, parameter_set) in [
+                (
+                    43,
+                    keys::HSM_MLDSA_65_KEY_NAME,
+                    cryptoki::object::MlDsaParameterSetType::ML_DSA_65,
+                ),
+                (
+                    44,
+                    keys::HSM_MLDSA_87_KEY_NAME,
+                    cryptoki::object::MlDsaParameterSetType::ML_DSA_87,
+                ),
+            ] {
+                let id = Attribute::Id(vec![id]);
+                let label = Attribute::Label(label.as_bytes().to_vec());
+                session.generate_key_pair(
+                    &Mechanism::MlDsaKeyPairGen,
+                    &[
+                        id.clone(),
+                        label.clone(),
+                        Attribute::Token(true),
+                        Attribute::Private(false),
+                        Attribute::ParameterSet(parameter_set.into()),
+                        Attribute::Verify(true),
+                    ],
+                    &[
+                        id,
+                        label,
+                        Attribute::Token(true),
+                        Attribute::Private(true),
+                        Attribute::Sensitive(true),
+                        Attribute::Sign(true),
+                    ],
+                )?;
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -922,42 +1233,6 @@ impl InstanceBuilder {
         })
     }
 
-    fn create_hsm_ec_key(pkcs11: &Pkcs11, slot: Slot, user_pin: &AuthPin) -> anyhow::Result<()> {
-        let id = Attribute::Id(vec![42]);
-        let label = Attribute::Label(keys::HSM_EC_KEY_NAME.as_bytes().to_vec());
-        let _ = pkcs11.open_rw_session(slot).and_then(|session| {
-            session.login(UserType::User, Some(user_pin))?;
-
-            // Annoyingly it doesn't seem possible to convert a named curve Nid to ASN.1 in
-            // OpenSSL, so we manually create it from the OID for NIST P-256.
-            let p256_oid = asn1::oid!(1, 2, 840, 10045, 3, 1, 7);
-            let p256_oid_bytes = asn1::write_single(&p256_oid).unwrap();
-            session.generate_key_pair(
-                &Mechanism::EccKeyPairGen,
-                &[
-                    id.clone(),
-                    label.clone(),
-                    Attribute::Token(true),
-                    Attribute::Private(false),
-                    Attribute::EcParams(p256_oid_bytes),
-                    Attribute::Verify(true),
-                    Attribute::Encrypt(true),
-                ],
-                &[
-                    id.clone(),
-                    label.clone(),
-                    Attribute::Token(true),
-                    Attribute::Private(true),
-                    Attribute::Sensitive(true),
-                    Attribute::Sign(true),
-                    Attribute::Decrypt(true),
-                ],
-            )
-        })?;
-
-        Ok(())
-    }
-
     fn create_ca_key(&self, server_bin: &Path, server_config_file: &Path) -> anyhow::Result<()> {
         Self::run_server_command(
             server_bin,
@@ -1032,7 +1307,15 @@ impl InstanceBuilder {
         )
     }
 
-    fn create_ec_key(&self, server_bin: &Path, server_config_file: &Path) -> anyhow::Result<()> {
+    fn create_key(
+        &self,
+        server_bin: &Path,
+        server_config_file: &Path,
+        algorithm: KeyAlgorithm,
+        key_name: &str,
+        key_password: &str,
+        cert_name: &str,
+    ) -> anyhow::Result<()> {
         Self::run_server_command(
             server_bin,
             server_config_file,
@@ -1040,11 +1323,11 @@ impl InstanceBuilder {
                 "manage",
                 "key",
                 "create",
-                "--algorithm=p256",
+                format!("--algorithm={}", algorithm.as_str()).as_str(),
                 "siguldry-client",
-                keys::EC_KEY_NAME,
+                key_name,
             ],
-            Some(&format!("{}\n", keys::EC_KEY_PASSWORD)),
+            Some(&format!("{}\n", key_password)),
         )?;
         let stdin = if self.with_pkcs11_binding {
             format!("{}\n{}\n", keys::HSM_PIN, keys::CA_KEY_PASSWORD)
@@ -1059,14 +1342,44 @@ impl InstanceBuilder {
                 "key",
                 "x509",
                 "--user-name=siguldry-client",
-                format!("--key-name={}", keys::EC_KEY_NAME).as_str(),
-                "--x509-cert-name=test-ec-cert",
+                format!("--key-name={key_name}").as_str(),
+                format!("--x509-cert-name={cert_name}").as_str(),
                 format!("--ca-key-name={}", keys::CA_KEY_NAME).as_str(),
                 format!("--ca-cert-name={}", keys::CA_CERT_NAME).as_str(),
                 "--x509-usage=code-signing",
             ],
             Some(&stdin),
-        )
+        )?;
+
+        if !matches!(algorithm, KeyAlgorithm::Mldsa65 | KeyAlgorithm::Mldsa87) {
+            let stdin = if self.with_pkcs11_binding {
+                format!("{}\n{}\n", keys::HSM_PIN, key_password)
+            } else {
+                format!("{}\n", key_password)
+            };
+            let profile = if matches!(algorithm, KeyAlgorithm::Ed25519 | KeyAlgorithm::Ed448) {
+                "--openpgp-profile=rfc9580"
+            } else {
+                "--openpgp-profile=rfc4880"
+            };
+            Self::run_server_command(
+                server_bin,
+                server_config_file,
+                &[
+                    "manage",
+                    "key",
+                    "openpgp",
+                    "--user-name=siguldry-client",
+                    format!("--key-name={key_name}").as_str(),
+                    format!("--openpgp-cert-name={cert_name}-openpgp").as_str(),
+                    profile,
+                    "--openpgp-user-id=signing-key@example.com",
+                ],
+                Some(&stdin),
+            )?;
+        }
+
+        Ok(())
     }
 
     fn import_sigul_data(

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE keys SET hybrid_pair_id = $1 WHERE id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "33fcc2d1114743cddf1db588e56dea469572f24da8ec98a4b6b82ee61920b58e"
+}
