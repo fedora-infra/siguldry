@@ -412,6 +412,7 @@ async fn az_login_workload_identity(
         .arg(&client_id)
         .arg("--tenant")
         .arg(&tenant_id)
+        .arg("--allow-no-subscriptions")
         .arg("--federated-token")
         .arg(federated_token)
         .env("AZURE_CONFIG_DIR", azure_config_dir)
