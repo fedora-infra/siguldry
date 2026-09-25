@@ -21,7 +21,7 @@ function err {
 }
 
 if [ "x$1" = "x" ]; then
-  err "Usage: $0 [--keep-ca] <server-hostname> <bridge-hostname> autopen"
+  err "Usage: $0 [--keep-ca] <server-hostname> <bridge-hostname> <client-username> [<additional-client-username> ...]"
   exit 2
 fi
 
