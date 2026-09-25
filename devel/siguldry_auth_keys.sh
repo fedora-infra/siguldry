@@ -16,6 +16,24 @@
 
 set -xeuo pipefail
 
+function err {
+  echo "$@" >&2
+}
+
+if [ "x$1" = "x" ]; then
+  err "Usage: $0 [--keep-ca] <server-hostname> <bridge-hostname> autopen"
+  exit 2
+fi
+
+# Add something for OSTree?
+
+rm_ca=true
+if [ "x-keep-ca" = "x$1" ]; then
+shift;
+rm_ca=false
+fi
+
+
 SERVER_CN="${1}"
 BRIDGE_CN="${2}"
 if [[ $# -lt 3 ]]; then
@@ -103,7 +121,10 @@ for CLIENT_CN in "${CLIENT_CNS[@]}"; do
         -out "siguldry.$CLIENT_CN.certificate.pem"
 done
 
-rm -- siguldry.ca.private_key.pem *.csr
+rm -- *.csr
+if $rm_ca; then
+rm -- siguldry.ca.private_key.pem
+fi
 
 openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.server.certificate.pem
 openssl verify -CAfile ./siguldry.ca_certificate.pem siguldry.bridge.certificate.pem
