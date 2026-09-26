@@ -610,6 +610,22 @@ extern "C" fn C_GetTokenInfo(slotID: CK_SLOT_ID, pInfo: CK_TOKEN_INFO_PTR) -> CK
         }
     };
 
+    // Tools can use the serial number to see if tokens are the same (sequoia being one example)
+    // so provide a stable serial number derived from the key's handle, which is the digest of
+    // its public key.
+    let mut serial_number = token.handle.clone();
+    if serial_number.len() > 16 {
+        // Ensure we don't split on a character boundry; once MSRV is 1.91+ we can use floor_char_boundry()
+        let mut index = 15;
+        while !serial_number.is_char_boundary(index) {
+            index -= 1;
+        }
+        let _ = serial_number.split_off(index);
+    }
+    while serial_number.len() < 16 {
+        serial_number.push(' ');
+    }
+
     let mut label = token.name.clone();
     if label.len() > 32 {
         // Ensure we don't split on a character boundry; once MSRV is 1.91+ we can use floor_char_boundry()
@@ -668,7 +684,12 @@ extern "C" fn C_GetTokenInfo(slotID: CK_SLOT_ID, pInfo: CK_TOKEN_INFO_PTR) -> CK
                 .expect("Label MUST pad to 32 bytes"),
         );
         (*pInfo).model = *b"Siguldry        ";
-        (*pInfo).serialNumber = *b"0               ";
+        (*pInfo).serialNumber.copy_from_slice(
+            serial_number
+                .as_bytes()
+                .get(..16)
+                .expect("Serial number MUST pad to 16 bytes"),
+        );
         (*pInfo).ulMaxPinLen = 128;
         (*pInfo).ulMinPinLen = 64;
     }

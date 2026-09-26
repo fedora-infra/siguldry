@@ -817,7 +817,6 @@ async fn sign_rsa4k_gnupg_pkcs11_scd_protected_auth() -> anyhow::Result<()> {
 // Use Sequoia's cryptoki backend to sign using the pkcs11 module.
 #[tokio::test]
 #[tracing_test::traced_test]
-#[ignore = "Sequoia doesn't yet support PKCS11"]
 async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new()
         .with_pgp_key()
@@ -940,7 +939,6 @@ async fn sign_rsa4k_via_sequoia() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[tracing_test::traced_test]
-#[ignore = "Sequoia doesn't yet support PKCS11"]
 async fn sign_ed25519_via_sequoia() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new()
         .with_ed25519_key()
@@ -1063,7 +1061,6 @@ async fn sign_ed25519_via_sequoia() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[tracing_test::traced_test]
-#[ignore = "Sequoia doesn't currently support keys in multiple tokens"]
 async fn sign_mldsa65_ed25519_hybrid() -> anyhow::Result<()> {
     let instance = InstanceBuilder::new()
         .with_pgp_mldsa65_hybrid_key()

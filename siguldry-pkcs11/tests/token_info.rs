@@ -208,6 +208,42 @@ async fn enumerate_slots() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[tracing_test::traced_test]
+async fn token_serial_numbers_are_unique() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let keys = instance.client.list_keys().await?;
+
+    let serial_numbers = tokio::task::spawn_blocking(|| {
+        let pkcs11 = initialize_module()?;
+        let slots = pkcs11.get_all_slots()?;
+        assert_eq!(2, slots.len());
+        let serial_numbers = slots
+            .into_iter()
+            .map(|slot| {
+                pkcs11
+                    .get_token_info(slot)
+                    .map(|info| info.serial_number().to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok::<_, anyhow::Error>(serial_numbers)
+    })
+    .await??;
+
+    for serial_number in serial_numbers.iter() {
+        assert!(serial_number.len() <= 16);
+        assert!(serial_number.len() >= 12);
+        assert!(serial_number.chars().all(|c| c.is_ascii_hexdigit()),);
+        assert!(keys.iter().any(|key| key.handle.starts_with(serial_number)));
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
 async fn filter_slots() -> anyhow::Result<()> {
     // SAFETY: These tests must be run under nextest which ensures no one else
     // is reading or writing environment variables in this process.
