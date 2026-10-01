@@ -51,7 +51,7 @@ jobs:
           persist-credentials: false
 
       - name: Install zizmor
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # 2.86.7
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # 2.87.20
         with:
           tool: zizmor
 
@@ -202,7 +202,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Install nextest
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # 2.86.7
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # 2.87.20
         with:
           tool: nextest@0.9
 
@@ -308,7 +308,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install nextest
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # 2.86.7
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # 2.87.20
         with:
           tool: nextest@0.9
 
