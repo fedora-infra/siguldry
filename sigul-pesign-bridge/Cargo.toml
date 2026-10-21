@@ -17,14 +17,13 @@ repository = "https://github.com/jeremycline/siguldry"
 workspace = true
 
 [dependencies.anyhow]
-version = "1.0.47"
+workspace = true
 
 [dependencies.bytes]
-version = "1.3.0"
+workspace = true
 
 [dependencies.clap]
-version = "4.0"
-default-features = false
+workspace = true
 features = ["std", "derive", "env", "help", "usage", "error-context"]
 
 # Needed for sending/receiving ancillary data
@@ -32,56 +31,53 @@ features = ["std", "derive", "env", "help", "usage", "error-context"]
 # The feature is currently in Rust nightly so this could be dropped once
 # MSRV goes above whatever version that feature gets stabilized.
 [dependencies.rustix]
-version = "1.0"
+workspace = true
 features = ["net"]
 
 [dependencies.siguldry]
-path = "../siguldry"
-version = ">=0.6, <0.10"
-default-features = false
+workspace = true
 features = ["sigul-client"]
 
 # Used to temporarily stash input files for sigul within the runtime directory.
 [dependencies.tempfile]
-version = "3"
+workspace = true
 
 [dependencies.tokio]
-version = "1.27"
+workspace = true
 features = ["io-util", "macros", "net", "rt", "signal", "time", "process", "fs"]
 
 # Used for the CancellationToken
 [dependencies.tokio-util]
-version = "0.7.1"
+workspace = true
 features = ["rt"]
 
 [dependencies.tracing]
-version = "0.1.36"
+workspace = true
 
 [dependencies.tracing-subscriber]
-version = "0.3.17"
-default-features = false
+workspace = true
 features = ["std", "registry", "fmt", "env-filter"]
 
 # Used for deserializing the configuration file
 [dependencies.toml]
-version = "1.0"
+workspace = true
 
 [dependencies.serde]
-version = "1.0.145"
+workspace = true
 features = ["derive"]
 
 # Used to generate unique IDs for each signing request; used in logs.
 [dependencies.uuid]
-version = "1.6"
+workspace = true
 features = ["v7"]
 
 [dependencies.zerocopy]
-version = "0.8"
+workspace = true
 features = ["std", "derive"]
 
 [dev-dependencies]
-tracing-test = "0.2"
-assert_cmd = "2"
-tempfile = "3"
-rustix = { version = "1", features = ["process", "fs"] }
-proptest = "1.6"
+tracing-test.workspace = true
+assert_cmd.workspace = true
+tempfile.workspace = true
+rustix = { workspace = true, features = ["process", "fs"] }
+proptest.workspace = true

@@ -19,13 +19,13 @@ name = "siguldry_pkcs11"
 crate-type = ["cdylib"]
 
 [dependencies.anyhow]
-version = "1"
+workspace = true
 
 [dependencies.asn1]
-version = "0.24"
+workspace = true
 
 [dependencies.cryptoki]
-version = "0.12"
+workspace = true
 
 [dependencies.chrono]
 version = "0.4"
@@ -38,53 +38,49 @@ features = ["std"]
 version = "0.5"
 
 [dependencies.hex]
-version = "0.4"
+workspace = true
 
 [dependencies.openssl]
-version = "0.10.81"
+workspace = true
 
 [dependencies.sequoia-openpgp]
-version = "2"
-default-features = false
+workspace = true
 features = ["crypto-openssl"]
 
 [dependencies.serde]
-version = "1.0.145"
+workspace = true
 features = ["derive"]
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
 
 [dependencies.siguldry]
-path = "../siguldry"
-version = "0.9"
-default-features = false
+workspace = true
 
 [dependencies.tokio]
-version = "1.27"
+workspace = true
 features = ["rt"]
 
 [dependencies.tracing]
-version = "0.1.36"
+workspace = true
 
 [dependencies.tracing-subscriber]
-version = "0.3.17"
-default-features = false
+workspace = true
 features = ["std", "registry", "fmt", "env-filter"]
 
 [dev-dependencies]
-anyhow = "1"
-tempfile = "3"
-toml = "1.0"
+anyhow.workspace = true
+tempfile.workspace = true
+toml.workspace = true
 
 [dev-dependencies.tokio-util]
-version = "0.7"
+workspace = true
 features = ["io", "rt"]
 
 [dev-dependencies.siguldry-test]
-path = "../siguldry-test"
+workspace = true
 
 [dev-dependencies.tracing-test]
-version = "0.2"
+workspace = true
 # env filtering breaks usage in integration tests
 features = ["no-env-filter"]

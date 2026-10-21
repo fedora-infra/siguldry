@@ -10,24 +10,26 @@ publish = false
 workspace = true
 
 [dependencies.anyhow]
-version = "1.0.47"
+workspace = true
 
 [dependencies.clap_mangen]
 version = "0.3"
 
 [dependencies.clap]
-version = "4"
+workspace = true
+default-features = true
 
 [dependencies.openssl]
-version = "0.10"
+workspace = true
 
 [dependencies.tokio]
-version = "1"
+workspace = true
 features = ["rt", "macros", "time"]
 
 [dependencies.sigul-pesign-bridge]
 path = "../sigul-pesign-bridge"
 
 [dependencies.siguldry]
-path = "../siguldry"
+workspace = true
+default-features = true
 features = ["sigul-client"]

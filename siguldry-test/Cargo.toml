@@ -7,29 +7,29 @@ license.workspace = true
 publish = false
 
 [dependencies]
-anyhow = "1"
-asn1 = "0.24"
-criterion = "0.8"
-cryptoki = "0.12"
-proptest = "1.6"
-tempfile = "3"
-toml = "1.0"
-tracing = "0.1.36"
+anyhow.workspace = true
+asn1.workspace = true
+criterion.workspace = true
+cryptoki.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+toml.workspace = true
+tracing.workspace = true
 
 [dependencies.sequoia-openpgp]
-version = "2"
-default-features = false
+workspace = true
 features = ["crypto-openssl"]
 
 [dependencies.siguldry]
-path = "../siguldry"
+workspace = true
+default-features = true
 
 [dependencies.tokio]
-version = "1.27"
+workspace = true
 features = ["macros", "net", "fs", "process", "rt", "io-util", "time"]
 
 [dependencies.tokio-util]
-version = "0.7"
+workspace = true
 features = ["io", "rt"]
 
 [lints]

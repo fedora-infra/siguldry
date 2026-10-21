@@ -12,15 +12,14 @@ keywords = ["rpmsign", "amqp", "siguldry", "fedora"]
 repository = "https://github.com/fedora-infra/siguldry"
 
 [dependencies.anyhow]
-version = "1"
+workspace = true
 
 [dependencies.clap]
-version = "4.0"
-default-features = false
+workspace = true
 features = ["std", "derive", "env", "help", "usage", "error-context"]
 
 [dependencies.hex]
-version = "0.4"
+workspace = true
 
 [dependencies.lapin]
 version = "4.4"
@@ -36,11 +35,11 @@ default-features = false
 features = ["http-listener"]
 
 [dependencies.openssl]
-version = "0.10"
+workspace = true
 
 # Used for RPM signing to interact with Koji via its Python library
 [dependencies.pyo3]
-version = "0.30"
+workspace = true
 features = ["auto-initialize"]
 
 [dependencies.regex]
@@ -52,62 +51,59 @@ default-features = false
 features = ["http2", "native-tls"]
 
 [dependencies.rustix]
-version = "1"
+workspace = true
 features = ["process"]
 
 [dependencies.serde]
-version = "1.0.145"
+workspace = true
 features = ["derive"]
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
 
 [dependencies.siguldry]
-path = "../siguldry"
-version = "0.9"
-default-features = false
+workspace = true
 
 [dependencies.tempfile]
-version = "3"
+workspace = true
 
 [dependencies.time]
 version = "0.3"
 features = ["formatting"]
 
 [dependencies.tokio]
-version = "1.27"
+workspace = true
 features = ["fs", "macros", "net", "process", "rt-multi-thread", "io-std", "signal", "time"]
 
 [dependencies.tokio-util]
-version = "0.7"
+workspace = true
 features = ["io", "rt"]
 
 [dependencies.tokio-stream]
 version = "0.1"
 
 [dependencies.toml]
-version = "1.0"
+workspace = true
 
 [dependencies.tracing]
-version = "0.1.36"
+workspace = true
 
 [dependencies.tracing-subscriber]
-version = "0.3.17"
-default-features = false
+workspace = true
 features = ["std", "registry", "fmt", "env-filter"]
 
 [dependencies.uuid]
-version = "1.6"
+workspace = true
 features = ["v4", "v7", "serde"]
 
 [dev-dependencies.wiremock]
 version = "0.6"
 
 [dev-dependencies.siguldry-test]
-path = "../siguldry-test"
+workspace = true
 
 [dev-dependencies.tracing-test]
-version = "0.2"
+workspace = true
 # env filtering breaks usage in integration tests
 features = ["no-env-filter"]
 

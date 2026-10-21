@@ -26,26 +26,25 @@ sigul-client = []
 
 
 [dependencies.anyhow]
-version = "1"
+workspace = true
 
 [dependencies.asn1]
-version = "0.24"
+workspace = true
 
 [dependencies.bytes]
-version = "1"
+workspace = true
 
 [dependencies.clap]
-version = "4.0"
-default-features = false
+workspace = true
 features = ["std", "derive", "env", "help", "usage", "error-context"]
 optional = true
 
 [dependencies.cryptoki]
-version = "0.12"
+workspace = true
 optional = true
 
 [dependencies.hex]
-version = "0.4"
+workspace = true
 
 # Needed for openssl-sys and should be dropped as a direct dependency when
 # openssl-sys is dropped.
@@ -56,7 +55,7 @@ version = "0.3"
 version = "0.2"
 
 [dependencies.openssl]
-version = "0.10.81"
+workspace = true
 
 # The main openssl crate still doesn't support signing with ML-DSA keys.
 # With great care we can use the bindings directly. This does restrict support
@@ -68,23 +67,22 @@ version = "0.9.117"
 default-features = false
 
 [dependencies.rustix]
-version = "1"
+workspace = true
 features = ["termios", "stdio"]
 optional = true
 
 [dependencies.serde]
-version = "1.0.145"
+workspace = true
 features = ["derive"]
 
 # As we use OpenSSL for the TLS connection, let's stick with it for this as well.
 # The upstream default engine is nettle.
 [dependencies.sequoia-openpgp]
-version = "2"
-default-features = false
+workspace = true
 features = ["crypto-openssl"]
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
 
 [dependencies.sqlx]
 version = "0.8"
@@ -95,11 +93,11 @@ optional = true
 version = "2"
 
 [dependencies.tokio]
-version = "1.27"
+workspace = true
 features = ["macros", "net", "process", "rt", "io-util", "io-std", "signal", "time"]
 
 [dependencies.tokio-util]
-version = "0.7"
+workspace = true
 features = ["io", "rt"]
 
 [dependencies.tokio-openssl]
@@ -107,50 +105,48 @@ version = "0.6"
 
 # Used for deserializing the configuration file
 [dependencies.toml]
-version = "1.0"
+workspace = true
 
 [dependencies.tracing]
-version = "0.1.36"
+workspace = true
 
 [dependencies.tracing-subscriber]
-version = "0.3.17"
-default-features = false
+workspace = true
 features = ["std", "registry", "fmt", "env-filter"]
 optional = true
 
 # Used to generate unique IDs for each request
 [dependencies.uuid]
-version = "1.6"
+workspace = true
 features = ["v7", "serde"]
 
 [dependencies.zerocopy]
-version = "0.8"
+workspace = true
 features = ["std", "derive"]
 
 
 [dev-dependencies]
-anyhow = "1"
-assert_cmd = "2"
-criterion = "0.8"
-proptest = "1.6"
-tempfile = "3"
-toml = "1"
+anyhow.workspace = true
+assert_cmd.workspace = true
+criterion.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+toml.workspace = true
 
 [dev-dependencies.siguldry-test]
-path = "../siguldry-test"
+workspace = true
 
 [dev-dependencies.tracing-test]
-version = "0.2"
+workspace = true
 # env filtering breaks usage in integration tests
 features = ["no-env-filter"]
 
 [dev-dependencies.pyo3]
-version = "0.30"
+workspace = true
 features = ["auto-initialize"]
 
 [dev-dependencies.sequoia-openpgp]
-version = "2"
-default-features = false
+workspace = true
 features = ["crypto-openssl"]
 
 
