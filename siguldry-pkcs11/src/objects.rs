@@ -260,8 +260,21 @@ impl Attribute {
             let value = cert.to_der()?;
             let issuer = cert.issuer_name().to_der()?;
             let subject = cert.subject_name().to_der()?;
-            let serial_number = cert.serial_number().to_bn()?.to_vec();
             let pubkey_info = cert.public_key()?.public_key_to_der()?;
+            // There doesn't seem to be a better way to get at the bytes for the serial number as DER.
+            let serial_number = {
+                let mut serial_number = cert.serial_number().to_bn()?.to_vec();
+
+                // The index can't panic since we check if the vec is empty first.
+                #[allow(clippy::indexing_slicing)]
+                if serial_number.is_empty() || serial_number[0] & 0b1000_0000 != 0 {
+                    serial_number.insert(0, 0);
+                }
+                let serial_bn = asn1::BigUint::new(&serial_number).ok_or_else(|| {
+                    anyhow::anyhow!("Serial number failed conversion to ASN.1 BigUint")
+                })?;
+                asn1::write_single(&serial_bn)
+            }?;
 
             attrs.insert(
                 CKA_CERTIFICATE_TYPE,

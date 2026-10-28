@@ -8,8 +8,10 @@ use cryptoki::{
     context::{CInitializeArgs, CInitializeFlags, Pkcs11},
     error::{Error, RvError},
     mechanism::MechanismType,
+    object::{Attribute, AttributeType, ObjectClass},
 };
 
+use siguldry::server::db;
 use siguldry_test::{InstanceBuilder, keys};
 
 mod common;
@@ -526,5 +528,100 @@ async fn mechanism_list_for_mldsa87_key() -> anyhow::Result<()> {
         "Module should support the standard (not prehashed) ML-DSA signing mechanism"
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn certificate_serial_numbers_are_der_encoded() -> anyhow::Result<()> {
+    let instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+    let key = instance
+        .client
+        .get_key(keys::CODESIGNING_KEY_NAME.to_string())
+        .await?;
+    let public_key = openssl::pkey::PKey::public_key_from_pem(key.public_key.as_bytes())?;
+    let issuer_key = openssl::pkey::PKey::generate_ed25519()?;
+    let mut name = openssl::x509::X509NameBuilder::new()?;
+    name.append_entry_by_text("CN", "Test")?;
+    let name = name.build();
+    let not_before = openssl::asn1::Asn1Time::days_from_now(0)?;
+    let not_after = openssl::asn1::Asn1Time::days_from_now(1)?;
+
+    // Serial numbers are generated from random numbers typically, so we need to
+    // craft some special certs. One thing in particular is that if the cert has
+    // the first bit set it needs to be prepended by a 0 byte.
+    let database = db::pool(
+        &format!("sqlite://{}", instance.server_config.database().display()),
+        false,
+    )
+    .await?;
+    let mut connection = database.acquire().await?;
+    let database_key = db::Key::get(&mut connection, keys::CODESIGNING_KEY_NAME).await?;
+    let mut certificates = Vec::new();
+    for (serial_hex, expected_der_hex) in [
+        ("0", "020100"),
+        ("7F", "02017f"),
+        ("80", "02020080"),
+        ("FF", "020200ff"),
+        ("100", "02020100"),
+        ("800000000000000001", "020a00800000000000000001"),
+    ] {
+        let serial = openssl::bn::BigNum::from_hex_str(serial_hex)?.to_asn1_integer()?;
+        let mut certificate = openssl::x509::X509::builder()?;
+        certificate.set_version(2)?;
+        certificate.set_serial_number(&serial)?;
+        certificate.set_subject_name(&name)?;
+        certificate.set_issuer_name(&name)?;
+        certificate.set_not_before(&not_before)?;
+        certificate.set_not_after(&not_after)?;
+        certificate.set_pubkey(&public_key)?;
+        certificate.sign(&issuer_key, openssl::hash::MessageDigest::null())?;
+        let certificate = certificate.build();
+        db::PublicKeyMaterial::create(
+            &mut connection,
+            &database_key,
+            format!("serial-number-{serial_hex}"),
+            db::PublicKeyMaterialType::X509,
+            String::from_utf8(certificate.to_pem()?)?,
+        )
+        .await?;
+        certificates.push((certificate.to_der()?, hex::decode(expected_der_hex)?));
+    }
+    drop(connection);
+    database.close().await;
+
+    tokio::task::spawn_blocking(move || {
+        let pkcs11 = initialize_module()?;
+        let slot = pkcs11
+            .get_all_slots()?
+            .into_iter()
+            .find(|slot| {
+                pkcs11
+                    .get_slot_info(*slot)
+                    .is_ok_and(|info| info.slot_description() == keys::CODESIGNING_KEY_NAME)
+            })
+            .expect("Missing code-signing key slot");
+        let session = pkcs11.open_ro_session(slot)?;
+        for (certificate_der, serial_der) in certificates {
+            let mut objects = session.find_objects(&[
+                Attribute::Class(ObjectClass::CERTIFICATE),
+                Attribute::Value(certificate_der),
+            ])?;
+            assert_eq!(objects.len(), 1);
+            let certificate = objects.pop().unwrap();
+            assert_eq!(
+                session.get_attributes(certificate, &[AttributeType::SerialNumber])?,
+                vec![Attribute::SerialNumber(serial_der)],
+            );
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+
+    instance.halt().await?;
     Ok(())
 }

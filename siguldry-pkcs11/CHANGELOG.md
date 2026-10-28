@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [4.0.0] - 2026-10-29
+
+### Changed
+
+
+### Fixed
+
+- According to Section 4.6.3 of PKCS#11 3.2, certificate serial numbers in the CKA_SERIAL_NUMBER
+  attribute must be DER-encoded. Prior to this release, that attribute held the raw serial number
+  bytes.
+
+
 ## [3.0.0] - 2026-10-20
 
 ### Changed
