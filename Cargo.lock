@@ -3517,7 +3517,7 @@ dependencies = [
 
 [[package]]
 name = "siguldry-pkcs11"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "asn1",

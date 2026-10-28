@@ -1357,7 +1357,7 @@ async fn pesign_secure_boot_protected_auth() -> anyhow::Result<()> {
         .arg("--token")
         .arg(keys::HSM_RSA_KEY_NAME)
         .arg("--certificate")
-        .arg(keys::HSM_RSA_KEY_NAME)
+        .arg(&certificate.name)
         .arg("--sign")
         .arg("--in")
         .arg(&in_file)

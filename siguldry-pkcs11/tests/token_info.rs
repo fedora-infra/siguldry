@@ -625,3 +625,43 @@ async fn certificate_serial_numbers_are_der_encoded() -> anyhow::Result<()> {
     instance.halt().await?;
     Ok(())
 }
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn cert_label_is_siguldry_cert_name() -> anyhow::Result<()> {
+    let _instance = InstanceBuilder::new()
+        .with_codesigning_key()
+        .with_client_proxy()
+        .build()
+        .await?;
+
+    tokio::task::spawn_blocking(|| {
+        let pkcs11 = initialize_module()?;
+        let slots = pkcs11.get_all_slots()?;
+        let slot = slots
+            .iter()
+            .find(|slot| {
+                if let Ok(info) = pkcs11.get_slot_info(**slot)
+                    && info.slot_description() == keys::CODESIGNING_KEY_NAME
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let session = pkcs11.open_ro_session(*slot)?;
+        let mut objects = session.find_objects(&[Attribute::Class(ObjectClass::CERTIFICATE)])?;
+        assert_eq!(objects.len(), 1);
+        let certificate = objects.pop().unwrap();
+        assert_eq!(
+            session.get_attributes(certificate, &[AttributeType::Label])?,
+            vec![Attribute::Label(b"test-codesigning-cert".to_vec())],
+        );
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+
+    Ok(())
+}

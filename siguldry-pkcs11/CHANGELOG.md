@@ -8,14 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.0.0] - 2026-10-29
 
+This includes one minor user-facing change: certificate object labels are now their Siguldry names.
+If you use any PKCS11 URIs that include the label attribute for a certificate, you must update them
+for this release.
+
 ### Changed
 
+- X.509 certificates now use their name in Siguldry as their label, rather than the name of the key
+  they are associated with. Previously, a key pair with multiple X.509 certificates would use the same
+  label for all certificates, which was confusing in applications that use the label to present them
+  to the user. For example, in pesign, the certificate nickname was the same for all certificates
+  (#294).
 
 ### Fixed
 
 - According to Section 4.6.3 of PKCS#11 3.2, certificate serial numbers in the CKA_SERIAL_NUMBER
   attribute must be DER-encoded. Prior to this release, that attribute held the raw serial number
-  bytes.
+  bytes (#293).
 
 
 ## [3.0.0] - 2026-10-20

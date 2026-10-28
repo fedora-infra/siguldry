@@ -255,6 +255,13 @@ impl Attribute {
                 value: vec![CK_TRUE as CK_BBOOL],
             },
         );
+        attrs.insert(
+            CKA_LABEL,
+            Attribute {
+                attribute_type: CKA_LABEL,
+                value: cert.name.as_bytes().to_vec(),
+            },
+        );
 
         if let Ok(cert) = openssl::x509::X509::from_pem(cert.certificate.as_bytes()) {
             let value = cert.to_der()?;
