@@ -49,7 +49,7 @@ workspace = true
 # Needed for openssl-sys and should be dropped as a direct dependency when
 # openssl-sys is dropped.
 [dependencies.foreign-types]
-version = "0.3"
+version = "0.5"
 
 [dependencies.libc]
 version = "0.2"
