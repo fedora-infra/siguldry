@@ -492,6 +492,23 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
                 }
                 println!("Successfully created OpenPGP certificate:\n{}", cert.data);
             }
+            KeyCommands::RenameCert {
+                key_name,
+                name,
+                new_name,
+            } => {
+                let key = db::Key::get(&mut conn, &key_name)
+                    .await
+                    .context("No key with the specified name found")?;
+                db::PublicKeyMaterial::rename(&mut conn, &key, &name, &new_name)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to rename public key material {name} for key {key_name}")
+                    })?;
+                println!(
+                    "Successfully renamed public key material {name} to {new_name} for key {key_name}"
+                );
+            }
             KeyCommands::List {} => {
                 for key in db::Key::list(&mut conn).await? {
                     println!("{key}");
@@ -975,6 +992,58 @@ mod tests {
         fn config(&self) -> &Config {
             &self.config
         }
+    }
+
+    #[tokio::test]
+    async fn rename_cert() -> Result<()> {
+        let test = TestConfig::new(false).await?;
+        test.migrate().await?;
+        test.create_user("key-admin").await?;
+        let pool = db::pool(test.config().database().to_str().unwrap(), true).await?;
+
+        let password_file = test.temp_dir.path().join("password");
+        std::fs::write(&password_file, "very-secret\n")?;
+
+        let key_name = "my-key".to_string();
+        manage(
+            ManagementCommands::Key(KeyCommands::Create {
+                algorithm: KeyAlgorithm::Ed25519,
+                openpgp_hybrid_pair: false,
+                password_file: Some(password_file.clone()),
+                admin: "key-admin".to_string(),
+                name: key_name.clone(),
+                x509_options: X509Options {
+                    x509_cert_name: Some("x509-cert".to_string()),
+                    ..Default::default()
+                },
+                openpgp_options: Default::default(),
+            }),
+            test.config().clone(),
+        )
+        .await?;
+
+        let mut conn = pool.begin().await?;
+        let key = db::Key::get(&mut conn, &key_name).await?;
+        let x509 =
+            db::PublicKeyMaterial::list(&mut conn, &key, db::PublicKeyMaterialType::X509).await?;
+        assert_eq!(x509.first().unwrap().name, "x509-cert");
+        conn.commit().await?;
+
+        manage(
+            ManagementCommands::Key(KeyCommands::RenameCert {
+                key_name,
+                name: "x509-cert".to_string(),
+                new_name: "renamed-x509-cert".to_string(),
+            }),
+            test.config().clone(),
+        )
+        .await?;
+        let mut conn = pool.begin().await?;
+        let renamed_x509 =
+            db::PublicKeyMaterial::list(&mut conn, &key, db::PublicKeyMaterialType::X509).await?;
+        assert_eq!(renamed_x509.first().unwrap().name, "renamed-x509-cert");
+
+        Ok(())
     }
 
     #[tokio::test]

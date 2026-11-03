@@ -444,6 +444,18 @@ pub enum KeyCommands {
         openpgp_options: OpenPgpOptions,
     },
 
+    /// Rename an X.509 or OpenPGP certificate associated with a key.
+    RenameCert {
+        /// The name of the key the certificate is associated with.
+        key_name: String,
+
+        /// The current name of the certificate.
+        name: String,
+
+        /// The new name of the certificate; must be unique for this key.
+        new_name: String,
+    },
+
     /// List available keys.
     List {},
 }

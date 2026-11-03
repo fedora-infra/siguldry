@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE public_key_material SET name = $1 WHERE key_id = $2 AND name = $3 RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7a4544db61b061149b3fac4343ebd313dcf2662a8c5716a79347d6d434aa09d3"
+}

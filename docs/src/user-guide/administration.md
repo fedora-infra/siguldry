@@ -159,6 +159,23 @@ systemd-run --pty --wait --collect \
 > If you plan to sign with GPG via gnupg-pkcs11-scd, you must create an X.509 certificate in
 > addition to the OpenPGP certificate for the key to be discovered by gnupg-pkcs11-scd.
 
+To rename an X.509 or OpenPGP certificate associated with a key:
+
+```bash
+systemd-run --pty --wait --collect \
+  --working-directory=/var/lib/siguldry \
+  --setenv=SIGULDRY_SERVER_CONFIG=/etc/siguldry/server.toml \
+  --uid=siguldry \
+  --gid=siguldry \
+  siguldry-server manage key rename-cert test-key test-x509-cert renamed-x509-cert
+```
+
+The arguments are the key name, the current name, and the new name. The new name must be unique
+among all certificates associated with that key. This name is used as the PKCS11 label by the PKCS11
+module, so changes can have impacts on clients referencing certificates by label rather than by,
+say, the certificate's serial number. It does _not_ modify the certificate in any way, only the name
+it's called in various Siguldry interfaces.
+
 ### Services
 
 The server's primary systemd service is `siguldry-server.service`. There are two associated systemd

@@ -157,6 +157,25 @@ pub struct PublicKeyMaterial {
 }
 
 impl PublicKeyMaterial {
+    /// Rename public key material associated with a key.
+    #[instrument(skip(conn, key), fields(key.name = key.name, cert_name = name, new_cert_name = new_name))]
+    pub async fn rename(
+        conn: &mut SqliteConnection,
+        key: &Key,
+        name: &str,
+        new_name: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "UPDATE public_key_material SET name = $1 WHERE key_id = $2 AND name = $3 RETURNING id",
+            new_name,
+            key.id,
+            name,
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        Ok(())
+    }
+
     /// Create a new public key material record.
     #[instrument(skip(conn, key, data), fields(key.name = key.name))]
     pub async fn create(
@@ -606,6 +625,91 @@ mod tests {
     use sqlx::{Row, error::ErrorKind};
 
     use super::*;
+
+    #[tokio::test]
+    async fn public_key_material_rename() -> Result<()> {
+        let db_pool = pool("sqlite::memory:", false).await?;
+        migrate(&db_pool).await?;
+        let mut conn = db_pool.begin().await?;
+        let key = Key::create(
+            &mut conn,
+            "test-key",
+            "test-handle",
+            KeyAlgorithm::P256,
+            Some("secret"),
+            "public-key",
+            None,
+            None,
+        )
+        .await?;
+        let other_key = Key::create(
+            &mut conn,
+            "other-key",
+            "other-handle",
+            KeyAlgorithm::P256,
+            Some("secret"),
+            "public-key",
+            None,
+            None,
+        )
+        .await?;
+
+        for data_type in [
+            PublicKeyMaterialType::X509,
+            PublicKeyMaterialType::OpenPgpCert,
+        ] {
+            let name = data_type.as_str();
+            let new_name = format!("renamed-{name}");
+            let mut material = PublicKeyMaterial::create(
+                &mut conn,
+                &key,
+                name.to_string(),
+                data_type.clone(),
+                "certificate-data".to_string(),
+            )
+            .await?;
+            let other_material = PublicKeyMaterial::create(
+                &mut conn,
+                &other_key,
+                name.to_string(),
+                data_type.clone(),
+                "other-certificate-data".to_string(),
+            )
+            .await?;
+
+            PublicKeyMaterial::rename(&mut conn, &key, name, &new_name).await?;
+            material.name = new_name.clone();
+            assert_eq!(
+                PublicKeyMaterial::list(&mut conn, &key, data_type.clone()).await?,
+                vec![material]
+            );
+            assert_eq!(
+                PublicKeyMaterial::list(&mut conn, &other_key, data_type.clone()).await?,
+                vec![other_material]
+            );
+            assert!(matches!(
+                PublicKeyMaterial::rename(&mut conn, &key, name, "the-cert-got-renamed-already")
+                    .await,
+                Err(sqlx::Error::RowNotFound)
+            ));
+        }
+
+        let result =
+            PublicKeyMaterial::rename(&mut conn, &key, "renamed-x509", "renamed-openpgp").await;
+        assert!(
+            result.is_err_and(|error| error.as_database_error().unwrap().is_unique_violation())
+        );
+        assert_eq!(
+            PublicKeyMaterial::list(&mut conn, &key, PublicKeyMaterialType::X509)
+                .await?
+                .first()
+                .unwrap()
+                .name,
+            "renamed-x509"
+        );
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn create_delete_user() -> Result<()> {
