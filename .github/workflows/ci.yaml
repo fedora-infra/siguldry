@@ -16,13 +16,15 @@ jobs:
     name: Cargo dependency checks
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
+      - uses: dtolnay/rust-toolchain@v1
         id: rust-toolchain
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # 2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
 
       - name: Install cargo-deny
         run: |
@@ -37,43 +39,22 @@ jobs:
       - name: Check crates are from expected sources
         run: cargo deny --log-level info --workspace check --show-stats sources
 
-  zizmor:
-    name: GitHub Actions lints
-    runs-on: ubuntu-26.04
-    permissions:
-      security-events: write
-      contents: read
-      actions: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install zizmor
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # 2.87.31
-        with:
-          tool: zizmor
-
-      - name: Run zizmor 🌈
-        run: zizmor .
-
   style:
     name: Code style checks
     runs-on: ubuntu-26.04
     container:
       image: quay.io/fedora/fedora:44
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
+      - uses: dtolnay/rust-toolchain@v1
         id: rust-toolchain
         with:
           toolchain: stable
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # 2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
 
       - name: cargo fmt
         run: cargo fmt --all --check
@@ -104,14 +85,14 @@ jobs:
     name: Generate a Sigul data directory for migration
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
+      - uses: dtolnay/rust-toolchain@v1
         id: rust-toolchain
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # 2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
 
       - name: Install dependencies
         run: |
@@ -129,7 +110,7 @@ jobs:
         run: cargo xtask generate-sigul-data
 
       - name: Upload sigul data artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # 7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: sigul-data
           path: devel/sigul-data/
@@ -141,21 +122,21 @@ jobs:
     name: Build sample UEFI application
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
+      - uses: dtolnay/rust-toolchain@v1
         id: rust-toolchain
         with:
           toolchain: stable
           targets: x86_64-unknown-uefi
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # 2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
 
       - name: Build sample UEFI application
         run: cargo build --target x86_64-unknown-uefi -p sample-uefi
 
       - name: Upload sample UEFI application
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # 7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: sample-uefi.efi
           path: target/x86_64-unknown-uefi/debug/
@@ -186,7 +167,7 @@ jobs:
           - container-image: quay.io/fedora/fedora:rawhide
             rust-toolchain: stable
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -194,7 +175,7 @@ jobs:
         if: matrix.rust-toolchain == 'system'
         run: dnf install -y rust cargo
 
-      - uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4
+      - uses: dtolnay/rust-toolchain@v1
         if: matrix.rust-toolchain != 'system'
         id: rust-toolchain
         with:
@@ -202,22 +183,22 @@ jobs:
           components: clippy, rustfmt
 
       - name: Install nextest
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # 2.87.31
+        uses: taiki-e/install-action@v2.87.31
         with:
           tool: nextest@0.9
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # 2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           prefix-key: "${{ matrix.container-image }}"
 
       - name: Download sigul data artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # 8.0.2
+        uses: actions/download-artifact@v8.0.2
         with:
           name: sigul-data
           path: devel/sigul-data/
 
       - name: Download sample UEFI application
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # 8.0.2
+        uses: actions/download-artifact@v8.0.2
         with:
           name: sample-uefi.efi
           path: target/x86_64-unknown-uefi/debug/
@@ -304,11 +285,11 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Install nextest
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # 2.87.31
+        uses: taiki-e/install-action@v2.87.31
         with:
           tool: nextest@0.9
 
