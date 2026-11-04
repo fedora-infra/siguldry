@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added the `siguldry-server manage pkcs11 swap` command to replace an existing HSM with
+  a clone. This command verifies the new HSM contains the same set of registered keys and
+  X.509 certificates the existing HSM had before updating the database record. The HSMs
+  must have the same user PIN as this command does not update the user access passwords.
+
 ## [0.9.0] - 2026-09-23
 
 This release contains a modest set of breaking changes, most of which are

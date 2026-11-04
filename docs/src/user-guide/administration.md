@@ -176,6 +176,44 @@ module, so changes can have impacts on clients referencing certificates by label
 say, the certificate's serial number. It does _not_ modify the certificate in any way, only the name
 it's called in various Siguldry interfaces.
 
+### Swapping HSMs
+
+You may have multiple HSMs that have been prepared with the same set of signing keys and certificates.
+When you register one with `siguldry-server manage pkcs11 register`, it tracks the serial number of the
+device. If you want to replace the one you registered with a new, _identical_ HSM without needing to
+create new access passwords for all users (if, for example, the registered device failed and needs
+to be replaced), you can do this with the `siguldry-server manage pkcs11 swap` command.
+
+> [!CAUTION]
+> The new device must have the same user PIN, secret keys, public keys, and X.509 certificates.
+> The command checks that the secret keys, public keys, and X.509 certificate match, but it does
+> not validate that the user PIN is the same for both devices.
+
+Key pairs and certificates must retain their PKCS#11 `CKA_ID` values, and the new device must have a
+different serial number (if the serial number is identical, this command is not needed).
+
+As always, it is recommended that you back up the the Siguldry database before replacing the token.
+Then run:
+
+```bash
+systemctl stop siguldry-server.service
+
+systemd-run --pty --wait --collect \
+  --working-directory=/var/lib/siguldry \
+  --setenv=SIGULDRY_SERVER_CONFIG=/etc/siguldry/server.toml \
+  --uid=siguldry \
+  --gid=siguldry \
+  siguldry-server manage pkcs11 swap <old-token-serial-number> --slot-id <new-token-slot>
+
+systemctl start siguldry-server.service
+```
+
+Find the spare's slot ID with `pkcs11-tool --module /path/to/module.so --list-slots`. The slot ID
+can be left out if there's only one slot with a token. Refer to the CLI help for additional options.
+
+This command only modifies the record for the PKCS#11 token (serial number, model, etc).
+
+
 ### Services
 
 The server's primary systemd service is `siguldry-server.service`. There are two associated systemd

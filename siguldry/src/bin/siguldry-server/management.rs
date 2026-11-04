@@ -659,6 +659,36 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
             }
         },
         ManagementCommands::Pkcs11(pkcs11_commands) => match pkcs11_commands {
+            crate::cli::Pkcs11Commands::Swap {
+                serial_number,
+                module,
+                slot_id,
+                user_pin,
+            } => {
+                let token = db::Pkcs11Token::list(&mut conn)
+                    .await?
+                    .into_iter()
+                    .find(|token| token.serial_number == serial_number)
+                    .context("No registered PKCS#11 token has the specified serial number")?;
+                let pin = password_from_file_or_prompt(
+                    "Enter the token's user PIN to verify the new token: ",
+                    user_pin,
+                    0,
+                )?;
+                let pin = pin.map(|pin| {
+                    String::from_utf8(pin.to_vec()).map(|pin| AuthPin::new(pin.into()))
+                })?;
+                crypto::token::swap_pkcs11_token(
+                    &mut conn,
+                    &token,
+                    module.unwrap_or_else(|| token.module_path.clone()),
+                    slot_id,
+                    pin,
+                )
+                .await
+                .context("Failed to replace PKCS#11 token")?;
+                println!("Verified replacement for token {serial_number}");
+            }
             crate::cli::Pkcs11Commands::Register {
                 module,
                 user_pin,
@@ -794,6 +824,7 @@ mod tests {
         protocol::KeyAlgorithm,
         server::{Config, crypto::KeyUsage, db},
     };
+    use sqlx::{Pool, Sqlite};
     use tempfile::TempDir;
 
     use crate::cli::{
@@ -976,6 +1007,14 @@ mod tests {
         /// Run database migrations to set up the schema.
         async fn migrate(&self) -> Result<()> {
             manage(ManagementCommands::Migrate {}, self.config.clone()).await
+        }
+
+        async fn writable_db(&self) -> Result<Pool<Sqlite>> {
+            db::pool(
+                &format!("sqlite://{}", self.config.database().display()),
+                false,
+            )
+            .await
         }
 
         /// Create a user in the database.
@@ -1942,6 +1981,66 @@ mod tests {
 
         manage(ManagementCommands::Migrate {}, test.config().clone()).await?;
         manage(ManagementCommands::Migrate {}, test.config().clone()).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pkcs11_swap_token() -> Result<()> {
+        let test = TestConfig::new(true).await?;
+        test.migrate().await?;
+        test.create_user("token-admin").await?;
+
+        let user_pin_file = test.temp_dir.path().join("user_pin");
+        std::fs::write(&user_pin_file, format!("{}\n", test.user_pin))?;
+        let password_file = test.temp_dir.path().join("password");
+        std::fs::write(&password_file, "key-access-password\n")?;
+        manage(
+            ManagementCommands::Pkcs11(Pkcs11Commands::Register {
+                module: test.module_path.clone().into(),
+                user_pin: Some(user_pin_file.clone()),
+                password_file: Some(password_file),
+                slot_id: Some(1),
+                admin: "token-admin".to_string(),
+            }),
+            test.config().clone(),
+        )
+        .await?;
+
+        let pool = test.writable_db().await?;
+        let mut conn = pool.acquire().await?;
+        let mut existing_token = db::Pkcs11Token::list(&mut conn).await?.pop().unwrap();
+        let existing_keys = db::Key::get_token_keys(&mut conn, &existing_token).await?;
+        let user = db::User::get(&mut conn, "token-admin").await?;
+        let mut existing_accesses = Vec::new();
+        for key in &existing_keys {
+            existing_accesses.push(db::KeyAccess::get(&mut conn, key, &user).await?);
+        }
+
+        // Fake two tokens by writing out a new serial number
+        let new_serial = existing_token.serial_number.clone();
+        existing_token.serial_number = "retired-token".to_string();
+        existing_token.update(&mut conn).await?;
+
+        manage(
+            ManagementCommands::Pkcs11(Pkcs11Commands::Swap {
+                serial_number: existing_token.serial_number.clone(),
+                module: Some(test.module_path.clone().into()),
+                slot_id: Some(1),
+                user_pin: Some(user_pin_file),
+            }),
+            test.config().clone(),
+        )
+        .await?;
+        let new_token = db::Pkcs11Token::list(&mut conn).await?.pop().unwrap();
+        assert_eq!(new_token.serial_number, new_serial);
+        assert_eq!(
+            db::Key::get_token_keys(&mut conn, &new_token).await?,
+            existing_keys
+        );
+        for (key, access) in existing_keys.iter().zip(existing_accesses) {
+            assert_eq!(db::KeyAccess::get(&mut conn, key, &user).await?, access);
+        }
 
         Ok(())
     }

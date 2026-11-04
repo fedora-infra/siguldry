@@ -268,6 +268,38 @@ pub enum ManagementCommands {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum Pkcs11Commands {
+    /// Replace a registered token with a replacement containing the same keys and certificates.
+    ///
+    /// The new token must use the same user PIN and key IDs. Existing keys, certificates, and user
+    /// credentials are preserved.
+    Swap {
+        /// The serial number of the registered token to replace.
+        serial_number: String,
+
+        /// The absolute path to the PKCS#11 module to use with the new token.
+        ///
+        /// If not provided, the module configured for the old token is used.
+        #[arg(long)]
+        module: Option<PathBuf>,
+
+        /// The slot ID containing the new token.
+        ///
+        /// If not provided, the first slot found with a token is used.
+        #[arg(short, long)]
+        slot_id: Option<u64>,
+
+        /// A file containing the user PIN needed to log into the new token.
+        ///
+        /// The file should include the PIN on the first line and the file should include a newline.
+        /// If this option is not provided, input is read from stdin.
+        ///
+        /// This PIN MUST match the PIN on the existing registered token. If it does not, unregister
+        /// the token and register this one as a new token, which requires issuing new access passwords
+        /// for all users of keys in this device.
+        #[arg(long)]
+        user_pin: Option<PathBuf>,
+    },
+
     /// Register a PKCS#11 token with the server.
     ///
     /// Siguldry expects you to manage the token externally via tools like pkcs11-tool.

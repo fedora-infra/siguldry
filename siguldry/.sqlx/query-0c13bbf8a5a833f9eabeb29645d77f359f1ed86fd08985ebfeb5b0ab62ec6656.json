@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pkcs11_tokens SET module_path = ?, label = ?, manufacturer_id = ?, model = ?, serial_number = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "0c13bbf8a5a833f9eabeb29645d77f359f1ed86fd08985ebfeb5b0ab62ec6656"
+}

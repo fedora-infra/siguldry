@@ -242,6 +242,27 @@ pub struct Pkcs11Token {
 }
 
 impl Pkcs11Token {
+    /// Update an existing token's records.
+    ///
+    /// You can set the module, label, manufacturer_id, model, and serial number and then call
+    /// this method.
+    #[instrument(skip(conn))]
+    pub async fn update(&self, conn: &mut SqliteConnection) -> Result<(), sqlx::Error> {
+        let module_path = self.module_path.display().to_string();
+        sqlx::query!(
+            "UPDATE pkcs11_tokens SET module_path = ?, label = ?, manufacturer_id = ?, model = ?, serial_number = ? WHERE id = ?",
+            module_path,
+            self.label,
+            self.manufacturer_id,
+            self.model,
+            self.serial_number,
+            self.id,
+        )
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    }
+
     #[instrument(skip(conn))]
     pub async fn create(
         conn: &mut SqliteConnection,
