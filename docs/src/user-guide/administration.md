@@ -176,6 +176,16 @@ module, so changes can have impacts on clients referencing certificates by label
 say, the certificate's serial number. It does _not_ modify the certificate in any way, only the name
 it's called in various Siguldry interfaces.
 
+### Listing HSMs
+
+HSMs that have been registered can be listed with `siguldry-server manage pkcs11 list`. Use this to
+see keys and certificates, as well as the serial number other device details (useful for other
+management commands).
+
+The details are from the Siguldry database so if the token has been altered since registration those
+details are _NOT_ reflected here.
+
+
 ### Swapping HSMs
 
 You may have multiple HSMs that have been prepared with the same set of signing keys and certificates.

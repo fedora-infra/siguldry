@@ -268,6 +268,12 @@ pub enum ManagementCommands {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum Pkcs11Commands {
+    /// List registered PKCS#11 tokens and their signing keys.
+    ///
+    /// This uses the Siguldry database and does not probe the token, so if the token has been
+    /// altered after importing this will not show those alterations.
+    List {},
+
     /// Replace a registered token with a replacement containing the same keys and certificates.
     ///
     /// The new token must use the same user PIN and key IDs. Existing keys, certificates, and user

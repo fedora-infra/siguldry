@@ -659,6 +659,38 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
             }
         },
         ManagementCommands::Pkcs11(pkcs11_commands) => match pkcs11_commands {
+            crate::cli::Pkcs11Commands::List {} => {
+                let tokens = db::Pkcs11Token::list(&mut conn).await?;
+                if tokens.is_empty() {
+                    println!("No PKCS#11 tokens registered");
+                }
+                for token in tokens {
+                    println!("Token: {}", token.label);
+                    println!("  Serial number: {}", token.serial_number);
+                    println!(
+                        "  Manufacturer: {}",
+                        token.manufacturer_id.as_deref().unwrap_or("Unknown")
+                    );
+                    println!("  Model: {}", token.model.as_deref().unwrap_or("Unknown"));
+                    println!("  Module: {}", token.module_path.display());
+                    if token.concurrent_requests == 0 {
+                        println!("  Concurrent requests: Unlimited");
+                    } else {
+                        println!("  Concurrent requests: {}", token.concurrent_requests);
+                    }
+                    let mut keys = db::Key::get_token_keys(&mut conn, &token).await?;
+                    keys.sort_by(|a, b| a.name.cmp(&b.name));
+                    println!("  Keys: {}", keys.len());
+                    for key in keys {
+                        let key_id = hex::encode(
+                            key.pkcs11_key_id
+                                .as_deref()
+                                .expect("Token keys have a PKCS#11 ID"),
+                        );
+                        println!("    {key} (PKCS#11 ID: {key_id})");
+                    }
+                }
+            }
             crate::cli::Pkcs11Commands::Swap {
                 serial_number,
                 module,
