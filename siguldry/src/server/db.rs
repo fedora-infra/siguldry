@@ -305,6 +305,40 @@ impl Pkcs11Token {
             .await
     }
 
+    #[instrument(skip(conn))]
+    pub async fn delete(
+        conn: &mut SqliteConnection,
+        serial_number: &str,
+        remove_key_accesses: bool,
+    ) -> Result<u64, sqlx::Error> {
+        if remove_key_accesses {
+            sqlx::query!(
+                "DELETE FROM key_accesses \
+                WHERE key_id IN ( \
+                  SELECT keys.id FROM keys \
+                  JOIN pkcs11_tokens ON keys.pkcs11_token_id = pkcs11_tokens.id \
+                  WHERE pkcs11_tokens.serial_number = $1 \
+                )",
+                serial_number,
+            )
+            .execute(&mut *conn)
+            .await
+            .map(|result| {
+                tracing::info!(
+                    rows_affected = result.rows_affected(),
+                    "Deleted key access records for all keys provided by token"
+                );
+            })?;
+        }
+        sqlx::query!(
+            "DELETE FROM pkcs11_tokens WHERE serial_number = $1",
+            serial_number,
+        )
+        .execute(&mut *conn)
+        .await
+        .map(|result| result.rows_affected())
+    }
+
     /// Initialize the PKCS#11 module.
     ///
     /// The caller must finalize it.
@@ -882,6 +916,82 @@ mod tests {
         let keys_deleted = Key::delete(&mut conn, key.name.as_str()).await?;
         assert_eq!(1, keys_deleted);
         assert_eq!(0, Key::list(&mut conn).await?.len());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pkcs11_token_delete_only_removes_its_keys() -> Result<()> {
+        let db_pool = pool("sqlite::memory:", false).await?;
+        migrate(&db_pool).await?;
+        let mut conn = db_pool.begin().await?;
+        let software_key = Key::create(
+            &mut conn,
+            "software-key",
+            "software-key-handle",
+            KeyAlgorithm::P256,
+            Some("secret"),
+            "public-key",
+            None,
+            None,
+        )
+        .await?;
+
+        let token_to_remove = Pkcs11Token::create(
+            &mut conn,
+            PathBuf::from("some/path.so"),
+            "token-to-remove".to_string(),
+            None,
+            None,
+            "token-to-remove".to_string(),
+            None,
+        )
+        .await?;
+        let token_to_keep = Pkcs11Token::create(
+            &mut conn,
+            PathBuf::from("some/path.so"),
+            "token-to-keep".to_string(),
+            None,
+            None,
+            "token-to-keep".to_string(),
+            None,
+        )
+        .await?;
+
+        let mut expected_keys = vec![software_key];
+        for token in [&token_to_keep, &token_to_remove] {
+            for key_id in [1, 2] {
+                let name = format!("{}-key-{key_id}", token.serial_number);
+                let key = Key::create(
+                    &mut conn,
+                    &name,
+                    &name,
+                    KeyAlgorithm::P256,
+                    None,
+                    "public-key",
+                    Some(token),
+                    Some(vec![key_id]),
+                )
+                .await?;
+                if token.label == "token-to-keep" {
+                    expected_keys.push(key);
+                }
+            }
+        }
+
+        assert_eq!(
+            Pkcs11Token::delete(&mut conn, "token-to-remove", true).await?,
+            1,
+            "Expected one token to be deleted"
+        );
+
+        let mut remaining_keys = Key::list(&mut conn).await?;
+        assert_eq!(remaining_keys.len(), 3);
+
+        remaining_keys.sort_by_key(|key| key.id);
+        expected_keys.sort_by_key(|key| key.id);
+        assert_eq!(remaining_keys, expected_keys);
+        assert_eq!(Pkcs11Token::list(&mut conn).await?, vec![token_to_keep]);
 
         Ok(())
     }

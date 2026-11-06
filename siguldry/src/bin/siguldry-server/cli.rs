@@ -341,6 +341,27 @@ pub enum Pkcs11Commands {
         /// The Siguldy username of the key administrator. This user can grant access to other users.
         admin: String,
     },
+
+    /// Unregister a PKCS#11 token with the server.
+    ///
+    /// This will remove the database record for the token, the keys it provides, and their
+    /// certificates. The token itself is not modified.
+    ///
+    /// If any user still has access to the token's keys, this fails unless --remove-key-accesses
+    /// is passed to remove those access records as well.
+    ///
+    /// Be aware that if you re-register the token you will need to grant all users access to the
+    /// keys again.
+    Unregister {
+        /// The serial number of the registered token to unregister.
+        serial_number: String,
+
+        /// Remove all user access records for the token's keys.
+        ///
+        /// Without this flag, unregistering fails if any user still has access to these keys.
+        #[arg(long)]
+        remove_key_accesses: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
