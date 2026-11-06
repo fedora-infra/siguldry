@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM key_accesses WHERE key_id IN ( SELECT keys.id FROM keys JOIN pkcs11_tokens ON keys.pkcs11_token_id = pkcs11_tokens.id WHERE pkcs11_tokens.serial_number = $1 )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "a6425e330f38f04f2e56fd93ab76f6d5b0764cdde2df4c5375f8f48d03eb794e"
+}
