@@ -800,6 +800,31 @@ pub async fn manage(command: ManagementCommands, mut config: Config) -> anyhow::
                     );
                 }
             }
+            crate::cli::Pkcs11Commands::Unregister {
+                serial_number,
+                remove_key_accesses,
+            } => {
+                let deleted =
+                    db::Pkcs11Token::delete(&mut conn, &serial_number, remove_key_accesses)
+                        .await
+                        .with_context(|| {
+                            if remove_key_accesses {
+                                format!("Failed to unregister PKCS#11 token {serial_number}")
+                            } else {
+                                format!(
+                                    "Failed to unregister PKCS#11 token {serial_number}. If users \
+                                still have access to its keys, pass --remove-key-accesses to \
+                                remove their access records, or revoke access first."
+                                )
+                            }
+                        })?;
+                if deleted == 0 {
+                    return Err(anyhow::anyhow!(
+                        "No registered PKCS#11 token has the specified serial number"
+                    ));
+                }
+                println!("Unregistered token {serial_number}");
+            }
         },
         ManagementCommands::Migrate {} => db::migrate(&db_pool).await?,
         ManagementCommands::ImportSigul {
@@ -854,7 +879,11 @@ mod tests {
     use sequoia_openpgp::{Cert, crypto::Password, parse::Parse, types::PublicKeyAlgorithm};
     use siguldry::{
         protocol::KeyAlgorithm,
-        server::{Config, crypto::KeyUsage, db},
+        server::{
+            Config,
+            crypto::KeyUsage,
+            db::{self, Key, Pkcs11Token},
+        },
     };
     use sqlx::{Pool, Sqlite};
     use tempfile::TempDir;
@@ -2073,6 +2102,62 @@ mod tests {
         for (key, access) in existing_keys.iter().zip(existing_accesses) {
             assert_eq!(db::KeyAccess::get(&mut conn, key, &user).await?, access);
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pkcs11_unregister_token() -> Result<()> {
+        let test = TestConfig::new(true).await?;
+        test.migrate().await?;
+        test.create_user("token-admin").await?;
+        let pool = db::pool(test.config().database().as_os_str().to_str().unwrap(), true).await?;
+
+        let user_pin_file = test.temp_dir.path().join("user_pin");
+        std::fs::write(&user_pin_file, format!("{}\n", test.user_pin))?;
+        let password_file = test.temp_dir.path().join("password");
+        std::fs::write(&password_file, "key-access-password\n")?;
+
+        manage(
+            ManagementCommands::Pkcs11(Pkcs11Commands::Register {
+                module: test.module_path.clone().into(),
+                user_pin: Some(user_pin_file),
+                password_file: Some(password_file),
+                slot_id: None,
+                admin: "token-admin".to_string(),
+            }),
+            test.config().clone(),
+        )
+        .await?;
+
+        let mut conn = pool.acquire().await?;
+        let tokens = Pkcs11Token::list(&mut conn).await?;
+        assert_eq!(tokens.len(), 1, "Failed to add token for test setup");
+        assert_eq!(
+            Key::list(&mut conn).await?.len(),
+            2,
+            "Failed to add token for test setup"
+        );
+
+        manage(
+            ManagementCommands::Pkcs11(Pkcs11Commands::Unregister {
+                serial_number: tokens.first().unwrap().serial_number.clone(),
+                remove_key_accesses: true,
+            }),
+            test.config().clone(),
+        )
+        .await?;
+
+        assert_eq!(
+            Pkcs11Token::list(&mut conn).await?.len(),
+            0,
+            "Failed to remove token"
+        );
+        assert_eq!(
+            Key::list(&mut conn).await?.len(),
+            0,
+            "Keys associated with token weren't removed"
+        );
 
         Ok(())
     }

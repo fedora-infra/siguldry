@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM pkcs11_tokens WHERE serial_number = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "02d12015bd97825a46dd3dbda486946fde596974238d81252c1191d0c0048b72"
+}

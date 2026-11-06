@@ -224,6 +224,31 @@ can be left out if there's only one slot with a token. Refer to the CLI help for
 This command only modifies the record for the PKCS#11 token (serial number, model, etc).
 
 
+### Unregistering HSMs
+
+In the event that an HSM is being retired, you can unregister it from Siguldry, which will delete the
+keys it provides in the database, and the user access records associated with those keys. It will not
+alter anything on the HSM.
+
+> [!CAUTION]
+> It's always a good idea to back up your SQLite database prior to this operation, as it deletes
+> data from the database.
+
+The following deletes the token, the key records, and all users access passwords:
+
+```bash
+systemctl stop siguldry-server.service
+
+systemd-run --pty --wait --collect \
+  --working-directory=/var/lib/siguldry \
+  --setenv=SIGULDRY_SERVER_CONFIG=/etc/siguldry/server.toml \
+  --uid=siguldry \
+  --gid=siguldry \
+  siguldry-server manage pkcs11 unregister --remove-key-accesses <token-serial-number>
+
+systemctl start siguldry-server.service
+```
+
 ### Services
 
 The server's primary systemd service is `siguldry-server.service`. There are two associated systemd
