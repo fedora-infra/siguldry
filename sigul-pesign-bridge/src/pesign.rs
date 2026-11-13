@@ -11,6 +11,9 @@
 //!
 //! [1]: https://github.com/rhboot/pesign/blob/116/src/daemon.h
 
+// zerocopy 0.8.63's FromBytes derive triggers this with Rust 1.100
+#![allow(clippy::empty_enums)]
+
 use std::ffi::CStr;
 
 use anyhow::anyhow;

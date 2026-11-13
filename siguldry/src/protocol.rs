@@ -64,6 +64,9 @@
 //! | u64 | JSON size (bytes)   |
 //! |---------------------------|
 
+// zerocopy 0.8.63's TryFromBytes derive triggers this with Rust 1.100
+#![allow(clippy::empty_enums)]
+
 use openssl::nid::Nid;
 use serde::{Deserialize, Serialize};
 use tokio::{
