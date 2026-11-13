@@ -5,14 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.1] - 2026-11-13
 
 ### Added
+
+- Added the `siguldry-server manage key rename-cert` command to rename certificates associated
+  with a key. Certificate names are used as the `Label` attribute when they're exposed to clients
+  from the PKCS#11 module, so changing the name can impact clients who reference certificates.
+  The prime example is `pesign` (#299).
 
 - Added the `siguldry-server manage pkcs11 swap` command to replace an existing HSM with
   a clone. This command verifies the new HSM contains the same set of registered keys and
   X.509 certificates the existing HSM had before updating the database record. The HSMs
-  must have the same user PIN as this command does not update the user access passwords.
+  must have the same user PIN as this command does not update the user access passwords (#301).
+
+- Added the `siguldry-server manage pkcs11 list` command to view the currently registered
+  PKCS#11 tokens. This is useful for other commands like swapping or unregistering (#302).
+
+- Added the `siguldry-server manage pkcs11 unregister` command to remove a PKCS#11 token and
+  its associated keys from the database (#303).
+
+### Fixed
+
+- The siguldry-client-shared-proxy.service can no longer be started without the associated socket
+  being active, as it never supported binding a socket on its own (#275).
+
 
 ## [0.9.0] - 2026-09-23
 
