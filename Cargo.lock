@@ -3546,9 +3546,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "asn1",
- "criterion",
  "cryptoki",
- "proptest",
  "sequoia-openpgp",
  "siguldry",
  "tempfile",
