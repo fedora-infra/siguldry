@@ -9,13 +9,13 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'dtolnay/rust-toolchain@v1'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.88.0'
+        - 'taiki-e/install-action@v2.90.1'
     '.github/workflows/publish-docs.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/configure-pages@v6.0.0'
         - 'actions/deploy-pages@v5.0.1'
         - 'actions/upload-pages-artifact@v5.0.0'
-        - 'taiki-e/install-action@v2.88.0'
+        - 'taiki-e/install-action@v2.90.1'
     '.github/workflows/zizmor.yml':
         - 'actions/checkout@v7.0.1'
         - 'zizmorcore/zizmor-action@v0.8.1'
@@ -72,9 +72,9 @@ dependencies:
         commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
         owner_id: 580492
         repo_id: 298565987
-    'taiki-e/install-action@v2.88.0':
-        ref: 'v2.88.0'
-        commit: 'sha1-86f7a0ffb25f40114606501a311ebcfaf882ea32'
+    'taiki-e/install-action@v2.90.1':
+        ref: 'v2.90.1'
+        commit: 'sha1-c509219cf42fba86913069efd0ade2458c59337b'
         owner_id: 43724913
         repo_id: 442947557
     'zizmorcore/zizmor-action@v0.8.1':
