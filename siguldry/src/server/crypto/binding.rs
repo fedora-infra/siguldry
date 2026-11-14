@@ -12,10 +12,18 @@
 
 use std::{
     io::{Read, Write},
+    path::PathBuf,
     process::Stdio,
 };
 
 use anyhow::Context;
+use cryptoki::{
+    context::{CInitializeArgs, CInitializeFlags, Pkcs11},
+    error::RvError,
+    session::UserType,
+    slot::TokenInfo,
+    types::AuthPin,
+};
 use openssl::pkey::PKey;
 use openssl::{
     cms::{CMSOptions, CmsContentInfo},
@@ -209,6 +217,226 @@ fn binding_decrypt(binding: Pkcs11Binding, data: Vec<u8>) -> anyhow::Result<Vec<
     }
 
     Ok(output.stdout)
+}
+
+/// The subset of a PKCS#11 URI (RFC 7512) needed to locate a token and log into it.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Pkcs11Uri {
+    token: Option<String>,
+    manufacturer: Option<String>,
+    serial: Option<String>,
+    model: Option<String>,
+    module_path: Option<PathBuf>,
+}
+
+impl Pkcs11Uri {
+    fn parse(uri: &str) -> anyhow::Result<Self> {
+        let rest = uri
+            .strip_prefix("pkcs11:")
+            .ok_or_else(|| anyhow::anyhow!("The private key is not a PKCS#11 URI"))?;
+        let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+
+        let mut parsed = Self::default();
+        let attributes = path
+            .split(';')
+            .chain(query.split('&'))
+            .filter(|attribute| !attribute.is_empty());
+        for attribute in attributes {
+            let Some((name, value)) = attribute.split_once('=') else {
+                continue;
+            };
+            let value = percent_decode(value)
+                .with_context(|| format!("Invalid value for '{name}' in PKCS#11 URI"))?;
+            match name {
+                "token" => parsed.token = Some(value),
+                "manufacturer" => parsed.manufacturer = Some(value),
+                "serial" => parsed.serial = Some(value),
+                "model" => parsed.model = Some(value),
+                "module-path" => parsed.module_path = Some(PathBuf::from(value)),
+                _ => {}
+            }
+        }
+
+        Ok(parsed)
+    }
+
+    fn matches_token(&self, info: &TokenInfo) -> bool {
+        let matches = |expected: Option<&str>, actual: &str| {
+            expected.is_none_or(|expected| expected == actual.trim_end())
+        };
+        matches(self.token.as_deref(), info.label())
+            && matches(self.manufacturer.as_deref(), info.manufacturer_id())
+            && matches(self.serial.as_deref(), info.serial_number())
+            && matches(self.model.as_deref(), info.model())
+    }
+}
+
+fn percent_decode(value: &str) -> anyhow::Result<String> {
+    let bytes = value.as_bytes();
+    let well_formed = bytes.iter().enumerate().all(|(index, byte)| {
+        *byte != b'%'
+            || bytes
+                .get(index + 1..index + 3)
+                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+    });
+    if !well_formed {
+        return Err(anyhow::anyhow!("Invalid percent-encoding"));
+    }
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8()
+        .map(String::from)
+        .context("Percent-encoded value is not valid UTF-8")
+}
+
+/// What happened when we tried the PIN, assuming the token didn't reject it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PinValidation {
+    /// We logged into the token with the PIN.
+    Valid,
+    /// We couldn't check the PIN; the string says why.
+    Skipped(String),
+}
+
+/// Try logging into the binding's token with its PIN.
+///
+/// The module comes from the URI's `module-path`, or `PKCS11_PROVIDER_MODULE` if that's not set,
+/// which is what the OpenSSL pkcs11 provider uses.
+///
+/// We only log in once, since tokens usually lock up after a few bad attempts. If we can't
+/// load the module or find the token, that's not an error; the network service doesn't
+/// need the device, so we return [`PinValidation::Skipped`] instead.
+pub(crate) fn validate_binding_pin(binding: &Pkcs11Binding) -> anyhow::Result<PinValidation> {
+    let private_key = binding
+        .private_key
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("Binding has no private key URI"))?;
+    let pin = binding
+        .pin
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Binding has no PIN to validate"))?;
+    let uri = match Pkcs11Uri::parse(private_key) {
+        Ok(uri) => uri,
+        Err(error) => return Ok(PinValidation::Skipped(format!("{error:#}"))),
+    };
+    let Some(module) = uri.module_path.clone().or_else(|| {
+        std::env::var_os("PKCS11_PROVIDER_MODULE")
+            .filter(|module| !module.is_empty())
+            .map(PathBuf::from)
+    }) else {
+        return Ok(PinValidation::Skipped(
+            "no PKCS#11 module set via 'module-path' in the URI or PKCS11_PROVIDER_MODULE"
+                .to_string(),
+        ));
+    };
+
+    let pkcs11 = match Pkcs11::new(&module) {
+        Ok(pkcs11) => pkcs11,
+        Err(error) => {
+            return Ok(PinValidation::Skipped(format!(
+                "failed to load PKCS#11 module {}: {error}",
+                module.display()
+            )));
+        }
+    };
+    if let Err(error) = pkcs11.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK)) {
+        return Ok(PinValidation::Skipped(format!(
+            "failed to initialize PKCS#11 module {}: {error}",
+            module.display()
+        )));
+    }
+    let result = login_once(&pkcs11, &uri, pin);
+    if let Err(error) = pkcs11.finalize() {
+        tracing::warn!(?error, "Failed to finalize the PKCS#11 module");
+    }
+
+    result
+}
+
+/// Check the binding's PIN against its token and log the outcome.
+///
+/// It's only an error if the token rejects the PIN. If we can't load the module or reach the
+/// token, we log a warning and carry on, since the caller might not have access to the device.
+pub fn check_binding_pin(binding: &Pkcs11Binding) -> anyhow::Result<()> {
+    match validate_binding_pin(binding)? {
+        PinValidation::Valid => tracing::info!("Validated the binding PIN with the PKCS#11 token"),
+        PinValidation::Skipped(reason) => tracing::warn!(
+            reason,
+            "Unable to validate the binding PIN; it will be checked when keys are unbound"
+        ),
+    }
+
+    Ok(())
+}
+
+fn login_once(pkcs11: &Pkcs11, uri: &Pkcs11Uri, pin: &Password) -> anyhow::Result<PinValidation> {
+    let slots = match pkcs11.get_slots_with_token() {
+        Ok(slots) => slots,
+        Err(error) => {
+            return Ok(PinValidation::Skipped(format!(
+                "failed to list PKCS#11 slots: {error}"
+            )));
+        }
+    };
+    // Only try the PIN if we're sure which token it's for; a bad guess counts towards locking
+    // up whatever token we picked.
+    let matching: Vec<_> = slots
+        .into_iter()
+        .filter(|slot| {
+            pkcs11
+                .get_token_info(*slot)
+                .is_ok_and(|info| uri.matches_token(&info))
+        })
+        .collect();
+    let slot = match matching.as_slice() {
+        [slot] => *slot,
+        [] => {
+            return Ok(PinValidation::Skipped(
+                "no token matching the private key URI was found".to_string(),
+            ));
+        }
+        _ => {
+            return Ok(PinValidation::Skipped(format!(
+                "{} tokens match the private key URI; add a token attribute to pick one",
+                matching.len()
+            )));
+        }
+    };
+    let session = match pkcs11.open_ro_session(slot) {
+        Ok(session) => session,
+        Err(error) => {
+            return Ok(PinValidation::Skipped(format!(
+                "failed to open a session with the token: {error}"
+            )));
+        }
+    };
+
+    // Build the AuthPin straight from the borrowed bytes so the only copy is the zeroized one.
+    let auth_pin = pin
+        .map(|pin| std::str::from_utf8(pin).map(|pin| AuthPin::new(pin.into())))
+        .context("The binding PIN is not valid UTF-8")?;
+    match session.login(UserType::User, Some(&auth_pin)) {
+        Ok(()) => {
+            if let Err(error) = session.logout() {
+                tracing::warn!(?error, "Failed to log out of the PKCS#11 token");
+            }
+            Ok(PinValidation::Valid)
+        }
+        Err(cryptoki::error::Error::Pkcs11(RvError::UserAlreadyLoggedIn, _)) => Ok(
+            PinValidation::Skipped("the token says we're already logged in".to_string()),
+        ),
+        Err(cryptoki::error::Error::Pkcs11(
+            rv @ (RvError::PinIncorrect
+            | RvError::PinLenRange
+            | RvError::PinLocked
+            | RvError::PinExpired),
+            _,
+        )) => Err(anyhow::anyhow!(
+            "The token rejected the binding PIN ({rv:?}); the PIN is incorrect or unusable"
+        )),
+        Err(error) => Ok(PinValidation::Skipped(format!(
+            "failed to log into the token: {error}"
+        ))),
+    }
 }
 
 /// Decrypt a key password to enable access to the key itself.
@@ -679,6 +907,143 @@ mod tests {
         let blob = encrypt_key_password(&[], user_password.clone(), key_password.clone())?;
         let roundtrip_key_password = decrypt_key_password(&[], user_password, &blob).await?;
         assert_eq!(key_password, roundtrip_key_password);
+        Ok(())
+    }
+
+    #[test]
+    fn pkcs11_uri_parse_path_attributes() -> Result<()> {
+        let uri = Pkcs11Uri::parse(
+            "pkcs11:model=v1;manufacturer=Kryoptic%20Project;serial=0123;token=test-token;id=%01;type=private",
+        )?;
+        assert_eq!(uri.model.as_deref(), Some("v1"));
+        assert_eq!(uri.manufacturer.as_deref(), Some("Kryoptic Project"));
+        assert_eq!(uri.serial.as_deref(), Some("0123"));
+        assert_eq!(uri.token.as_deref(), Some("test-token"));
+        assert_eq!(uri.module_path, None);
+        Ok(())
+    }
+
+    #[test]
+    fn pkcs11_uri_parse_query_attributes() -> Result<()> {
+        let uri = Pkcs11Uri::parse(
+            "pkcs11:token=My%20Token?module-path=/usr/lib64/pkcs11/libkryoptic_pkcs11.so&pin-value=1234",
+        )?;
+        assert_eq!(uri.token.as_deref(), Some("My Token"));
+        assert_eq!(
+            uri.module_path,
+            Some(PathBuf::from("/usr/lib64/pkcs11/libkryoptic_pkcs11.so"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pkcs11_uri_parse_module_path_in_path_component() -> Result<()> {
+        let uri = Pkcs11Uri::parse("pkcs11:token=t;module-path=%2Fopt%2Fmodule.so")?;
+        assert_eq!(uri.module_path, Some(PathBuf::from("/opt/module.so")));
+        Ok(())
+    }
+
+    #[test]
+    fn pkcs11_uri_parse_rejects_invalid() {
+        assert!(Pkcs11Uri::parse("file:///etc/passwd").is_err());
+        assert!(Pkcs11Uri::parse("pkcs11:token=%zz").is_err());
+        assert!(Pkcs11Uri::parse("pkcs11:token=%4").is_err());
+    }
+
+    #[test]
+    fn validate_binding_pin_correct() -> Result<()> {
+        let hsm = setup_hsm()?;
+        let result = validate_binding_pin(hsm.bindings.first().unwrap())?;
+        assert_eq!(result, PinValidation::Valid);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_binding_pin_incorrect() -> Result<()> {
+        let hsm = setup_hsm()?;
+        let mut binding = hsm.bindings.first().unwrap().clone();
+        binding.pin = Some(Password::from("not-the-pin"));
+        let error = validate_binding_pin(&binding).unwrap_err();
+        assert!(
+            error.to_string().contains("incorrect"),
+            "unexpected error: {error:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validate_binding_pin_module_path_from_uri() -> Result<()> {
+        let hsm = setup_hsm()?;
+        // SAFETY: tests must run under nextest, which uses a process per test.
+        unsafe { std::env::remove_var("PKCS11_PROVIDER_MODULE") };
+        let mut binding = hsm.bindings.first().unwrap().clone();
+        binding.private_key = Some(
+            "pkcs11:token=test-token;object=binding-key;type=private\
+            ?module-path=/usr/lib64/pkcs11/libkryoptic_pkcs11.so"
+                .to_string(),
+        );
+        let result = validate_binding_pin(&binding)?;
+        assert_eq!(result, PinValidation::Valid);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_binding_pin_missing_module_is_not_fatal() -> Result<()> {
+        let hsm = setup_hsm()?;
+        // SAFETY: tests must run under nextest, which uses a process per test.
+        unsafe { std::env::set_var("PKCS11_PROVIDER_MODULE", "/does/not/exist.so") };
+        let result = validate_binding_pin(hsm.bindings.first().unwrap())?;
+        assert!(matches!(result, PinValidation::Skipped(_)), "{result:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn validate_binding_pin_no_module_is_not_fatal() -> Result<()> {
+        let hsm = setup_hsm()?;
+        // SAFETY: tests must run under nextest, which uses a process per test.
+        unsafe { std::env::remove_var("PKCS11_PROVIDER_MODULE") };
+        let result = validate_binding_pin(hsm.bindings.first().unwrap())?;
+        assert!(matches!(result, PinValidation::Skipped(_)), "{result:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn validate_binding_pin_no_matching_token_is_not_fatal() -> Result<()> {
+        let hsm = setup_hsm()?;
+        let mut binding = hsm.bindings.first().unwrap().clone();
+        binding.private_key =
+            Some("pkcs11:token=some-other-token;object=binding-key;type=private".to_string());
+        let result = validate_binding_pin(&binding)?;
+        assert!(matches!(result, PinValidation::Skipped(_)), "{result:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn validate_binding_pin_ambiguous_token_is_not_fatal() -> Result<()> {
+        use std::fmt::Write as _;
+
+        let hsm = setup_hsm()?;
+        let config_path = hsm.directory.path().join("kryoptic.toml");
+        let mut config = std::fs::read_to_string(&config_path)?;
+        write!(
+            config,
+            "\n[[slots]]\nslot = 2\ndbtype = \"sqlite\"\ndbargs = \"{}\"",
+            hsm.directory.path().join("second.sql").display()
+        )?;
+        std::fs::write(&config_path, config)?;
+
+        let mut binding = hsm.bindings.first().unwrap().clone();
+        binding.private_key = Some("pkcs11:object=binding-key;type=private".to_string());
+        let result = validate_binding_pin(&binding)?;
+        assert!(
+            matches!(&result, PinValidation::Skipped(reason) if reason.contains("2 tokens match")),
+            "{result:?}"
+        );
+
+        binding.private_key =
+            Some("pkcs11:token=test-token;object=binding-key;type=private".to_string());
+        let result = validate_binding_pin(&binding)?;
+        assert_eq!(result, PinValidation::Valid);
         Ok(())
     }
 }

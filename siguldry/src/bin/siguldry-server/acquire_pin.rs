@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::Context;
 use sequoia_openpgp::crypto::Password;
-use siguldry::server::Config;
+use siguldry::server::{Config, Pkcs11Binding, crypto::binding::check_binding_pin};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixListener,
@@ -30,7 +30,7 @@ pub async fn read(config: &mut Config) -> anyhow::Result<()> {
         tracing::error!(
             "pkcs11 URI contains a PIN; this should not be used in production deployments"
         );
-        return Ok(());
+        return validate_pin(binding).await;
     }
 
     let runtime_directory = std::env::var("RUNTIME_DIRECTORY")
@@ -67,6 +67,16 @@ pub async fn read(config: &mut Config) -> anyhow::Result<()> {
         tracing::warn!(?socket_path, ?error, "Failed to clean up socket");
     }
     tracing::info!("Successfully read PIN to unbind keys");
+
+    validate_pin(binding).await
+}
+
+async fn validate_pin(binding: &Pkcs11Binding) -> anyhow::Result<()> {
+    let binding = binding.clone();
+    tokio::task::spawn_blocking(move || check_binding_pin(&binding))
+        .await
+        .context("PIN validation task failed")?
+        .context("The binding PIN is invalid; restart the service and enter the correct PIN")?;
 
     Ok(())
 }
