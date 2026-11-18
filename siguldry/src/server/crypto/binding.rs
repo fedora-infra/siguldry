@@ -303,8 +303,10 @@ pub(crate) enum PinValidation {
 /// which is what the OpenSSL pkcs11 provider uses.
 ///
 /// We only log in once, since tokens usually lock up after a few bad attempts. If we can't
-/// load the module or find the token, that's not an error; the network service doesn't
-/// need the device, so we return [`PinValidation::Skipped`] instead.
+/// load the module or find the token, that's not an error; we return
+/// [`PinValidation::Skipped`] instead, and the PIN is checked again when keys are unbound.
+///
+/// This runs in the signing helper, which is the process that uses the tokens.
 pub(crate) fn validate_binding_pin(binding: &Pkcs11Binding) -> anyhow::Result<PinValidation> {
     let private_key = binding
         .private_key
@@ -350,22 +352,6 @@ pub(crate) fn validate_binding_pin(binding: &Pkcs11Binding) -> anyhow::Result<Pi
     }
 
     result
-}
-
-/// Check the binding's PIN against its token and log the outcome.
-///
-/// It's only an error if the token rejects the PIN. If we can't load the module or reach the
-/// token, we log a warning and carry on, since the caller might not have access to the device.
-pub fn check_binding_pin(binding: &Pkcs11Binding) -> anyhow::Result<()> {
-    match validate_binding_pin(binding)? {
-        PinValidation::Valid => tracing::info!("Validated the binding PIN with the PKCS#11 token"),
-        PinValidation::Skipped(reason) => tracing::warn!(
-            reason,
-            "Unable to validate the binding PIN; it will be checked when keys are unbound"
-        ),
-    }
-
-    Ok(())
 }
 
 fn login_once(pkcs11: &Pkcs11, uri: &Pkcs11Uri, pin: &Password) -> anyhow::Result<PinValidation> {
