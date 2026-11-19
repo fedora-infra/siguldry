@@ -393,8 +393,8 @@ impl Attribute {
                     format!("v{}:{key_algo}", pgp_key.version())
                 }
             };
-            let creation_time = chrono::DateTime::<chrono::Utc>::from(pgp_key.creation_time())
-                .format("%Y%m%dT%H%M%SZ")
+            let creation_time = jiff::Timestamp::try_from(pgp_key.creation_time())?
+                .strftime("%Y%m%dT%H%M%SZ")
                 .to_string();
             let id = format!(
                 "pgp:{version}:{creation_time}:{}",
