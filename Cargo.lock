@@ -3523,6 +3523,7 @@ dependencies = [
  "libc",
  "openssl",
  "openssl-sys",
+ "percent-encoding",
  "proptest",
  "pyo3",
  "rustix",
